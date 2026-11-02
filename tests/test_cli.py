@@ -15,8 +15,8 @@ from hockey_model.types import Player, Projection, Roster, Slot, Standing
 PLAYER_PROJECTION = Projection(0.4, 0.1, 0.7, 0.8)
 
 
-def _player(canonical_id: str, name: str = "A Player") -> Player:
-    return Player(canonical_id, None, None, name, frozenset({Slot.C}), "TOR")
+def _player(canonical_id: str, name: str = "A Player", *, yahoo_id: str | None = None) -> Player:
+    return Player(canonical_id, yahoo_id, None, name, frozenset({Slot.C}), "TOR")
 
 
 class Joint:
@@ -96,6 +96,12 @@ def test_unknown_subcommand_exits_two(capsys: pytest.CaptureFixture[str]) -> Non
 def test_known_command_without_runtime_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["player", "goals", "p-a"]) == 2
     assert "no models are configured" in capsys.readouterr().err
+
+
+def test_player_subcommand_resolves_numeric_string_id(capsys: pytest.CaptureFixture[str]) -> None:
+    player = _player("p-a", yahoo_id="123")
+    assert cli.main(["player", "goals", "123"], _runtime((player,))) == 0
+    assert json.loads(capsys.readouterr().out)["point"] == 0.4
 
 
 def test_team_matchup_and_playoff_commands_print_json(

@@ -19,6 +19,7 @@ from hockey_model.types import (
     Roster,
     Slot,
     Standing,
+    UnknownPlayerError,
 )
 
 
@@ -131,13 +132,18 @@ def _roster(path: Path) -> Roster:
         raise ValueError(f"read roster {path}: invalid roster fields: {exc}") from exc
 
 
-def _ref(value: str) -> str | int:
-    return int(value) if value.isdecimal() else value
+def _resolve_player(value: str, catalog: Catalog) -> Player:
+    try:
+        return catalog.resolve(value)
+    except UnknownPlayerError:
+        if not value.isdecimal():
+            raise
+        return catalog.resolve(int(value))
 
 
 def _run(args: argparse.Namespace, runtime: CliRuntime) -> object:
     if args.command == "player":
-        player = runtime.catalog.resolve(_ref(args.ref))
+        player = _resolve_player(args.ref, runtime.catalog)
         return project_player(
             player,
             args.stat,
