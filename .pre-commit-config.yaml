@@ -1,0 +1,34 @@
+repos:
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker
+    rev: 0adfdb012938ada0cf563a40f2fceaf9466290ca # frozen: v4.0.2
+    hooks:
+      - id: editorconfig-checker
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check .
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --check .
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: ty
+        name: ty check
+        entry: uv run ty check
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: coverage-gate
+        name: pytest coverage and per-module floor
+        # One chained command, so a failed pytest run never leaves a stale report for the floor check.
+        entry: bash -c 'rm -f coverage.json && uv run pytest && uv run python3 scripts/check_per_module_coverage.py'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        types: [python]

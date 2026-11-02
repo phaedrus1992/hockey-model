@@ -1,0 +1,39 @@
+[project]
+name = "hockey-model"
+version = "0.1.0"
+description = "Player stat rate and game win models for hockey"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "hypothesis~=6.170.14",
+    "pytest~=9.2.0",
+    "pytest-cov~=7.1.0",
+    "ruff~=0.17.3",
+    "ty~=0.0.95",
+]
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = """
+    --cov=hockey_model
+    --cov-report=term-missing
+    --cov-report=lcov:lcov.info
+    --cov-report=json:coverage.json
+    --cov-fail-under=80
+"""
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C90"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8
