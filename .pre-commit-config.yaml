@@ -24,16 +24,10 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
-      - id: pytest
-        name: pytest with coverage
-        entry: uv run pytest
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-        types: [python]
-      - id: per-module-coverage
-        name: per-module coverage floor
-        entry: uv run python3 scripts/check_per_module_coverage.py
+      - id: coverage-gate
+        name: pytest coverage and per-module floor
+        # One chained command, so a failed pytest run never leaves a stale report for the floor check.
+        entry: bash -c 'rm -f coverage.json && uv run pytest && uv run python3 scripts/check_per_module_coverage.py'
         language: system
         pass_filenames: false
         stages: [pre-push]
