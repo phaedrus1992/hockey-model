@@ -1,6 +1,7 @@
 """Model boundaries and deterministic in-memory model fakes."""
 
 from collections.abc import Mapping, Sequence
+from datetime import date
 from typing import Protocol, runtime_checkable
 
 from hockey_model.types import MissingProjectionError, Player, Projection, Roster, Standing
@@ -47,6 +48,15 @@ class MatchupModel(Protocol):
 
     def expected_goals(self, team: Roster, level: float) -> Projection:
         """Return the team's expected goals projection."""
+        ...
+
+
+@runtime_checkable
+class RosterSource(Protocol):
+    """Load an NHL club roster at a point in time."""
+
+    def club_players(self, team_code: str, as_of: date) -> Sequence[Player]:
+        """Return players on the club at the requested date."""
         ...
 
 

@@ -1,13 +1,24 @@
 """Tests for roster construction and validation."""
 
+from collections.abc import Mapping, Sequence
+from datetime import date
+
 import pytest
 
-from hockey_model.roster import validate_roster
+from hockey_model.roster import nhl_roster, validate_roster
 from hockey_model.types import Player, Roster, Slot, SlotError
 
 
 def _player(canonical_id: str, eligible: set[Slot]) -> Player:
     return Player(canonical_id, None, None, canonical_id, frozenset(eligible), None)
+
+
+class FixedRosterSource:
+    def __init__(self, table: Mapping[tuple[str, date], Sequence[Player]]) -> None:
+        self.table = table
+
+    def club_players(self, team_code: str, as_of: date) -> Sequence[Player]:
+        return self.table.get((team_code, as_of), ())
 
 
 def test_goalie_cannot_fill_forward_slot() -> None:
@@ -44,3 +55,15 @@ def test_no_slots_means_no_check() -> None:
 
 def test_empty_roster_is_valid() -> None:
     validate_roster(Roster("t", (), {}))
+
+
+def test_nhl_roster_returns_club_players_at_date() -> None:
+    as_of = date(2026, 11, 1)
+    player = _player("a", {Slot.C})
+    roster = nhl_roster("TOR", as_of, FixedRosterSource({("TOR", as_of): (player,)}))
+    assert roster == Roster("TOR", (player,), None)
+
+
+def test_nhl_roster_unknown_team_or_empty_source_raises() -> None:
+    with pytest.raises(ValueError, match="XYZ.*2026-11-01"):
+        nhl_roster("XYZ", date(2026, 11, 1), FixedRosterSource({}))

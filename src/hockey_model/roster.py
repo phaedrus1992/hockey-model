@@ -1,5 +1,8 @@
 """Roster construction and slot validation."""
 
+from datetime import date
+
+from hockey_model.models import RosterSource
 from hockey_model.types import Player, Roster, Slot, SlotError
 
 SKATER_SLOTS = frozenset({Slot.C, Slot.W, Slot.D})
@@ -31,3 +34,14 @@ def validate_roster(roster: Roster) -> None:
                 f"validate roster {roster.name!r}: player {player_id!r} cannot fill {slot}; "
                 f"assign an eligible slot ({eligible}) or bench"
             )
+
+
+def nhl_roster(team_code: str, as_of: date, source: RosterSource) -> Roster:
+    """Build an NHL club roster from ``source`` at ``as_of``."""
+    players = tuple(source.club_players(team_code, as_of))
+    if not players:
+        raise ValueError(
+            f"build NHL roster for {team_code!r} at {as_of}: no players returned; "
+            "check the team code, date, or source data"
+        )
+    return Roster(team_code, players, None)
