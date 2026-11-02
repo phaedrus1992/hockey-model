@@ -70,6 +70,12 @@ def test_duplicate_ids_are_rejected(players: list[Player], label: str) -> None:
         Catalog(players)
 
 
+def test_cross_namespace_string_id_collision_is_rejected() -> None:
+    players = [_player("same", "A"), _player("b", "B", yahoo_id="same")]
+    with pytest.raises(ValueError, match="string ID.*same"):
+        Catalog(players)
+
+
 @given(st.sampled_from(["Éric Bélanger", "Zdeno Chára", "Jesús Sánchez"]))
 def test_case_and_accent_folding_round_trips(name: str) -> None:
     player = _player("p", name)

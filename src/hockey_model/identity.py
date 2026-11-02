@@ -30,6 +30,10 @@ class Catalog:
             if source_id is not None
         )
         self._source = self._unique_index(source_pairs, "source ID")
+        for source_id in self._canonical.keys() & self._source.keys():
+            if self._canonical[source_id] != self._source[source_id]:
+                raise ValueError(f"duplicate string ID {source_id!r} in player catalog")
+        self._string_ids = self._source | self._canonical
         self._nhl = self._unique_index(
             ((player.nhl_id, player) for player in self.players if player.nhl_id is not None),
             "NHL ID",
@@ -55,7 +59,7 @@ class Catalog:
                 return self._nhl[ref]
             except KeyError as exc:
                 raise UnknownPlayerError(ref) from exc
-        exact = self._canonical.get(ref) or self._source.get(ref)
+        exact = self._string_ids.get(ref)
         if exact is not None:
             return exact
         matches = self._names.get(_normalize_name(ref), ())
