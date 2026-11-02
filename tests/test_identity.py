@@ -76,10 +76,17 @@ def test_cross_namespace_string_id_collision_is_rejected() -> None:
         Catalog(players)
 
 
-@given(st.sampled_from(["Éric Bélanger", "Zdeno Chára", "Jesús Sánchez"]))
+@given(
+    st.text(
+        alphabet=st.characters(whitelist_categories=("Lu", "Ll"), max_codepoint=127),
+        min_size=1,
+        max_size=40,
+    )
+)
 def test_case_and_accent_folding_round_trips(name: str) -> None:
-    player = _player("p", name)
-    decomposed = unicodedata.normalize("NFKD", name)
+    accented = f"{name}\N{COMBINING ACUTE ACCENT}"
+    player = _player("p", accented)
+    decomposed = unicodedata.normalize("NFKD", accented)
     unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
-    assert Catalog([player]).resolve(name.swapcase()) == player
+    assert Catalog([player]).resolve(accented.swapcase()) == player
     assert resolve_player(unaccented, Catalog([player])) == player
