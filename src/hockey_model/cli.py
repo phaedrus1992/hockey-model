@@ -71,16 +71,40 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _required_string(data: dict[str, object], field: str) -> str:
+    value = data.get(field)
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    return value
+
+
+def _optional_string(data: dict[str, object], field: str) -> str | None:
+    value = data.get(field)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{field} must be a string or null")
+    return value
+
+
+def _optional_int(data: dict[str, object], field: str) -> int | None:
+    value = data.get(field)
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+        raise ValueError(f"{field} must be an integer or null")
+    return value
+
+
 def _player(data: object) -> Player:
     if not isinstance(data, dict):
         raise ValueError("each roster player must be a JSON object")
+    eligible = data.get("eligible")
+    if not isinstance(eligible, list) or any(not isinstance(value, str) for value in eligible):
+        raise ValueError("eligible must be an array of slot strings")
     return Player(
-        canonical_id=str(data["canonical_id"]),
-        yahoo_id=None if data.get("yahoo_id") is None else str(data["yahoo_id"]),
-        nhl_id=None if data.get("nhl_id") is None else int(data["nhl_id"]),
-        full_name=str(data["full_name"]),
-        eligible=frozenset(Slot(value) for value in data["eligible"]),
-        team_code=None if data.get("team_code") is None else str(data["team_code"]),
+        canonical_id=_required_string(data, "canonical_id"),
+        yahoo_id=_optional_string(data, "yahoo_id"),
+        nhl_id=_optional_int(data, "nhl_id"),
+        full_name=_required_string(data, "full_name"),
+        eligible=frozenset(Slot(value) for value in eligible),
+        team_code=_optional_string(data, "team_code"),
     )
 
 
@@ -92,12 +116,17 @@ def _roster(path: Path) -> Roster:
     if not isinstance(data, dict):
         raise ValueError(f"read roster {path}: root must be a JSON object")
     try:
-        players = tuple(_player(item) for item in data["players"])
+        raw_players = data.get("players")
+        if not isinstance(raw_players, list):
+            raise ValueError("players must be an array")
+        players = tuple(_player(item) for item in raw_players)
         raw_slots = data.get("slots")
+        if raw_slots is not None and not isinstance(raw_slots, dict):
+            raise ValueError("slots must be an object or null")
         slots = (
             None if raw_slots is None else {key: Slot(value) for key, value in raw_slots.items()}
         )
-        return Roster(str(data["name"]), players, slots)
+        return Roster(_required_string(data, "name"), players, slots)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"read roster {path}: invalid roster fields: {exc}") from exc
 

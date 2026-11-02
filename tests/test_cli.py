@@ -121,3 +121,23 @@ def test_bad_roster_file_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture
     bad.write_text("[]")
     assert cli.main(["team", "goals", str(bad)], _runtime((_player("p-a"),))) == 2
     assert "root must be" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"slots": []},
+        {"players": "not-an-array"},
+        {"players": [{"canonical_id": None, "full_name": "x", "eligible": ["C"]}]},
+        {"players": [{"canonical_id": "x", "full_name": [], "eligible": ["C"]}]},
+        {"players": [{"canonical_id": "x", "full_name": "x", "eligible": ["C"], "nhl_id": True}]},
+    ],
+)
+def test_malformed_roster_fields_exit_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], change: dict[str, object]
+) -> None:
+    roster = {"name": "bad", "players": [], "slots": None} | change
+    path = tmp_path / "bad-fields.json"
+    path.write_text(json.dumps(roster))
+    assert cli.main(["team", "goals", str(path)], _runtime((_player("p-a"),))) == 2
+    assert "invalid roster fields" in capsys.readouterr().err
