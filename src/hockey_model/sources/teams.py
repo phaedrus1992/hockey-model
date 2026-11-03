@@ -19,7 +19,9 @@ _FRANCHISE = {"ARI": "UTA"}
 
 
 def franchise(code: str) -> str:
-    """Return the franchise code for an NHL team code, so one team keeps one history."""
+    """Return the franchise code for a known NHL team code, so one team keeps one history."""
+    if code not in NHL_TEAM_CODES:
+        raise SourceShapeError("franchise", code)
     return _FRANCHISE.get(code, code)
 
 
@@ -27,9 +29,5 @@ def from_espn(code: str) -> str:
     """Return the NHL code for a code that ESPN writes."""
     nhl = _ESPN_TO_NHL.get(code, code)
     if nhl not in NHL_TEAM_CODES:
-        raise SourceShapeError(
-            "espn",
-            "team code",
-            f"unknown ESPN team code {code!r}; add it to sources/teams.py",
-        )
+        raise SourceShapeError("espn", code)
     return nhl

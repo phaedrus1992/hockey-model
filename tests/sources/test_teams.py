@@ -41,3 +41,17 @@ def test_from_espn_rejects_unknown_code_and_names_it() -> None:
     with pytest.raises(SourceShapeError, match="UTAH") as info:
         from_espn("UTAH")
     assert "add it to sources/teams.py" in str(info.value)
+
+
+def test_franchise_rejects_unknown_code() -> None:
+    with pytest.raises(SourceShapeError, match="UTAH"):
+        franchise("UTAH")
+
+
+@given(st.text(max_size=8))
+def test_from_espn_returns_known_code_or_raises_shape_error(code: str) -> None:
+    try:
+        result = from_espn(code)
+    except SourceShapeError:
+        return
+    assert result in NHL_TEAM_CODES
