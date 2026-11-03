@@ -84,3 +84,28 @@ def test_connect_rejects_other_version(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="99"):
         connect(path)
+
+
+def test_db_path_from_env_strips_padding_and_expands_home() -> None:
+    assert db_path_from_env({DB_ENV: "  ~/hm.sqlite "}) == Path.home() / "hm.sqlite"
+
+
+def test_connect_rejects_schema_table_without_version_row(tmp_path: Path) -> None:
+    path = tmp_path / "hm.sqlite"
+    setup = sqlite3.connect(path)
+    setup.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+    setup.commit()
+    setup.close()
+
+    with pytest.raises(StoreError, match="no row") as info:
+        connect(path)
+    assert "half-initialized" in str(info.value)
+
+
+def test_connect_rejects_file_that_is_not_sqlite(tmp_path: Path) -> None:
+    path = tmp_path / "hm.sqlite"
+    path.write_bytes(b"this is not a database" * 100)
+
+    with pytest.raises(StoreError, match="hm.sqlite") as info:
+        connect(path)
+    assert "use a new path" in str(info.value)

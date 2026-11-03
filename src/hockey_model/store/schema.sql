@@ -1,5 +1,6 @@
--- Append-only tables. Each source read carries fetched_at as ISO UTC.
--- A later read adds a row; an earlier read is never overwritten.
+-- Source tables are append-only: each read carries fetched_at as ISO UTC, and a later
+-- read adds a row. The exceptions are skater_games and goalie_games, which are written
+-- once per game from a final boxscore and keyed on the game.
 
 CREATE TABLE schema_version (
     version INTEGER NOT NULL
@@ -8,7 +9,7 @@ CREATE TABLE schema_version (
 CREATE TABLE source_reads (
     source TEXT,
     url TEXT,
-    fetched_at TEXT,
+    fetched_at TEXT NOT NULL,
     ok INTEGER,
     error TEXT
 );
@@ -105,5 +106,5 @@ CREATE TABLE model_fits (
     fit_through_season INTEGER,
     features TEXT,
     weights TEXT,
-    created_at TEXT
+    created_at TEXT NOT NULL
 );
