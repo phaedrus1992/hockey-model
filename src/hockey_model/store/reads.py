@@ -208,3 +208,18 @@ def game_row(conn: sqlite3.Connection, game_id: int) -> GameRow | None:
         (game_id,),
     ).fetchone()
     return None if row is None else _game_row(row)
+
+
+def mp_attempt_form_before(
+    conn: sqlite3.Connection, team: str, before: datetime, limit: int
+) -> list[tuple[int, int]]:
+    """Return ``(shot attempts for, against)`` of the newest MoneyPuck games of the franchise."""
+    codes = franchise_codes(team)
+    cursor = conn.execute(
+        "SELECT m.shot_attempts_for, m.shot_attempts_against FROM latest_mp_team_games m"
+        " JOIN latest_final_games g ON g.game_id = m.game_id"
+        f" WHERE m.team IN ({_marks(codes)}) AND g.start_utc <= ?"
+        " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
+        (*codes, _cutoff(before), limit),
+    )
+    return [(row[0], row[1]) for row in cursor]

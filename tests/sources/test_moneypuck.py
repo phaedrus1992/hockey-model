@@ -88,6 +88,15 @@ def test_parse_team_games_keeps_all_situation_only() -> None:
     assert boston.game_date == "2026-01-10"
 
 
+def test_parse_team_games_keeps_the_attempt_counts() -> None:
+    rows = parse_team_games(team_text())
+    boston = next(r for r in rows if (r.game_id, r.team) == (2025020697, "BOS"))
+    assert boston.shot_attempts_for > 0
+    assert boston.shot_attempts_against > 0
+    assert 0 <= boston.unblocked_for <= boston.shot_attempts_for
+    assert 0 <= boston.unblocked_against <= boston.shot_attempts_against
+
+
 def test_parse_team_games_drops_seasons_before_2014() -> None:
     rows = parse_team_games(team_text())
     assert all(r.game_id >= 2014000000 for r in rows)

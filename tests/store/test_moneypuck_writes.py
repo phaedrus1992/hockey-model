@@ -26,8 +26,8 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     connection.close()
 
 
-def team_row(xg_for: float = 2.5) -> TeamGameRow:
-    return TeamGameRow(2025020697, "BOS", "2026-01-10", xg_for, 1.5)
+def team_row(xg_for: float = 2.5, attempts_for: int = 50) -> TeamGameRow:
+    return TeamGameRow(2025020697, "BOS", "2026-01-10", xg_for, 1.5, attempts_for, 40, 30, 20)
 
 
 def test_write_team_games_skips_unchanged_rows(conn: sqlite3.Connection) -> None:
@@ -69,3 +69,12 @@ def test_last_ok_read_ignores_failed_reads(conn: sqlite3.Connection) -> None:
     other = "https://moneypuck.com/y.csv"
     record_read(conn, "moneypuck", other, T0 + timedelta(days=2))
     assert last_ok_read(conn, "moneypuck", URL) == T0
+
+
+def test_write_team_games_writes_a_changed_attempt_count(conn: sqlite3.Connection) -> None:
+    write_team_games(conn, [team_row(attempts_for=50)], T0)
+    assert write_team_games(conn, [team_row(attempts_for=51)], T0 + timedelta(days=7)) == 1
+    counts = conn.execute(
+        "SELECT shot_attempts_for FROM latest_mp_team_games ORDER BY fetched_at"
+    ).fetchall()
+    assert counts == [(51,)]

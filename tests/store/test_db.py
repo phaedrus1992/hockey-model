@@ -46,7 +46,7 @@ def test_connect_creates_schema(tmp_path: Path) -> None:
     try:
         assert EXPECTED_TABLES <= _tables(conn)
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == SCHEMA_VERSION == 1
+        assert version == SCHEMA_VERSION == 2
     finally:
         conn.close()
 

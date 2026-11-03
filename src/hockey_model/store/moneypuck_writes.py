@@ -19,14 +19,16 @@ def write_team_games(
     newest = {
         (game_id, team): values
         for game_id, team, *values in conn.execute(
-            "SELECT game_id, team, game_date, xg_for, xg_against FROM latest_mp_team_games"
+            "SELECT game_id, team, game_date, xg_for, xg_against, shot_attempts_for,"
+            " shot_attempts_against, unblocked_for, unblocked_against FROM latest_mp_team_games"
         )
     }
     fresh = [row for row in rows if newest.get((row.game_id, row.team)) != list(row[2:])]
     stamp = iso_utc(fetched_at)
     conn.executemany(
-        "INSERT INTO mp_team_games (game_id, team, game_date, xg_for, xg_against, fetched_at)"
-        " VALUES (?,?,?,?,?,?)",
+        "INSERT INTO mp_team_games (game_id, team, game_date, xg_for, xg_against,"
+        " shot_attempts_for, shot_attempts_against, unblocked_for, unblocked_against, fetched_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
         [(*row, stamp) for row in fresh],
     )
     return len(fresh)
