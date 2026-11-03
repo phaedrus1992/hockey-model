@@ -10,6 +10,7 @@ from seeding import (
     add_injury,
     add_starter_read,
     add_team_form,
+    record_injury_snapshot,
     utc,
 )
 
@@ -169,3 +170,12 @@ def test_player_catalog_uses_newest_row_and_maps_positions(store: sqlite3.Connec
     assert (player.team_code, player.canonical_id) == ("BOS", "nhl:11")
     assert player.eligible == frozenset({Slot.G})
     assert len(catalog.players) == 1
+
+
+def test_an_empty_injury_list_clears_the_earlier_one(store: sqlite3.Connection) -> None:
+    add_injury(store, "TOR", "Hurt Player", "Out", "2026-01-01T00:00")
+    record_injury_snapshot(store, "2026-01-05T00:00")
+    assert injury_reads_before(store, utc("2026-01-07T00:00")) == []
+    assert [i.player_name for i in injury_reads_before(store, utc("2026-01-03T00:00"))] == [
+        "Hurt Player"
+    ]

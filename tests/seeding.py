@@ -7,6 +7,7 @@ from hockey_model.sources.moneypuck import GoalieGameRow, TeamGameRow
 from hockey_model.sources.nhl import BoxscoreRows, GameRow, GoalieRow, PlayerRow
 from hockey_model.store.moneypuck_writes import write_goalie_games, write_team_games
 from hockey_model.store.nhl_writes import write_boxscore, write_games
+from hockey_model.store.source_reads import ESPN_INJURIES, record_read
 from hockey_model.store.timestamps import iso_utc
 
 FETCHED = datetime(2026, 11, 1, tzinfo=UTC)
@@ -104,9 +105,16 @@ def add_starter_read(
 def add_injury(
     conn: sqlite3.Connection, team: str, name: str, status: str, fetched_at: str
 ) -> None:
-    """Store one injury read."""
+    """Store one injury read, and the good read of the list that it came from."""
+    stamp = utc(fetched_at)
     conn.execute(
         "INSERT INTO injury_reads (team, player_name, nhl_id, status, return_date, fetched_at)"
         " VALUES (?,?,NULL,?,NULL,?)",
-        (team, name, status, iso_utc(utc(fetched_at))),
+        (team, name, status, iso_utc(stamp)),
     )
+    record_injury_snapshot(conn, fetched_at)
+
+
+def record_injury_snapshot(conn: sqlite3.Connection, fetched_at: str) -> None:
+    """Record a good read of the injury list at ``fetched_at``, even when the list is empty."""
+    record_read(conn, ESPN_INJURIES, "u", utc(fetched_at))

@@ -21,11 +21,11 @@ from hockey_model.store.moneypuck_writes import (
     write_team_games,
 )
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun, game_day
+from hockey_model.store.source_reads import ESPN_INJURIES
 from hockey_model.store.starter_writes import write_starter_reads
 
 MONEYPUCK = "moneypuck"
 ESPN_STARTERS = "espn_starters"
-ESPN_INJURIES = "espn_injuries"
 DAILY_FACEOFF = "daily_faceoff"
 # NHL seasons start in the fall, so July is a safe month to count the new season from.
 _SEASON_STARTS_IN_MONTH = 7

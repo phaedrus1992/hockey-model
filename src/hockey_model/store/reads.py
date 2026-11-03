@@ -17,6 +17,7 @@ from hockey_model.identity import Catalog
 from hockey_model.sources.espn import InjuryRead
 from hockey_model.sources.nhl import FINAL_STATES, GameRow
 from hockey_model.sources.teams import franchise
+from hockey_model.store.source_reads import ESPN_INJURIES
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 from hockey_model.team_codes import NHL_TEAM_CODES
 from hockey_model.types import Player, Slot
@@ -172,9 +173,14 @@ def starter_reads_before(
 
 
 def injury_reads_before(conn: sqlite3.Connection, before: datetime) -> list[InjuryRead]:
-    """Return the newest injury list that was fetched before ``before``."""
+    """Return the newest injury list that was read before ``before``.
+
+    A good read of the list is a snapshot even when the list is empty, so players who
+    healed drop out. The snapshot time comes from ``source_reads``.
+    """
     (stamp,) = conn.execute(
-        "SELECT MAX(fetched_at) FROM injury_reads WHERE fetched_at < ?", (iso_utc(before),)
+        "SELECT MAX(fetched_at) FROM source_reads WHERE source = ? AND ok = 1 AND fetched_at < ?",
+        (ESPN_INJURIES, iso_utc(before)),
     ).fetchone()
     if stamp is None:
         return []

@@ -5,6 +5,9 @@ from datetime import datetime
 
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 
+# The source name of the ESPN injury list. Each good read of the list is one snapshot.
+ESPN_INJURIES = "espn_injuries"
+
 
 def record_read(
     conn: sqlite3.Connection,
