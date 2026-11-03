@@ -15,7 +15,7 @@ This project moves the useful NHL data code into hockey-model, builds a game win
 - A caller asks for one NHL game and gets the win chance for each side, the expected goals for each side, and a list of the inputs that were missing.
 - hockey-model fetches and stores its own NHL data.
 - A backtest scores the model against real game results and against simple baselines.
-- The backtest shows the value of each model feature on its own.
+- The backtest shows the value of each model feature on its own, and tests the full model once against the Elo.
 
 ## Non-goals
 
@@ -61,6 +61,7 @@ It returns a result with these fields:
 - The home and away win chances. They sum to one. Overtime and shootout wins count for the side that takes them, the same rule as `matchup()`.
 - The expected goals for each side, as a `Projection` with an interval.
 - The missing inputs: a tuple of named values, each with a short note. An empty tuple means every input was present.
+- `made_after_start`: true when the prediction time is at or after the game start. A caller must never treat such a result as a pregame read.
 
 The model behind the call is a protocol, the same as the other model boundaries in `models.py`.
 The protocol takes the time of the prediction, so a backtest can ask for a prediction "as of" a past time.
@@ -110,19 +111,19 @@ When neither source names a goalie, the model estimates the starter from each go
 
 ### Injuries and missing regulars
 
-**Decided:** the model has a "missing regulars" feature: the value of the regular players who do not play in a game.
-
-- In the backtest, the missing regulars come from the NHL boxscores. Each team has a usual lineup from its recent games, and the boxscore shows who actually played. This data goes back to 2015, so the feature can be backtested.
-- In a live prediction, the missing regulars come from the ESPN injury feed. A player that ESPN lists as out does not play.
-- The backtest version uses the real lineup, so it is a best case, the same as the actual-starter run.
+**Decided:** the "missing regulars" feature (the value of the regular players who do not play in a game) is not in v1 (#8).
+The backtest can get absences only from the NHL boxscores, and those absences include trades, healthy scratches, call-ups, and rest days.
+A live prediction gets absences from the ESPN injury feed, which lists injuries only.
+A weight fitted on one basis and applied to the other gives wrong predictions.
 
 The ESPN feed lists only current injuries.
 The per-player injury endpoint on `sports.core.api.espn.com` returned 404 on 2026-11-02, so no injury history is available.
 For this reason, the backtest cannot use the ESPN feed itself.
 hockey-model stores each injury read with its fetch time, so a history builds up from now on.
 
-The builder decides how to define a regular and how to value a missing player.
-The NHL boxscores (ice time, points, shots) and the MoneyPuck skater game-by-game files are both available for this.
+When about a season of injury reads exists, #8 fits the feature on those reads, so the backtest and the live prediction use the same basis.
+The NHL boxscore skater rows are stored for the same reason.
+In v1, the injury reads only stop an injured goalie from being the estimated starter.
 
 ESPN overwrites the morning status after a game.
 Every past game that was checked (2021, 2024, and 2026) shows "Confirmed".
@@ -133,7 +134,7 @@ No source has a history of morning "likely" reads, except about 500 rows in leag
 The owner sometimes forgets the morning run, so every time-dependent read must handle a late run.
 For a game that has already started, the model uses the actual starter from the NHL boxscore.
 It does not raise an error and does not stop.
-The result notes what was missing.
+The result notes what was missing, and its `made_after_start` field is true.
 A score or a stat from a game in progress is never stored as final.
 
 ### Source failure
@@ -167,10 +168,12 @@ The prediction call reads only stored data and makes no network request.
 1. MoneyPuck expected-goals form for each team, from the games before this game.
 2. The starting goalie's goals saved above expected.
 3. Rest days for each team.
-4. Missing regulars for each team (owner decision, see "Injuries and missing regulars").
 
-Each feature is measured on its own in the backtest.
-A feature that does not lower the backtest log loss is left out of the final model.
+Missing regulars are not in v1 (see "Injuries and missing regulars").
+
+**My call:** a team with no rating, such as Vegas in 2017-18 and Seattle in 2021-22, starts at the initial rating, the same as in sportsbettr's Elo.
+Both teams start before the first scored season, so the start value has several seasons to settle, and the baseline Elo uses the same rule.
+Arizona and Utah are one franchise, so Utah keeps the Arizona rating.
 The builder decides the feature math, the weights, the fit, and how the expected-goals interval is made.
 
 ## The backtest
@@ -195,6 +198,18 @@ The model's own Elo core is the same code with the same constants, so a feature 
 **Decided:** the features are chosen only on 2015-16 to 2023-24, before any scored season.
 Choosing features on the scored games would make the result look better than it is.
 
+**Decided:** the success test is one joint test of all the features together against the Elo.
+Each feature's effect can be small, and small effects can add up.
+One test also avoids a spread of single-feature tests on the scored seasons.
+
+**Decided:** the goalie-guess run can veto a feature.
+On the 2022-23 and 2023-24 validation seasons, a feature is dropped when the Elo with that feature has a higher log loss than the Elo alone in the guess run.
+A goalie feature can help when the starter is known and hurt when the guess is wrong, and a live prediction often has only a likely starter.
+The validation seasons do not otherwise drop a feature, because the joint test is the test.
+
+**Decided:** when the joint test fails, hockey-model ships the Elo alone, with every feature weight at zero.
+The data, the goalie starters, and the API still ship, and the report still lists each feature's effect.
+
 **Decided:** the weights are refit for each scored season, from all seasons before it:
 
 1. Fit through 2023-24, then score 2024-25.
@@ -212,9 +227,9 @@ The backtest runs two ways:
 1. With the goalie who actually started. This is the best case.
 2. With no goalie known: the model guesses the starter from recent starts, the same as the production fallback. This shows the cost of a morning guess.
 
-**Decided:** the actual-starter run decides success and decides which features stay.
+**Decided:** the actual-starter run decides success.
 sportsbettr can read the goalies again close to the game, as leaguecheatr does, so the actual starter is close to what a bet sees.
-The guess run is reported, and it decides nothing.
+The guess run is reported, and it can only veto a feature, as above.
 
 **Decided:** the backtest uses today's MoneyPuck files for past games.
 MoneyPuck possibly trained its current expected-goals model on games after the scored seasons, and no older copies of the files exist.
@@ -223,6 +238,9 @@ The backtest report must state this limit in plain words next to every result th
 
 The backtest has no price data, so it does not say whether the model beats the market.
 sportsbettr answers that question in its own backtest, after it moves to hockey-model.
+
+**Decided:** the backtest can write one row per scored game: the game, the run, the predicted home win chance, and the result.
+Another person can then score the predictions against a market line outside hockey-model.
 
 **Decided:** a win against the Elo is necessary, but it does not show that the model makes money.
 A model can beat a naive baseline and still be worse than the market line.
@@ -282,15 +300,19 @@ These are separate projects, each with its own issue:
 - The first confirmed goalie, from ESPN or Daily Faceoff, wins. (Owner decision.)
 - Success is a lower log loss than a results-only Elo over the last two seasons. (Owner decision.)
 - Success here is necessary, not sufficient: sportsbettr must show a positive model weight in a blend with the market before it bets. (Owner decision, from review.)
-- The actual-starter run decides success and the features. The guess run is reported only. (Owner decision.)
+- The actual-starter run decides success. The guess run can veto a feature on the validation seasons. (Owner decision.)
+- One joint test of all the features against the Elo decides success. When it fails, the Elo alone ships. (Owner decision.)
+- The backtest can write per-game predictions for scoring against a market line outside hockey-model. (Owner decision.)
 - The backtest uses today's MoneyPuck files for past games, and the report states the leak. (Owner decision.)
-- "Beats" means the bootstrap interval on the per-game difference is fully below zero.
+- "Beats" means the block bootstrap interval on the per-game difference is fully below zero. Blocks are runs of games in start order, because games on one night share teams and goalies.
 - The two scored seasons are 2024-25 and 2025-26, with playoffs. Preseason is excluded.
 - The baseline Elo is sportsbettr's NHL Elo without the market shrink, and the model uses the same Elo core.
 - Features are chosen on 2015-16 to 2023-24. The weights are refit before each scored season, from all earlier seasons. (Owner decision.)
 - A goalie that ESPN lists as out cannot be the estimated starter.
-- A "missing regulars" feature: from NHL boxscores in the backtest, from the ESPN injury feed live. (Owner decision.)
+- The "missing regulars" feature waits for injury history (#8). (Owner decision.)
+- The result has a `made_after_start` field.
+- A new team starts at the initial Elo rating. Utah keeps the Arizona rating.
 - One shared SQLite database at a caller-set path. An unset path is an error.
 - The prediction call makes no network request. A refresh fills the database.
-- The model features are Elo, MoneyPuck expected-goals form, goalie goals saved above expected, rest days, and missing regulars, each tested on its own.
+- The candidate features are MoneyPuck expected-goals form, goalie goals saved above expected, and rest days, on top of the Elo.
 - Daily Faceoff lines are out of v1.

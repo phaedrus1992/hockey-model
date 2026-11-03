@@ -62,17 +62,18 @@ pytest and hypothesis for tests.
   - `class StarterSource(StrEnum)`: `ESPN = "espn"`, `DAILY_FACEOFF = "daily_faceoff"`, `NHL_BOXSCORE = "nhl_boxscore"`, `MODEL_GUESS = "model_guess"`.
   - `@dataclass(frozen=True, slots=True) class GoalieStart`: `player: Player`, `status: StarterStatus`, `source: StarterSource`, `read_at: datetime`.
   - `@dataclass(frozen=True, slots=True) class Game`: `game_id: int`, `home: str`, `away: str`, `start: datetime`, `home_goalie: GoalieStart | None = None`, `away_goalie: GoalieStart | None = None`.
-  - `class MissingKind(StrEnum)`: `GOALIE_UNCONFIRMED`, `GOALIE_UNKNOWN`, `XG_FORM`, `GOALIE_FORM`, `INJURIES`, `STALE_SOURCE`, `LATE_RUN` (values are the lowercase names).
+  - `class MissingKind(StrEnum)`: `GOALIE_UNCONFIRMED`, `GOALIE_UNKNOWN`, `XG_FORM`, `GOALIE_FORM`, `STALE_SOURCE`, `LATE_RUN` (values are the lowercase names).
   - `@dataclass(frozen=True, slots=True) class MissingInput`: `kind: MissingKind`, `team: str | None`, `note: str`.
-  - `@dataclass(frozen=True, slots=True) class GamePrediction`: `home_win: float`, `away_win: float`, `home_goals: Projection`, `away_goals: Projection`, `missing: tuple[MissingInput, ...]`, `credits: tuple[str, ...]`.
+  - `@dataclass(frozen=True, slots=True) class GamePrediction`: `home_win: float`, `away_win: float`, `home_goals: Projection`, `away_goals: Projection`, `missing: tuple[MissingInput, ...]`, `credits: tuple[str, ...]`, `made_after_start: bool = False`.
   - `GameModel` protocol in `models.py`: `def predict(self, game: Game, as_of: datetime, level: float) -> GamePrediction`.
-  - `def game_win_probability(game: Game, model: GameModel, *, as_of: datetime | None = None, level: float = 0.8) -> GamePrediction`.
+  - `def game_win_probability(game: Game, model: GameModel, *, as_of: datetime | None = None, level: float = 0.8) -> GamePrediction`. It sets `made_after_start = as_of >= game.start` on the result with `dataclasses.replace`, so no model can get it wrong.
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_game.py`:
   - `test_game_rejects_naive_start`: `Game(1, "TOR", "MTL", datetime(2026, 1, 1))` raises `ValueError` with "timezone".
   - `test_game_rejects_same_team`: `home == away` raises `ValueError`.
   - `test_game_rejects_nonpositive_id`: `game_id=0` raises `ValueError`.
   - `test_game_win_probability_returns_model_result`: a stub model returning `0.6, 0.4` gives `result.home_win == 0.6`.
+  - `test_made_after_start_flag`: `as_of` one second before `game.start` gives `False`; `as_of == game.start` and one second after give `True`, even when the stub model returns `True` or `False` the other way.
   - `test_game_win_probability_defaults_as_of_to_now`: the stub records `as_of`; it is aware UTC and within 5 seconds of `datetime.now(UTC)`.
   - `test_game_win_probability_rejects_bad_sum`: stub returns `0.6, 0.5`; raises `ProbabilityError` with "sum to 1.0".
   - `test_game_win_probability_rejects_nan`: stub returns `nan`; raises `ProbabilityError`.
@@ -189,7 +190,7 @@ pytest and hypothesis for tests.
 
 - [ ] **Step 1: Capture fixtures** with one request each through `HttpClient` from an `uv run python3 -c` one-liner. Pick a date in 2025-26 with an OT and a shootout game. Strip nothing.
 - [ ] **Step 2: Write the failing tests**:
-  - `test_parse_score_day_drops_preseason`, `test_parse_score_day_reads_final_scores`, `test_parse_score_day_marks_ot_and_so` (`last_period in {"OT", "SO"}`), `test_parse_score_day_future_game_is_not_final` (scores `None`, `is_final is False`).
+  - `test_parse_score_day_drops_preseason`, `test_parse_score_day_keeps_only_types_2_and_3` (copies of one fixture game with `gameType` 1, 4, 9, and 19 are dropped; 2 and 3 are kept), `test_parse_score_day_reads_final_scores`, `test_parse_score_day_marks_ot_and_so` (`last_period in {"OT", "SO"}`), `test_parse_score_day_future_game_is_not_final` (scores `None`, `is_final is False`).
   - `test_parse_score_day_rejects_missing_id`: delete `id` from a copy; raises `SourceShapeError` naming `id`.
   - `test_parse_boxscore_one_starter_per_team`, `test_parse_boxscore_toi_seconds` (`"18:30"` → 1110), `test_parse_boxscore_rejects_bad_toi` (`"1830"` → `SourceShapeError`).
   - `test_write_games_keeps_both_reads`: write a non-final row, then the final row for the same game; both rows remain.
@@ -316,7 +317,6 @@ pytest and hypothesis for tests.
   - `def final_games_before(conn, before: datetime) -> list[GameRow]`: the newest final read of each game.
   - `def team_games_before(conn, team: str, before: datetime, limit: int) -> list[GameRow]`: by franchise code, newest first.
   - `def goalie_starts_before(conn, team: str, before: datetime, limit: int) -> list[tuple[int, int]]` (game_id, nhl_id of the starter).
-  - `def skater_games_before(conn, team: str, before: datetime, limit: int) -> list[tuple[int, int, int]]` (game_id, nhl_id, goals + assists).
   - `def mp_team_form_before(conn, team: str, before: datetime, limit: int) -> list[tuple[float, float]]` (xg_for, xg_against).
   - `def mp_goalie_form_before(conn, nhl_id: int, before: datetime, limit: int) -> list[tuple[float, int]]`.
   - `@dataclass(frozen=True) class StarterReadRow`: `source: StarterSource`, `goalie_name: str`, `nhl_id: int | None`, `status: StarterStatus`, `fetched_at: datetime`.
@@ -363,8 +363,8 @@ pytest and hypothesis for tests.
   - `class EloBook`: `def update(self, game: GameRow) -> None` (franchise codes; `delta = K * (actual - expected) * log(1 + |margin|)`; a game that is not final raises `ValueError`), `def rating(self, team: str) -> float`, `def home_win_chance(self, home: str, away: str) -> float`.
   - `def replay(games: Iterable[GameRow]) -> EloBook` (games in start order).
 - Produces in `features.py`:
-  - `FEATURES = ("xg_form", "goalie_gsax", "rest", "missing_regulars")`.
-  - `FORM_WINDOW = 10`, `GOALIE_WINDOW = 20`, `REGULAR_WINDOW = 10`, `REGULAR_MIN_GAMES = 7`, `VALUE_WINDOW = 20`, `REST_CAP_DAYS = 4`.
+  - `FEATURES = ("xg_form", "goalie_gsax", "rest")`. Missing regulars wait for #8; the skater rows of Task 5 stay stored for it.
+  - `FORM_WINDOW = 10`, `GOALIE_WINDOW = 20`, `REST_CAP_DAYS = 4`.
   - `@dataclass(frozen=True) class FeatureRow`: `game_id: int`, `elo_logit: float`, `values: Mapping[str, float]`, `missing: tuple[MissingInput, ...]`, `uses_moneypuck: bool`.
   - `def build_features(conn, game: Game, as_of: datetime, elo: EloBook, *, goalie_mode: GoalieMode) -> FeatureRow`, with `class GoalieMode(StrEnum)`: `ACTUAL = "actual"` (the boxscore starter, backtest only), `READS = "reads"` (live: `resolve_goalie(use_reads=True)`), `GUESS = "guess"` (`resolve_goalie(use_reads=False)`).
 - Feature definitions (each is home minus away; `0.0` with a `MissingInput` when the data is absent):
@@ -372,17 +372,15 @@ pytest and hypothesis for tests.
   - `xg_form`: mean of `xg_for / (xg_for + xg_against)` over the last `FORM_WINDOW` MoneyPuck team games. Missing → `XG_FORM`.
   - `goalie_gsax`: the starter's mean `xg_against - goals_against` over his last `GOALIE_WINDOW` MoneyPuck goalie games. Missing → `GOALIE_FORM`.
   - `rest`: `min(days since the team's previous game start, REST_CAP_DAYS)`; first game in the store → `REST_CAP_DAYS`.
-  - `missing_regulars`: a regular is a skater who played in at least `REGULAR_MIN_GAMES` of the team's last `REGULAR_WINDOW` games. His value is his mean goals + assists per game over his last `VALUE_WINDOW` games. In `ACTUAL` mode, the absent regulars are those not in this game's boxscore. In `READS` mode, they are the regulars whose newest injury read `is_out`; no injury read newer than 24 hours → `INJURIES`. In `GUESS` mode, use `READS` rules. The feature is the summed value of the absent regulars, away minus home, so a positive value favors home.
 
 - [ ] **Step 1: Write the failing tests**:
   - `test_elo_matches_sportsbettr`: three games (home 4-1, away 2-3 in OT, home 1-0); assert the exact ratings computed by hand from the formula above, to 1e-9.
   - `test_elo_rejects_non_final_game`.
   - `test_elo_follows_franchise`: an `ARI` game moves the `UTA` rating.
+  - `test_elo_new_team_starts_at_initial`: a `VGK` game with no earlier `VGK` game uses `ELO_INITIAL` for `VGK`.
   - `test_features_use_only_games_before_start`: a game seeded after `game.start` does not change any value.
   - `test_xg_form_missing_reports_xg_form`.
   - `test_rest_back_to_back_is_one`, `test_rest_caps_at_four`.
-  - `test_missing_regulars_actual_mode`: a regular absent from the boxscore with 1.0 points per game gives `missing_regulars == 1.0` for the home side when he is an away player.
-  - `test_missing_regulars_reads_mode_stale_injuries_reports_injuries`.
   - A hypothesis test: `elo_expected(a, b) + elo_expected(b, a)` is not 1 (home advantage), but `0 < elo_expected(a, b) < 1` for all finite ratings in [1000, 2000].
 - [ ] **Step 2: Run** the tests. Expected: FAIL.
 - [ ] **Step 3: Implement** `elo.py` and `features.py`. One private function per feature.
@@ -407,7 +405,7 @@ pytest and hypothesis for tests.
   - `def save_fit(conn, fit: LogisticFit, fit_through_season: int, created_at: datetime) -> int`, `def newest_fit(conn) -> LogisticFit` (raises `StoreError` "run `hockey-model fit` first" when none).
   - `class NhlGameModel` implements `GameModel`: `__init__(self, conn, fit: LogisticFit, goalie_mode: GoalieMode = GoalieMode.READS)`. `predict` replays Elo through `final_games_before(as_of)` (cache the book by the newest game ID), builds features, applies the fit, and returns `GamePrediction`. `credits` holds `MONEYPUCK_CREDIT` when `uses_moneypuck`. A `source_reads` row with `ok=0` newer than the newest `ok=1` row for a source adds `STALE_SOURCE` naming that source.
   - Expected goals: `lambda_home` is the mean of the home team's `xg_for` and the away team's `xg_against` over `FORM_WINDOW` MoneyPuck games; without MoneyPuck rows, use actual goals from `team_games_before`. The interval is the Poisson quantiles at `(1 - level) / 2` and `(1 + level) / 2`.
-  - CLI: `hockey-model fit --through-season YYYYYYYY [--features a,b]` fits on every regular-season and playoff game from `FIT_FIRST` through that season, with Elo replayed from `ELO_BURN_IN`, and saves the fit. `hockey-model game GAME_ID [--level L]` loads the game from the store, uses `newest_fit`, and prints `GamePrediction` as JSON.
+  - CLI: `hockey-model fit --through-season YYYYYYYY [--features a,b]` (`--features ""` fits the Elo alone) fits on every regular-season and playoff game from `FIT_FIRST` through that season, with Elo replayed from `ELO_BURN_IN`, and saves the fit. `hockey-model game GAME_ID [--level L]` loads the game from the store, uses `newest_fit`, and prints `GamePrediction` as JSON.
 - The existing `player`, `team`, `matchup`, and `playoffs` commands keep the `CliRuntime` path unchanged.
 
 - [ ] **Step 1: Write the failing tests**:
@@ -455,26 +453,32 @@ pytest and hypothesis for tests.
   - The season constants come from `game_model/seasons.py` (Task 12).
   - `MONEYPUCK_LEAK_NOTE`: one plain sentence that says the MoneyPuck expected-goals model is today's model, and that MoneyPuck possibly trained it on games after the scored seasons.
   - `@dataclass(frozen=True) class ScoredRun`: `name: str`, `games: int`, `log_loss: float`, `brier: float`, `calibration: tuple[CalibrationBin, ...]`, `diff_vs_elo_ci: tuple[float, float] | None`.
-  - `@dataclass(frozen=True) class BacktestReport`: `selected_features: tuple[str, ...]`, `selection: Mapping[str, float]` (validation log loss for Elo alone and for Elo plus each feature), `runs: tuple[ScoredRun, ...]`, `success: bool`, `notes: tuple[str, ...]`, `credits: tuple[str, ...]`.
-  - `def run_backtest(conn) -> BacktestReport`.
+  - `@dataclass(frozen=True) class GameRecord`: `game_id: int`, `start: datetime`, `home: str`, `away: str`, `run: str`, `home_win_prob: float`, `home_won: bool`.
+  - `@dataclass(frozen=True) class BacktestReport`: `candidate_features: tuple[str, ...]`, `vetoed: tuple[str, ...]`, `tested_features: tuple[str, ...]`, `live_features: tuple[str, ...]`, `validation: Mapping[str, Mapping[str, float]]` (validation log loss by mode, `actual` and `guess`, for `elo` and for Elo plus each feature), `runs: tuple[ScoredRun, ...]`, `success: bool`, `notes: tuple[str, ...]`, `credits: tuple[str, ...]`.
+  - `def run_backtest(conn) -> tuple[BacktestReport, list[GameRecord]]`.
+  - `def write_game_records(path: Path, records: Sequence[GameRecord]) -> None`: CSV with a header row of the field names; `start` as ISO 8601 UTC.
 - Steps inside `run_backtest`:
   1. Replay Elo in start order from `ELO_BURN_IN`. Build each game's features with `as_of = game.start`, before the game updates the Elo. Games of `ELO_BURN_IN` are not used in any fit.
-  2. Feature selection in `ACTUAL` mode: fit Elo alone, and Elo plus each feature alone, on `SELECT_TRAIN`; score on `SELECT_VALIDATE`. Keep each feature whose validation log loss is lower than Elo alone.
-  3. For each scored season: fit the kept features on every game from `FIT_FIRST` through the season before it, then score that season's games once.
+  2. Guess veto: fit Elo alone, and Elo plus each feature alone, on `SELECT_TRAIN`, in `ACTUAL` and in `GUESS` mode; score each on `SELECT_VALIDATE` in the same mode and store all of it in `validation`. Veto a feature whose `GUESS` validation log loss is higher than Elo alone in `GUESS` mode. `ACTUAL` mode drops no feature. `tested_features` is `FEATURES` minus `vetoed`.
+  3. For each scored season: fit `tested_features` together on every game from `FIT_FIRST` through the season before it, then score that season's games once.
   4. Score these runs over both scored seasons together: `home_rate` (the home win rate of the fit games), `elo` (sportsbettr Elo, `elo_expected` only, no fit), `model_actual` (`ACTUAL` mode), and `model_guess` (`GUESS` mode, same fits).
   5. `diff_vs_elo_ci` is `block_bootstrap_mean_ci` of the per-game log loss of the run minus that of `elo`.
-  6. `success` is true when `model_actual.diff_vs_elo_ci[1] < 0`. `model_guess` never changes `success`.
-  7. Add `MONEYPUCK_LEAK_NOTE` to `notes` and `MONEYPUCK_CREDIT` to `credits` when a kept feature uses MoneyPuck.
-- CLI: `hockey-model backtest` prints `BacktestReport` as JSON and exits 0 whether or not `success` is true.
+  6. `success` is true when `model_actual.diff_vs_elo_ci[1] < 0`. This is the one success test. `model_guess` never changes `success`.
+  7. `live_features` is `tested_features` when `success`, else `()`, which means the Elo alone ships.
+  8. Add `MONEYPUCK_LEAK_NOTE` to `notes` and `MONEYPUCK_CREDIT` to `credits` when a tested feature uses MoneyPuck.
+  9. Return one `GameRecord` per scored game for each of the runs `elo`, `model_actual`, and `model_guess`.
+- CLI: `hockey-model backtest [--games-out PATH]` prints `BacktestReport` as JSON and exits 0 whether or not `success` is true. With `--games-out`, it also writes the game records. The file has no price data.
 
 - [ ] **Step 1: Write the failing tests** on a small synthetic store (a few teams, seasons shortened by monkeypatching the season constants):
   - `test_backtest_features_see_no_own_result`: spy on `build_features`. For each game, `as_of == game.start`, and the `EloBook` passed in has the same ratings as a replay of the earlier games only.
-  - `test_backtest_drops_useless_feature`: a feature of pure noise is not in `selected_features`.
-  - `test_backtest_keeps_useful_feature`: a feature that shifts the true win chance by a known amount is kept.
+  - `test_backtest_vetoes_feature_that_hurts_guess_run`: a goalie feature that is right for the actual starter and wrong for the guessed starter is in `vetoed` and not in `tested_features`.
+  - `test_backtest_actual_mode_does_not_drop`: a noise feature that does not hurt the guess run stays in `tested_features`.
+  - `test_backtest_useful_features_pass_joint_test`: features that shift the true win chance by a known amount give `success` true and `live_features == tested_features`.
+  - `test_backtest_failed_joint_test_ships_elo_only`: noise features only give `success` false and `live_features == ()`.
   - `test_backtest_refits_per_season`: the fit for the second scored season includes the first scored season (assert on the `fit_through_season` passed to the fit).
   - `test_backtest_guess_run_does_not_set_success`.
-  - `test_backtest_notes_moneypuck_leak` when `xg_form` is kept.
-  - `test_cli_backtest_prints_report`.
+  - `test_backtest_notes_moneypuck_leak` when `xg_form` is tested.
+  - `test_cli_backtest_prints_report` and `test_cli_backtest_writes_games_out`: the CSV has one row per scored game per run, and its header names the `GameRecord` fields.
 - [ ] **Step 2: Run** the tests. Expected: FAIL.
 - [ ] **Step 3: Implement** `runner.py` and the command. Keep each step above in its own function.
 - [ ] **Step 4: Run** the tests. Expected: PASS.
@@ -487,8 +491,8 @@ pytest and hypothesis for tests.
 - Create: `docs/backtest/2026-11-nhl-game-model.md`
 
 - [ ] **Step 1: Backfill.** Run `HOCKEY_MODEL_DB=<path> uv run hockey-model refresh --backfill-from 2014-10-01`. The NHL boxscores are about 16,000 requests, so run it in the background and watch its output. Run it again until it exits 0.
-- [ ] **Step 2: Run** `uv run hockey-model backtest > .tmp/backtest.json`. Record the selected features, every run's log loss, Brier score, and interval, the `success` value, and the MoneyPuck note in `docs/backtest/2026-11-nhl-game-model.md`. A failed success test is a result to record, not a reason to change the scored seasons.
-- [ ] **Step 3: Fit** the live model: `uv run hockey-model fit --through-season 20252026` with the selected features.
+- [ ] **Step 2: Run** `uv run hockey-model backtest --games-out .tmp/backtest-games.csv > .tmp/backtest.json`. Record the vetoed, tested, and live features, every run's log loss, Brier score, and interval, the `success` value, and the MoneyPuck note in `docs/backtest/2026-11-nhl-game-model.md`. A failed success test is a result to record, not a reason to change the scored seasons.
+- [ ] **Step 3: Fit** the live model: `uv run hockey-model fit --through-season 20252026 --features <live_features>`. An empty `live_features` fits the Elo alone.
 - [ ] **Step 4: Update `README.md`**: the README no longer says that hockey-model ships no production model. Add the `refresh`, `fit`, `game`, and `backtest` commands, the `HOCKEY_MODEL_DB` setting, the data sources, and the MoneyPuck credit and its non-commercial term.
 - [ ] **Step 5: Update the spec** for any change that the work made to a decision in it.
 - [ ] **Step 6: Add** a `CHANGELOG.md` entry under `Unreleased` with the `keepachangelog` skill.
