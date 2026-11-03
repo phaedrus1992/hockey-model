@@ -46,6 +46,18 @@ def failed_since(conn: sqlite3.Connection, source: str, url: str, since: datetim
     return row is not None and not row[0] and parse_iso_utc(row[1]) > since
 
 
+def failed_urls(conn: sqlite3.Connection, source: str) -> list[str]:
+    """Return the URLs of ``source`` whose newest read failed, in name order."""
+    cursor = conn.execute(
+        "SELECT r.url FROM source_reads r JOIN"
+        " (SELECT url, MAX(fetched_at) AS newest FROM source_reads WHERE source = ?"
+        "  GROUP BY url) n ON r.url = n.url AND r.fetched_at = n.newest"
+        " WHERE r.source = ? AND r.ok = 0 ORDER BY r.url",
+        (source, source),
+    )
+    return [url for (url,) in cursor]
+
+
 def stale_sources(conn: sqlite3.Connection, as_of: datetime) -> list[tuple[str, str]]:
     """Return ``(source, reason)`` for each known source that is not current at ``as_of``.
 

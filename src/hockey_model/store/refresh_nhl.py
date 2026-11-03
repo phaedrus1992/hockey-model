@@ -11,7 +11,7 @@ from hockey_model.sources.nhl import (
 )
 from hockey_model.store.nhl_writes import games_missing_boxscore, write_boxscore, write_games
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun, game_day
-from hockey_model.store.source_reads import failed_since, last_ok_read
+from hockey_model.store.source_reads import failed_since, failed_urls, last_ok_read
 from hockey_model.store.timestamps import parse_iso_utc
 
 SCORES = "nhl_scores"
@@ -28,6 +28,17 @@ OVERLAP = timedelta(days=1)
 RETRY_FAILED_AFTER = timedelta(days=1)
 # Days ahead of today that a refresh reads, for the schedule.
 SCHEDULE_DAYS_AHEAD = 2
+# A score day whose newest read failed is read again by every refresh in this window. A day
+# that stays broken for longer, such as a preseason day, is left to the report of its first
+# failure so that it does not fail every refresh for good.
+FAILED_DAY_RETRY_WINDOW = timedelta(days=30)
+
+
+def _failed_days(run: RefreshRun) -> list[date]:
+    """Return the recent score days whose newest read failed."""
+    oldest = game_day(run.now - FAILED_DAY_RETRY_WINDOW)
+    days = (date.fromisoformat(url.rsplit("/", 1)[1]) for url in failed_urls(run.conn, SCORES))
+    return [day for day in days if day >= oldest]
 
 
 def _first_day(run: RefreshRun) -> date:
@@ -39,7 +50,7 @@ def _first_day(run: RefreshRun) -> date:
     ).fetchone()
     if newest is None:
         return game_day(run.now - DEFAULT_LOOKBACK)
-    return game_day(parse_iso_utc(newest) - OVERLAP)
+    return min([game_day(parse_iso_utc(newest) - OVERLAP), *_failed_days(run)])
 
 
 def _day_complete(run: RefreshRun, day: date) -> bool:
@@ -61,7 +72,9 @@ def score_days(run: RefreshRun) -> None:
             left = (last_day - day).days + 1
             run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
             return
-        if not _day_complete(run, day):
+        if _day_complete(run, day):
+            failures = 0
+        else:
             current = day
 
             def unit(stamp: datetime, current: date = current) -> int:

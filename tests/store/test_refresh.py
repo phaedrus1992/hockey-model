@@ -301,3 +301,44 @@ def test_skipped_boxscores_are_counted_in_the_notes(conn: sqlite3.Connection) ->
         conn, FakeClient({bad: SourceError("nhl", bad, "HTTP 404")}), now=NOW + timedelta(hours=2)
     )
     assert any("nhl_boxscores: 1 skipped" in n for n in report.notes)
+
+
+def _failing_days(*days: str) -> dict[str, bytes | Exception]:
+    return {f"{SCORE_URL}{day}": SourceError("nhl", "u", "HTTP 503") for day in days}
+
+
+def _score_requests(client: FakeClient) -> list[str]:
+    return [u[len(SCORE_URL) :] for u in client.urls if u.startswith(SCORE_URL)]
+
+
+def test_a_failed_score_day_is_read_again_by_the_next_refresh(conn: sqlite3.Connection) -> None:
+    refresh(conn, FakeClient(_failing_days("2026-01-07")), now=NOW, backfill_from=date(2026, 1, 6))
+    client = FakeClient()
+    report = refresh(conn, client, now=NOW + timedelta(hours=1))
+    assert "2026-01-07" in _score_requests(client)
+    assert report.errors == ()
+
+
+def test_a_score_day_that_worked_is_not_read_again_for_an_old_failure(
+    conn: sqlite3.Connection,
+) -> None:
+    refresh(conn, FakeClient(_failing_days("2026-01-07")), now=NOW, backfill_from=date(2026, 1, 6))
+    refresh(conn, FakeClient(), now=NOW + timedelta(hours=1))
+    client = FakeClient()
+    refresh(conn, client, now=NOW + timedelta(hours=2))
+    assert "2026-01-07" not in _score_requests(client)
+
+
+def test_a_failed_score_day_older_than_the_window_is_left_alone(conn: sqlite3.Connection) -> None:
+    refresh(conn, FakeClient(_failing_days("2025-11-01")), now=NOW, backfill_from=date(2025, 11, 1))
+    client = FakeClient()
+    refresh(conn, client, now=NOW + timedelta(hours=1))
+    assert "2025-11-01" not in _score_requests(client)
+
+
+def test_failed_days_apart_do_not_stop_the_refresh_before_today(conn: sqlite3.Connection) -> None:
+    days = ("2026-01-02", "2026-01-04", "2026-01-06")
+    refresh(conn, FakeClient(_failing_days(*days)), now=NOW, backfill_from=date(2026, 1, 1))
+    client = FakeClient(_failing_days(*days))
+    refresh(conn, client, now=NOW + timedelta(hours=1))
+    assert "2026-01-10" in _score_requests(client)
