@@ -319,3 +319,13 @@ def test_the_game_csv_reads_back_to_the_records(records: list[GameRecord], tmp_p
         for row in table
     ]
     assert back == records
+
+
+def test_the_notes_say_why_the_two_model_runs_are_equal_without_a_goalie_feature() -> None:
+    notes = runner._notes(("rest", "xg_form"), ("goalie_gsax",), success=True)
+    assert runner.GUESS_EQUALS_ACTUAL_NOTE in notes
+
+
+def test_the_notes_leave_out_that_remark_when_a_goalie_feature_is_tested() -> None:
+    notes = runner._notes(("goalie_gsax", "rest"), (), success=True)
+    assert runner.GUESS_EQUALS_ACTUAL_NOTE not in notes

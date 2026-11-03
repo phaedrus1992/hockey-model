@@ -34,6 +34,11 @@ MONEYPUCK_LEAK_NOTE = (
     "games after the scored seasons, so results that use MoneyPuck data may look better than "
     "they would have then."
 )
+GOALIE_FEATURE = "goalie_gsax"
+GUESS_EQUALS_ACTUAL_NOTE = (
+    "No tested feature reads the starting goalie, so the actual run and the guess run are the "
+    "same by construction. The equal scores do not show that a wrong goalie costs nothing."
+)
 INJURY_HISTORY_NOTE = (
     "The store has no ESPN injury history before it began to keep injury reads, so the goalie "
     "guess run never leaves out an injured goalie. The live model does."
@@ -222,6 +227,8 @@ def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple
         notes.append("The joint test failed, so the Elo alone ships.")
     if MONEYPUCK_FEATURES & set(tested):
         notes.append(MONEYPUCK_LEAK_NOTE)
+    if GOALIE_FEATURE not in tested:
+        notes.append(GUESS_EQUALS_ACTUAL_NOTE)
     notes.append(INJURY_HISTORY_NOTE)
     return tuple(notes)
 
