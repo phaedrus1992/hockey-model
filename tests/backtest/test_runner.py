@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from hockey_model.backtest import runner
 from hockey_model.backtest.runner import (
@@ -22,6 +24,7 @@ from hockey_model.game_model.seasons import SeasonPlan
 from hockey_model.game_model.training import TrainingRow
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
 from hockey_model.sources.nhl import GameRow
+from hockey_model.store.timestamps import parse_iso_utc
 from hockey_model.types import HockeyModelError
 
 PLAN = SeasonPlan(
@@ -278,3 +281,41 @@ def test_the_report_has_no_missing_counts_when_nothing_is_missing(feed) -> None:
 def test_the_notes_say_the_guess_run_has_no_injury_history(feed) -> None:
     report, _ = run(dataset(), feed)
     assert runner.INJURY_HISTORY_NOTE in report.notes
+
+
+_RECORDS = st.builds(
+    GameRecord,
+    game_id=st.integers(1, 10**10),
+    start=st.datetimes(
+        min_value=datetime(2000, 1, 1), max_value=datetime(2100, 1, 1), timezones=st.just(UTC)
+    ),
+    home=st.sampled_from(["TOR", "BOS", "UTA"]),
+    away=st.sampled_from(["NYR", "EDM", "SEA"]),
+    run=st.sampled_from(["elo", "model_actual", "model_guess"]),
+    home_win_prob=st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+    home_won=st.booleans(),
+)
+
+
+@settings(
+    max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(records=st.lists(_RECORDS, min_size=1, max_size=8))
+def test_the_game_csv_reads_back_to_the_records(records: list[GameRecord], tmp_path: Path) -> None:
+    target = tmp_path / "games.csv"
+    write_game_records(target, records)
+    with target.open(newline="") as handle:
+        table = list(csv.DictReader(handle))
+    back = [
+        GameRecord(
+            int(row["game_id"]),
+            parse_iso_utc(row["start"]),
+            row["home"],
+            row["away"],
+            row["run"],
+            float(row["home_win_prob"]),
+            row["home_won"] == "True",
+        )
+        for row in table
+    ]
+    assert back == records
