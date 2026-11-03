@@ -1,12 +1,12 @@
 """Public input and output types for the NHL game win probability model."""
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from hockey_model.matchup import check_win_pair
 from hockey_model.models import GameModel
-from hockey_model.types import Player, Projection
+from hockey_model.types import HockeyModelError, Player, Projection
 
 
 class StarterStatus(StrEnum):
@@ -47,7 +47,7 @@ class GoalieStart:
     read_at: datetime
 
     def __post_init__(self) -> None:
-        _require_aware(self.read_at, "read_at")
+        _require_utc(self.read_at, "read_at")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,12 +63,14 @@ class Game:
 
     def __post_init__(self) -> None:
         if self.game_id <= 0:
-            raise ValueError(f"game_id must be positive, got {self.game_id}")
-        if not self.home.strip() or not self.away.strip():
-            raise ValueError("home and away team codes must not be empty")
-        if self.home == self.away:
-            raise ValueError(f"home and away must differ, both are {self.home!r}")
-        _require_aware(self.start, "start")
+            raise HockeyModelError(f"game_id must be positive, got {self.game_id}")
+        home = self.home.strip()
+        away = self.away.strip()
+        if not home or not away:
+            raise HockeyModelError("home and away team codes must not be empty")
+        if home == away:
+            raise HockeyModelError(f"home and away must differ, both are {home!r}")
+        _require_utc(self.start, "start")
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,14 +104,26 @@ def game_win_probability(
 ) -> GamePrediction:
     """Predict a game as known at ``as_of``, defaulting to the current UTC time."""
     if not 0.0 < level < 1.0:
-        raise ValueError(f"level must be inside the open interval (0, 1), got {level}")
+        raise HockeyModelError(f"level must be inside the open interval (0, 1), got {level}")
     moment = datetime.now(UTC) if as_of is None else as_of
-    _require_aware(moment, "as_of")
+    _require_utc(moment, "as_of")
     result = model.predict(game, moment, level)
-    check_win_pair((result.home_win, result.away_win), "predict game")
-    return replace(result, made_after_start=moment >= game.start)
+    label = f"predict game {game.game_id} ({game.away} at {game.home})"
+    check_win_pair((result.home_win, result.away_win), label)
+    made_after_start = moment >= game.start
+    missing = result.missing
+    if made_after_start:
+        late = MissingInput(
+            MissingKind.LATE_RUN,
+            None,
+            "prediction made after puck drop; inputs are as of the game start",
+        )
+        missing = (*result.missing, late)
+    return replace(result, missing=missing, made_after_start=made_after_start)
 
 
-def _require_aware(value: datetime, field: str) -> None:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field} must be timezone-aware UTC, got a naive datetime")
+def _require_utc(value: datetime, field: str) -> None:
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise HockeyModelError(
+            f"{field} must be a timezone-aware UTC datetime (offset +00:00), got {value!r}"
+        )

@@ -1,12 +1,12 @@
 """Tests for the public NHL game input and the game win probability entry point."""
 
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from hockey_model.game import Game, GamePrediction, game_win_probability
-from hockey_model.types import ProbabilityError, Projection
+from hockey_model.game import Game, GamePrediction, MissingKind, game_win_probability
+from hockey_model.types import HockeyModelError, ProbabilityError, Projection
 
 START = datetime(2026, 1, 10, 0, 0, tzinfo=UTC)
 
@@ -43,23 +43,23 @@ class StubModel:
         )
 
 
-def _game(*, game_id: int = 1, away: str = "CAR") -> Game:
-    return Game(game_id=game_id, home="TOR", away=away, start=START)
+def _game(*, game_id: int = 1, away: str = "TOR") -> Game:
+    return Game(game_id=game_id, home="CAR", away=away, start=START)
 
 
 def test_game_rejects_naive_start() -> None:
-    with pytest.raises(ValueError, match="timezone"):
-        Game(1, "TOR", "CAR", datetime(2026, 1, 1))
+    with pytest.raises(HockeyModelError, match="timezone"):
+        Game(1, "CAR", "TOR", datetime(2026, 1, 1))
 
 
 def test_game_rejects_same_team() -> None:
-    with pytest.raises(ValueError, match="differ"):
-        _game(away="TOR")
+    with pytest.raises(HockeyModelError, match="differ"):
+        _game(away="CAR")
 
 
 @pytest.mark.parametrize("game_id", [0, -4])
 def test_game_rejects_nonpositive_id(game_id: int) -> None:
-    with pytest.raises(ValueError, match="game_id"):
+    with pytest.raises(HockeyModelError, match="game_id"):
         _game(game_id=game_id)
 
 
@@ -107,10 +107,31 @@ def test_game_win_probability_rejects_nan() -> None:
 
 @pytest.mark.parametrize("level", [0.0, 1.0])
 def test_game_win_probability_rejects_bad_level(level: float) -> None:
-    with pytest.raises(ValueError, match="level"):
+    with pytest.raises(HockeyModelError, match="level"):
         game_win_probability(_game(), StubModel(), as_of=START, level=level)
 
 
 def test_game_win_probability_rejects_naive_as_of() -> None:
-    with pytest.raises(ValueError, match="timezone"):
+    with pytest.raises(HockeyModelError, match="timezone"):
         game_win_probability(_game(), StubModel(), as_of=datetime(2026, 1, 9))
+
+
+def test_late_prediction_names_missing_late_run() -> None:
+    result = game_win_probability(_game(), StubModel(), as_of=START)
+    assert [item.kind for item in result.missing] == [MissingKind.LATE_RUN]
+
+
+def test_pregame_prediction_has_no_late_run_note() -> None:
+    result = game_win_probability(_game(), StubModel(), as_of=START - timedelta(seconds=1))
+    assert result.missing == ()
+
+
+def test_game_rejects_non_utc_offset() -> None:
+    eastern = timezone(timedelta(hours=-5))
+    with pytest.raises(HockeyModelError, match="UTC"):
+        Game(1, "CAR", "TOR", datetime(2026, 1, 10, 0, 0, tzinfo=eastern))
+
+
+def test_game_rejects_same_team_ignoring_padding() -> None:
+    with pytest.raises(HockeyModelError, match="differ"):
+        Game(1, "CAR", " CAR ", START)
