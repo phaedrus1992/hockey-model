@@ -57,9 +57,10 @@ def test_name_key_never_raises(name: str) -> None:
     assert key is None or (len(key[0]) == 1 and key[1])
 
 
+_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
 _WORDS = st.text(
     alphabet=st.characters(min_codepoint=97, max_codepoint=122), min_size=2, max_size=8
-)
+).filter(lambda word: word not in _SUFFIXES)
 
 
 @given(_WORDS, _WORDS)

@@ -46,22 +46,22 @@ class _Goalies:
         codes = franchise_codes(self._team_code)
         return [p for p in self.league if p.team_code in codes]
 
-    def find(self, name: str) -> tuple[Player | None, str]:
-        """Return the goalie that ``name`` means, or ``None`` and the reason.
+    def find(self, name: str) -> tuple[Player | None, str, bool]:
+        """Return the goalie that ``name`` means, or ``None``, the reason, and ambiguity.
 
         A goalie that was traded may not have played for the new team yet, so a name
         that matches nobody on the team is looked up in the whole league. Two matches
         are never resolved by a guess.
         """
         if name_key(name) is None:
-            return None, f"goalie name {name!r} has no first name or initial and a surname"
+            return None, f"goalie name {name!r} has no first name or initial and a surname", False
         for pool in (self.team, self.league):
             found = matching_players(name, pool)
             if len(found) == 1:
-                return found[0], ""
+                return found[0], "", False
             if len(found) > 1:
-                return None, f"goalie name {name!r} matches {len(found)} goalies"
-        return None, f"goalie name {name!r} matches no goalie in the store"
+                return None, f"goalie name {name!r} matches {len(found)} goalies", True
+        return None, f"goalie name {name!r} matches no goalie in the store", False
 
 
 def _unknown(team: str, note: str) -> MissingInput:
@@ -101,7 +101,7 @@ def _from_reads(
     for read in reads:
         if read.status is StarterStatus.UNKNOWN:
             continue
-        player, why = goalies.find(read.goalie_name)
+        player, why, _ = goalies.find(read.goalie_name)
         if player is None:
             notes.append(_unknown(team, why))
         elif read.status is StarterStatus.CONFIRMED and confirmed is None:
@@ -116,27 +116,38 @@ def _from_reads(
     return likely, notes
 
 
+def _injured_goalies(
+    conn: sqlite3.Connection, goalies: _Goalies, team: str, as_of: datetime
+) -> tuple[set[int | None], list[MissingInput]]:
+    """Return the ids of the team's goalies who are out, and a note for each unclear name."""
+    out: set[int | None] = set()
+    notes: list[MissingInput] = []
+    for injury in injury_reads_before(conn, as_of):
+        if not injury.is_out or injury.team not in franchise_codes(team):
+            continue
+        player, why, ambiguous = goalies.find(injury.player_name)
+        if player is not None:
+            out.add(player.nhl_id)
+        elif ambiguous:
+            notes.append(_unknown(team, f"an injured player is unclear: {why}"))
+    return out, notes
+
+
 def _guess(
     conn: sqlite3.Connection, goalies: _Goalies, team: str, as_of: datetime
-) -> GoalieStart | None:
+) -> tuple[GoalieStart | None, list[MissingInput]]:
     starts = goalie_starts_before(conn, team, as_of, STARTER_WINDOW)
     counts = Counter(nhl_id for _, nhl_id in starts)
-    out = {
-        p.nhl_id
-        for injury in injury_reads_before(conn, as_of)
-        if injury.is_out and injury.team in franchise_codes(team)
-        for p in [goalies.find(injury.player_name)[0]]
-        if p is not None
-    }
+    out, notes = _injured_goalies(conn, goalies, team, as_of)
     order = {nhl_id: rank for rank, (_, nhl_id) in enumerate(reversed(starts))}
     ranked = sorted(
         (nhl_id for nhl_id in counts if nhl_id not in out),
         key=lambda nhl_id: (-counts[nhl_id], -order[nhl_id]),
     )
     if not ranked:
-        return None
+        return None, notes
     player = goalies.catalog.resolve(ranked[0])
-    return GoalieStart(player, StarterStatus.UNKNOWN, StarterSource.MODEL_GUESS, as_of)
+    return GoalieStart(player, StarterStatus.UNKNOWN, StarterSource.MODEL_GUESS, as_of), notes
 
 
 def resolve_goalie(
@@ -175,7 +186,8 @@ def resolve_goalie(
         )
         if chosen is not None:
             return chosen, tuple(notes)
-    guessed = _guess(conn, goalies, team, as_of)
+    guessed, injury_notes = _guess(conn, goalies, team, as_of)
+    notes = [*notes, *injury_notes]
     why = "no source names the starter; the goalie with the most recent starts is used"
     if guessed is None:
         why = "no source names the starter, and the store has no goalie start for the team"

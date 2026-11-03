@@ -13,7 +13,7 @@ from hockey_model.game_model.features import GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, LogisticFit
 from hockey_model.game_model.nhl_model import LEAGUE_GOALS, NhlGameModel
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
-from hockey_model.store.source_reads import record_read
+from hockey_model.store.source_reads import KNOWN_SOURCES, record_read
 
 START = utc("2026-01-20T00:00")
 AS_OF = utc("2026-01-19T16:00")
@@ -61,22 +61,55 @@ def test_no_credit_without_moneypuck_rows(store: sqlite3.Connection) -> None:
     assert model(store).predict(GAME, AS_OF, 0.8).credits == ()
 
 
+def read_every_source(store: sqlite3.Connection, when: str) -> None:
+    for source in KNOWN_SOURCES:
+        record_read(store, source, "u", utc(when))
+
+
+def stale_notes(result) -> list[str]:
+    return [m.note for m in result.missing if m.kind is MissingKind.STALE_SOURCE]
+
+
 def test_nhl_model_reports_stale_source(store: sqlite3.Connection) -> None:
     season(store)
-    record_read(store, "espn_starters", "u", utc("2026-01-19T10:00"))
+    read_every_source(store, "2026-01-19T10:00")
     record_read(store, "espn_starters", "u", utc("2026-01-19T12:00"), error="HTTP 503")
-    record_read(store, "daily_faceoff", "u", utc("2026-01-19T12:00"))
-    result = model(store).predict(GAME, AS_OF, 0.8)
-    stale = [m for m in result.missing if m.kind is MissingKind.STALE_SOURCE]
-    assert len(stale) == 1
-    assert "espn_starters" in stale[0].note
+    notes = stale_notes(model(store).predict(GAME, AS_OF, 0.8))
+    assert notes == ["espn_starters: the newest read of it failed"]
 
 
 def test_a_later_good_read_clears_the_stale_flag(store: sqlite3.Connection) -> None:
+    read_every_source(store, "2026-01-19T10:00")
     record_read(store, "espn_starters", "u", utc("2026-01-19T12:00"), error="HTTP 503")
     record_read(store, "espn_starters", "u", utc("2026-01-19T13:00"))
-    result = model(store).predict(GAME, AS_OF, 0.8)
-    assert MissingKind.STALE_SOURCE not in [m.kind for m in result.missing]
+    assert stale_notes(model(store).predict(GAME, AS_OF, 0.8)) == []
+
+
+def test_a_source_that_was_never_read_is_reported(store: sqlite3.Connection) -> None:
+    notes = stale_notes(model(store).predict(GAME, AS_OF, 0.8))
+    assert len(notes) == len(KNOWN_SOURCES)
+    assert "moneypuck: no read of it has worked yet" in notes
+
+
+def test_a_failure_alone_is_not_a_good_read(store: sqlite3.Connection) -> None:
+    read_every_source(store, "2026-01-19T10:00")
+    record_read(store, "moneypuck", "u2", utc("2026-01-19T14:00"), error="HTTP 503")
+    assert stale_notes(model(store).predict(GAME, AS_OF, 0.8)) == [
+        "moneypuck: the newest read of it failed"
+    ]
+
+
+def test_a_clamped_goal_rate_is_named(store: sqlite3.Connection) -> None:
+    # MoneyPuck rows of 0.0 make every rate zero, so each side is raised to the floor.
+    for day in (15, 16):
+        add_game(store, day, f"2026-01-{day}T00:00", home="TOR", away="MTL", score=(1, 0))
+        add_game(store, day + 100, f"2026-01-{day}T00:00", home="MTL", away="BOS", score=(1, 0))
+        for team in ("TOR", "MTL"):
+            add_team_form(store, day, team, 0.0, 0.0)
+        for team in ("MTL", "BOS"):
+            add_team_form(store, day + 100, team, 0.0, 0.0)
+    notes = [m.note for m in model(store).predict(GAME, AS_OF, 0.8).missing]
+    assert sum("are raised" in note for note in notes) == 2
 
 
 def test_nhl_model_makes_no_network_call(
