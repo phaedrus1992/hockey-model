@@ -143,6 +143,7 @@ class HttpClient:
             try:
                 return self._opener(request, TIMEOUT_S)
             except HTTPError as exc:
+                exc.close()
                 if not _is_retryable_status(exc.code):
                     raise SourceError(source, url, f"HTTP {exc.code}") from exc
                 reason = f"HTTP {exc.code}"
