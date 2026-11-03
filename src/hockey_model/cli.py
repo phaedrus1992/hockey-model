@@ -220,7 +220,7 @@ def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -
             file=sys.stderr,
         )
         return 2
-    except Exception:
-        print("error: unexpected failure; check the model configuration", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001  # the last guard turns any bug into exit 2
+        print(f"error: unexpected failure: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     return 0

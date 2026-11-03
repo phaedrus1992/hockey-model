@@ -377,3 +377,16 @@ def test_cli_backtest_games_out_to_a_bad_path_names_the_error(
     err = capsys.readouterr().err
     assert "FileNotFoundError" in err
     assert "check the file path" in err
+
+
+def test_an_unexpected_store_failure_names_its_type_and_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom(args: object) -> tuple[object, int]:
+        raise RuntimeError("the table is gone")
+
+    monkeypatch.setattr(cli, "run_store_command", boom)
+    assert cli.main(["refresh"]) == 2
+    err = capsys.readouterr().err
+    assert "RuntimeError: the table is gone" in err
+    assert "model configuration" not in err
