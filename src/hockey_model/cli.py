@@ -198,7 +198,7 @@ def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -
         args = _parser().parse_args(argv)
         if args.command in STORE_COMMANDS:
             payload, code = run_store_command(args)
-            print(json.dumps(payload, sort_keys=True))
+            print(json.dumps(payload, default=_json_default, sort_keys=True))
             return code
         if runtime is None:
             raise ModelNotConfiguredError(

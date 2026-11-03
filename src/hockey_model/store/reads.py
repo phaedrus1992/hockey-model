@@ -207,3 +207,13 @@ def player_catalog(conn: sqlite3.Connection) -> Catalog:
         for nhl_id, name, position, team in cursor
     ]
     return Catalog(players)
+
+
+def game_row(conn: sqlite3.Connection, game_id: int) -> GameRow | None:
+    """Return the newest read of one game in any state, or ``None`` when it is not stored."""
+    row = conn.execute(
+        f"SELECT {_GAME_COLUMNS} FROM games g WHERE g.game_id = ?"
+        " ORDER BY g.fetched_at DESC LIMIT 1",
+        (game_id,),
+    ).fetchone()
+    return None if row is None else _game_row(row)

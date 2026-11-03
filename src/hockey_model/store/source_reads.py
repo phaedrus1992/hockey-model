@@ -37,3 +37,15 @@ def failed_since(conn: sqlite3.Connection, source: str, url: str, since: datetim
         (source, url),
     ).fetchone()
     return row is not None and not row[0] and parse_iso_utc(row[1]) > since
+
+
+def stale_sources(conn: sqlite3.Connection, as_of: datetime) -> list[str]:
+    """Return the sources whose newest read before ``as_of`` failed, in name order."""
+    cursor = conn.execute(
+        "SELECT r.source FROM source_reads r JOIN (SELECT source, MAX(fetched_at) AS latest"
+        " FROM source_reads WHERE fetched_at <= ? GROUP BY source) n"
+        " ON r.source = n.source AND r.fetched_at = n.latest WHERE r.ok = 0"
+        " GROUP BY r.source ORDER BY r.source",
+        (iso_utc(as_of),),
+    )
+    return [row[0] for row in cursor]

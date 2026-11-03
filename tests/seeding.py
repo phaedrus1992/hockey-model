@@ -26,19 +26,21 @@ def add_game(
     *,
     state: str = "OFF",
     fetched_at: datetime = FETCHED,
+    season: int = 20252026,
+    score: tuple[int, int] = (3, 2),
 ) -> GameRow:
-    """Store one game. A final game gets a 3-2 score."""
+    """Store one game. A final game gets a 3-2 score unless ``score`` says otherwise."""
     final = state in {"OFF", "FINAL"}
     row = GameRow(
         game_id,
-        20252026,
+        season,
         2,
         utc(start),
         home,
         away,
         state,
-        3 if final else None,
-        2 if final else None,
+        score[0] if final else None,
+        score[1] if final else None,
         "REG" if final else None,
     )
     write_games(conn, [row], fetched_at)

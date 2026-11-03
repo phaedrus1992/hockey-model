@@ -5,12 +5,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from seeding import add_game
 
 from hockey_model import cli
 from hockey_model.cli import CliRuntime
 from hockey_model.identity import Catalog
 from hockey_model.models import FixedStatModel
 from hockey_model.sources.errors import SourceError
+from hockey_model.store.db import connect
 from hockey_model.types import Player, Projection, Roster, Slot, Standing
 
 PLAYER_PROJECTION = Projection(0.4, 0.1, 0.7, 0.8)
@@ -207,3 +209,95 @@ def test_cli_refresh_rejects_bad_backfill_date(
 ) -> None:
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
     assert cli.main(["refresh", "--backfill-from", "yesterday"]) == 2
+
+
+def _store_with_games(path: Path) -> None:
+    conn = connect(path)
+    add_game(conn, 2015020001, "2015-11-01T00:00", season=20152016)
+    add_game(conn, 2015020002, "2015-11-03T00:00", season=20152016, home="BOS", away="TOR")
+    add_game(conn, 2015020003, "2015-11-05T00:00", season=20152016, score=(1, 4))
+    add_game(conn, 2025020001, "2026-12-01T00:00", state="FUT", season=20262027)
+    conn.commit()
+    conn.close()
+
+
+def test_cli_fit_requires_through_season(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["fit"]) == 2
+
+
+def test_cli_fit_rejects_unknown_feature(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    code = cli.main(["fit", "--through-season", "20152016", "--features", "luck"])
+    assert code == 2
+    assert "luck" in capsys.readouterr().err
+
+
+def test_cli_fit_with_no_games_says_to_refresh(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["fit", "--through-season", "20152016"]) == 2
+    assert "hockey-model refresh" in capsys.readouterr().err
+
+
+def test_cli_fit_saves_a_fit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    code = cli.main(["fit", "--through-season", "20152016", "--features", "rest"])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert out["games"] == 3
+    assert out["features"] == ["rest"]
+    assert out["through_season"] == 20152016
+
+
+def test_cli_fit_with_empty_features_saves_the_elo_alone(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    code = cli.main(["fit", "--through-season", "20252026", "--features", ""])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert (out["features"], out["elo_weight"], out["intercept"]) == ([], 1.0, 0.0)
+
+
+def test_cli_game_prints_prediction(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["fit", "--through-season", "20152016"]) == 0
+    capsys.readouterr()
+    assert cli.main(["game", "2025020001", "--level", "0.9"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["home_win"] + out["away_win"] == pytest.approx(1.0)
+    assert out["home_goals"]["level"] == 0.9
+    assert out["made_after_start"] is False
+    assert isinstance(out["missing"], list)
+
+
+def test_cli_game_unknown_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["game", "123"]) == 2
+    err = capsys.readouterr().err
+    assert "123" in err
+    assert "hockey-model refresh" in err
+
+
+def test_cli_game_without_a_fit_says_to_fit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["game", "2025020001"]) == 2
+    assert "hockey-model fit" in capsys.readouterr().err
