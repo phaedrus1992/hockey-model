@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -107,3 +108,18 @@ def test_write_boxscore_twice_is_an_error(conn: sqlite3.Connection) -> None:
     write_boxscore(conn, 2025020709, rows, T0)
     with pytest.raises(sqlite3.IntegrityError):
         write_boxscore(conn, 2025020709, rows, T0 + timedelta(days=1))
+
+
+def test_write_games_skips_a_game_that_did_not_change(conn: sqlite3.Connection) -> None:
+    assert write_games(conn, day_rows(), T0) == 14
+    assert write_games(conn, day_rows(), T0 + timedelta(hours=1)) == 0
+    (count,) = conn.execute("SELECT COUNT(*) FROM games").fetchone()
+    assert count == 14
+
+
+def test_write_games_appends_a_changed_start_time(conn: sqlite3.Connection) -> None:
+    write_games(conn, day_rows("score_2026-11-05.json"), T0)
+    moved = [
+        replace(r, start=r.start + timedelta(hours=1)) for r in day_rows("score_2026-11-05.json")
+    ]
+    assert write_games(conn, moved, T0 + timedelta(hours=1)) == len(moved)
