@@ -20,10 +20,7 @@ def write_team_games(
     newest = {
         (game_id, team): values
         for game_id, team, *values in conn.execute(
-            "SELECT t.game_id, t.team, t.game_date, t.xg_for, t.xg_against"
-            " FROM mp_team_games t JOIN (SELECT game_id, team,"
-            " MAX(fetched_at) AS latest FROM mp_team_games GROUP BY game_id, team) n"
-            " ON t.game_id = n.game_id AND t.team = n.team AND t.fetched_at = n.latest"
+            "SELECT game_id, team, game_date, xg_for, xg_against FROM latest_mp_team_games"
         )
     }
     fresh = [row for row in rows if newest.get((row.game_id, row.team)) != list(row[2:])]
@@ -43,10 +40,7 @@ def write_goalie_games(
     newest = {
         (game_id, nhl_id): values
         for game_id, nhl_id, *values in conn.execute(
-            "SELECT t.game_id, t.nhl_id, t.team, t.xg_against, t.goals_against"
-            " FROM mp_goalie_games t JOIN (SELECT game_id, nhl_id, MAX(fetched_at) AS latest"
-            " FROM mp_goalie_games GROUP BY game_id, nhl_id) n ON t.game_id = n.game_id"
-            " AND t.nhl_id = n.nhl_id AND t.fetched_at = n.latest"
+            "SELECT game_id, nhl_id, team, xg_against, goals_against FROM latest_mp_goalie_games"
         )
     }
     fresh = [row for row in rows if newest.get((row.game_id, row.nhl_id)) != list(row[2:])]

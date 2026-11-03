@@ -25,10 +25,8 @@ def _values(row: GameRow) -> tuple[object, ...]:
 def _newest_reads(conn: sqlite3.Connection, game_ids: list[int]) -> dict[int, tuple[object, ...]]:
     marks = ",".join("?" for _ in game_ids)
     cursor = conn.execute(
-        "SELECT g.game_id, g.season, g.game_type, g.start_utc, g.home, g.away, g.state,"
-        " g.home_score, g.away_score, g.last_period FROM games g JOIN (SELECT game_id,"
-        f" MAX(fetched_at) AS latest FROM games WHERE game_id IN ({marks}) GROUP BY game_id) n"
-        " ON g.game_id = n.game_id AND g.fetched_at = n.latest",
+        "SELECT game_id, season, game_type, start_utc, home, away, state, home_score,"
+        f" away_score, last_period FROM latest_games WHERE game_id IN ({marks})",
         game_ids,
     )
     return {game_id: tuple(rest) for game_id, *rest in cursor}

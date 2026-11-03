@@ -6,7 +6,6 @@ from their fetch time. The result tables have no fetch-time limit: a backfill fe
 games late, and the backtest must still see them.
 """
 
-import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -16,7 +15,7 @@ from typing import Any
 from hockey_model.game import StarterSource, StarterStatus
 from hockey_model.identity import Catalog
 from hockey_model.sources.espn import InjuryRead
-from hockey_model.sources.nhl import FINAL_STATES, GameRow
+from hockey_model.sources.nhl import GameRow
 from hockey_model.sources.teams import franchise
 from hockey_model.store.source_reads import ESPN_INJURIES
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
@@ -26,15 +25,6 @@ from hockey_model.types import Player, Slot
 # An NHL game ends about three hours after the puck drops, with overtime and a shootout.
 RESULT_DELAY = timedelta(hours=3)
 _POSITION_SLOTS = {"C": Slot.C, "L": Slot.W, "R": Slot.W, "D": Slot.D, "G": Slot.G}
-# The states go into the SQL text as literals, so each must be plain capital letters.
-assert all(re.fullmatch("[A-Z]+", state) for state in FINAL_STATES)
-_FINAL = ",".join(f"'{state}'" for state in sorted(FINAL_STATES))
-# The newest final read of each game.
-_LATEST_FINAL = (
-    "SELECT g.* FROM games g JOIN (SELECT game_id, MAX(fetched_at) AS latest FROM games"
-    f" WHERE state IN ({_FINAL}) GROUP BY game_id) n"
-    " ON g.game_id = n.game_id AND g.fetched_at = n.latest"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +77,7 @@ _GAME_COLUMNS = (
 def final_games_before(conn: sqlite3.Connection, before: datetime) -> list[GameRow]:
     """Return the games that were over at ``before``, oldest first."""
     cursor = conn.execute(
-        f"SELECT {_GAME_COLUMNS} FROM ({_LATEST_FINAL}) g WHERE g.start_utc <= ?"
+        f"SELECT {_GAME_COLUMNS} FROM latest_final_games g WHERE g.start_utc <= ?"
         " ORDER BY g.start_utc, g.game_id",
         (_cutoff(before),),
     )
@@ -100,7 +90,7 @@ def team_games_before(
     """Return the newest games of the franchise of ``team`` that were over at ``before``."""
     codes = franchise_codes(team)
     cursor = conn.execute(
-        f"SELECT {_GAME_COLUMNS} FROM ({_LATEST_FINAL}) g WHERE g.start_utc <= ?"
+        f"SELECT {_GAME_COLUMNS} FROM latest_final_games g WHERE g.start_utc <= ?"
         f" AND (g.home IN ({_marks(codes)}) OR g.away IN ({_marks(codes)}))"
         " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
         (_cutoff(before), *codes, *codes, limit),
@@ -114,7 +104,7 @@ def goalie_starts_before(
     """Return ``(game_id, nhl_id)`` of the starter in the newest games of the franchise."""
     codes = franchise_codes(team)
     cursor = conn.execute(
-        f"SELECT g.game_id, w.nhl_id FROM ({_LATEST_FINAL}) g"
+        f"SELECT g.game_id, w.nhl_id FROM latest_final_games g"
         " JOIN goalie_games w ON w.game_id = g.game_id"
         f" WHERE w.started = 1 AND w.team IN ({_marks(codes)}) AND g.start_utc <= ?"
         " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
@@ -129,11 +119,8 @@ def mp_team_form_before(
     """Return ``(xg_for, xg_against)`` of the newest MoneyPuck games of the franchise."""
     codes = franchise_codes(team)
     cursor = conn.execute(
-        "SELECT m.xg_for, m.xg_against FROM mp_team_games m"
-        " JOIN (SELECT game_id, team, MAX(fetched_at) AS latest FROM mp_team_games"
-        "  GROUP BY game_id, team) n"
-        "  ON m.game_id = n.game_id AND m.team = n.team AND m.fetched_at = n.latest"
-        f" JOIN ({_LATEST_FINAL}) g ON g.game_id = m.game_id"
+        "SELECT m.xg_for, m.xg_against FROM latest_mp_team_games m"
+        " JOIN latest_final_games g ON g.game_id = m.game_id"
         f" WHERE m.team IN ({_marks(codes)}) AND g.start_utc <= ?"
         " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
         (*codes, _cutoff(before), limit),
@@ -146,11 +133,8 @@ def mp_goalie_form_before(
 ) -> list[tuple[float, int]]:
     """Return ``(xg_against, goals_against)`` of the newest MoneyPuck games of a goalie."""
     cursor = conn.execute(
-        "SELECT m.xg_against, m.goals_against FROM mp_goalie_games m"
-        " JOIN (SELECT game_id, nhl_id, MAX(fetched_at) AS latest FROM mp_goalie_games"
-        "  GROUP BY game_id, nhl_id) n"
-        "  ON m.game_id = n.game_id AND m.nhl_id = n.nhl_id AND m.fetched_at = n.latest"
-        f" JOIN ({_LATEST_FINAL}) g ON g.game_id = m.game_id"
+        "SELECT m.xg_against, m.goals_against FROM latest_mp_goalie_games m"
+        " JOIN latest_final_games g ON g.game_id = m.game_id"
         " WHERE m.nhl_id = ? AND g.start_utc <= ?"
         " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
         (nhl_id, _cutoff(before), limit),
@@ -200,9 +184,7 @@ def injury_reads_before(conn: sqlite3.Connection, before: datetime) -> list[Inju
 def player_catalog(conn: sqlite3.Connection) -> Catalog:
     """Return a catalog with one player for each NHL id, from the newest boxscore row."""
     cursor = conn.execute(
-        "SELECT p.nhl_id, p.full_name, p.position, p.team FROM players p"
-        " JOIN (SELECT nhl_id, MAX(fetched_at) AS latest FROM players GROUP BY nhl_id) n"
-        " ON p.nhl_id = n.nhl_id AND p.fetched_at = n.latest ORDER BY p.nhl_id"
+        "SELECT nhl_id, full_name, position, team FROM latest_players ORDER BY nhl_id"
     )
     players = [
         Player(
