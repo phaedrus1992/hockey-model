@@ -57,3 +57,28 @@ jobs:
           echo "${EC_SHA256}  /tmp/ec.tar.gz" | sha256sum -c -
           tar -xzf /tmp/ec.tar.gz -C /usr/local/bin editorconfig-checker
       - run: editorconfig-checker
+
+  # Mutation testing is advisory. A surviving mutant shows a test with a weak oracle,
+  # but it does not fail the build.
+  mutation:
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - run: uv run mutmut run
+      - run: uv run mutmut export-cicd-stats
+      - run: uv run mutmut results > mutation-results.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mutation
+          if-no-files-found: error
+          path: |
+            mutation-results.txt
+            mutants/mutmut-cicd-stats.json

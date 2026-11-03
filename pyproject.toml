@@ -12,6 +12,7 @@ hockey-model = "hockey_model.cli:main"
 [dependency-groups]
 dev = [
     "hypothesis~=6.170.14",
+    "mutmut~=3.8.1",
     "pytest~=9.2.0",
     "pytest-cov~=7.1.0",
     "ruff~=0.17.3",
@@ -40,3 +41,14 @@ select = ["E", "F", "W", "I", "B", "UP", "C90"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 8
+
+[tool.mutmut]
+source_paths = ["src"]
+# The parsers and the rate math: pure functions whose tests need a strong oracle.
+only_mutate = [
+    "src/hockey_model/backtest/metrics.py",
+    "src/hockey_model/game_model/elo.py",
+    "src/hockey_model/game_model/logistic.py",
+    "src/hockey_model/sources/*.py",
+]
+pytest_add_cli_args = ["--no-cov", "-p", "no:cacheprovider"]
