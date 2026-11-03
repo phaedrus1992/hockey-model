@@ -293,3 +293,16 @@ def test_parse_team_games_accepts_plain_decimal_numbers(good: str) -> None:
     text = edit_row(team_text(), *BOS_GAME, xGoalsFor=good)
     rows = parse_team_games(text)
     assert any(row.xg_for == float(good) for row in rows)
+
+
+def test_a_zip_header_that_understates_the_size_is_a_named_error() -> None:
+    body = "playerId,season,gameId\n" + "1,2025,2025020001\n" * 20_000
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("2025.csv", body)
+    true_size = len(body.encode()).to_bytes(4, "little")
+    lie = (10).to_bytes(4, "little")
+    patched = buf.getvalue().replace(true_size, lie)
+    assert patched != buf.getvalue()
+    with pytest.raises(SourceParseError, match="cannot be read"):
+        parse_goalie_games(patched)
