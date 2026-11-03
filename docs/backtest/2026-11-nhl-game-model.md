@@ -87,7 +87,10 @@ Both models still underrate the home side in the 0.3 to 0.5 range.
 3. The result says nothing about betting markets.
    The backtest reads no price data.
    The game CSV (`--games-out`) lets a caller score the model against a closing line.
-4. The test beat the Elo, which is level with the market in earlier work.
+4. The store holds no ESPN injury history before 2026-11-03.
+   The goalie guess run therefore never leaves out an injured goalie, and the live model does.
+   The veto of `goalie_gsax` rests on a guess run without that rule.
+5. The test beat the Elo, which is level with the market in earlier work.
    Beating the Elo is necessary and not sufficient for a bet.
    The gate in the spec for the sportsbettr follow-up still applies.
 

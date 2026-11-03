@@ -34,6 +34,10 @@ MONEYPUCK_LEAK_NOTE = (
     "games after the scored seasons, so results that use MoneyPuck data may look better than "
     "they would have then."
 )
+INJURY_HISTORY_NOTE = (
+    "The store has no ESPN injury history before it began to keep injury reads, so the goalie "
+    "guess run never leaves out an injured goalie. The live model does."
+)
 MONEYPUCK_FEATURES = frozenset({"xg_form", "goalie_gsax"})
 ELO = "elo"
 HOME_RATE = "home_rate"
@@ -218,6 +222,7 @@ def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple
         notes.append("The joint test failed, so the Elo alone ships.")
     if MONEYPUCK_FEATURES & set(tested):
         notes.append(MONEYPUCK_LEAK_NOTE)
+    notes.append(INJURY_HISTORY_NOTE)
     return tuple(notes)
 
 

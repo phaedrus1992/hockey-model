@@ -273,3 +273,8 @@ def test_the_report_counts_scored_games_with_missing_inputs(feed) -> None:
 def test_the_report_has_no_missing_counts_when_nothing_is_missing(feed) -> None:
     report, _ = run(dataset(), feed)
     assert report.missing_inputs == {}
+
+
+def test_the_notes_say_the_guess_run_has_no_injury_history(feed) -> None:
+    report, _ = run(dataset(), feed)
+    assert runner.INJURY_HISTORY_NOTE in report.notes
