@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _load_gate() -> ModuleType:
     """Import the script by path, because scripts/ is not a package."""
+    if not (ROOT / "scripts" / "check_per_module_coverage.py").exists():
+        # A mutation run copies src/ and tests/ only, so the script is absent there.
+        pytest.skip("scripts/check_per_module_coverage.py is not copied", allow_module_level=True)
     spec = importlib.util.spec_from_file_location(
         "check_per_module_coverage", ROOT / "scripts" / "check_per_module_coverage.py"
     )
