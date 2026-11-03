@@ -59,7 +59,9 @@ The results-only Elo has 0.6876.
 The 95% interval of the difference is -0.0144 to -0.0083.
 The guess run vetoed goalie goals saved above expected.
 MoneyPuck data may leak into the result, because MoneyPuck's own model may have trained on the scored games.
-The result says nothing about betting markets.
+The run did not score the model against a betting market.
+A later review did: the model is level with the DraftKings line in 2024-25 and worse in 2025-26.
+The matched-game table is in `docs/backtest/2026-11-nhl-game-model.md`.
 
 ## Work not done
 
