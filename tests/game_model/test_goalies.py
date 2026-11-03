@@ -256,3 +256,11 @@ def test_a_one_word_name_says_why_it_does_not_match(season: sqlite3.Connection) 
     )
     _, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert "no first name or initial" in missing[0].note
+
+
+def test_an_ambiguous_injured_name_is_noted(season: sqlite3.Connection) -> None:
+    add_game(season, 50, "2026-01-11T00:00")
+    add_goalie(season, 50, "TOR", 13, "Cole Ingram")
+    add_injury(season, "TOR", "Connor Ingram", "Out", "2026-01-19T10:00")
+    _, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=False)
+    assert any("an injured player is unclear" in m.note for m in missing)

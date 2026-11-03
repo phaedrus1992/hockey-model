@@ -20,8 +20,8 @@ def write_team_games(
     newest = {
         (game_id, team): values
         for game_id, team, *values in conn.execute(
-            "SELECT t.game_id, t.team, t.game_date, t.xg_for, t.xg_against, t.goals_for,"
-            " t.goals_against FROM mp_team_games t JOIN (SELECT game_id, team,"
+            "SELECT t.game_id, t.team, t.game_date, t.xg_for, t.xg_against"
+            " FROM mp_team_games t JOIN (SELECT game_id, team,"
             " MAX(fetched_at) AS latest FROM mp_team_games GROUP BY game_id, team) n"
             " ON t.game_id = n.game_id AND t.team = n.team AND t.fetched_at = n.latest"
         )
@@ -29,8 +29,8 @@ def write_team_games(
     fresh = [row for row in rows if newest.get((row.game_id, row.team)) != list(row[2:])]
     stamp = iso_utc(fetched_at)
     conn.executemany(
-        "INSERT INTO mp_team_games (game_id, team, game_date, xg_for, xg_against, goals_for,"
-        " goals_against, fetched_at) VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO mp_team_games (game_id, team, game_date, xg_for, xg_against, fetched_at)"
+        " VALUES (?,?,?,?,?,?)",
         [(*row, stamp) for row in fresh],
     )
     return len(fresh)

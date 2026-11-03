@@ -62,6 +62,15 @@ def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
+def _clamp_notes(game: Game, home_rate: float, away_rate: float) -> list[MissingInput]:
+    """Name each side whose expected goals are raised to the floor."""
+    return [
+        MissingInput(MissingKind.XG_FORM, team, f"expected goals under {_MIN_RATE} are raised")
+        for team, rate in ((game.home, home_rate), (game.away, away_rate))
+        if rate < _MIN_RATE
+    ]
+
+
 class NhlGameModel:
     """Predict a game from the store, as known at the prediction time."""
 
@@ -107,9 +116,10 @@ class NhlGameModel:
         home_rate, away_rate, goal_notes = self._expected_goals(game, cutoff)
         missing = [*row.missing, *goal_notes]
         missing.extend(
-            MissingInput(MissingKind.STALE_SOURCE, None, f"the newest read of {source} failed")
-            for source in stale_sources(self._conn, as_of)
+            MissingInput(MissingKind.STALE_SOURCE, None, f"{source}: {reason}")
+            for source, reason in stale_sources(self._conn, as_of)
         )
+        missing.extend(_clamp_notes(game, home_rate, away_rate))
         credits = (MONEYPUCK_CREDIT,) if row.uses_moneypuck else ()
         return GamePrediction(
             home_win=home_win,

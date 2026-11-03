@@ -5,6 +5,10 @@ from datetime import datetime
 
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 
+# Every source name that a refresh records in ``source_reads``.
+KNOWN_SOURCES = frozenset(
+    {"nhl_scores", "nhl_boxscores", "moneypuck", "espn_starters", "espn_injuries", "daily_faceoff"}
+)
 # The source name of the ESPN injury list. Each good read of the list is one snapshot.
 ESPN_INJURIES = "espn_injuries"
 
@@ -42,13 +46,23 @@ def failed_since(conn: sqlite3.Connection, source: str, url: str, since: datetim
     return row is not None and not row[0] and parse_iso_utc(row[1]) > since
 
 
-def stale_sources(conn: sqlite3.Connection, as_of: datetime) -> list[str]:
-    """Return the sources whose newest read before ``as_of`` failed, in name order."""
+def stale_sources(conn: sqlite3.Connection, as_of: datetime) -> list[tuple[str, str]]:
+    """Return ``(source, reason)`` for each known source that is not current at ``as_of``.
+
+    A source is not current when its newest read before ``as_of`` failed, or when no read
+    of it has worked yet. The result is in name order.
+    """
     cursor = conn.execute(
-        "SELECT r.source FROM source_reads r JOIN (SELECT source, MAX(fetched_at) AS latest"
-        " FROM source_reads WHERE fetched_at <= ? GROUP BY source) n"
-        " ON r.source = n.source AND r.fetched_at = n.latest WHERE r.ok = 0"
-        " GROUP BY r.source ORDER BY r.source",
+        "SELECT source, MAX(fetched_at), MAX(CASE WHEN ok = 1 THEN fetched_at END)"
+        " FROM source_reads WHERE fetched_at <= ? GROUP BY source",
         (iso_utc(as_of),),
     )
-    return [row[0] for row in cursor]
+    reads = {source: (newest, good) for source, newest, good in cursor}
+    stale: list[tuple[str, str]] = []
+    for source in sorted(KNOWN_SOURCES):
+        newest, good = reads.get(source, (None, None))
+        if good is None:
+            stale.append((source, "no read of it has worked yet"))
+        elif newest != good:
+            stale.append((source, "the newest read of it failed"))
+    return stale

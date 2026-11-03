@@ -72,7 +72,7 @@ def add_team_form(
     conn: sqlite3.Connection, game_id: int, team: str, xg_for: float, xg_against: float
 ) -> None:
     """Store one MoneyPuck team-game row."""
-    row = TeamGameRow(game_id, team, "2026-01-01", xg_for, xg_against, 3, 2)
+    row = TeamGameRow(game_id, team, "2026-01-01", xg_for, xg_against)
     write_team_games(conn, [row], FETCHED)
 
 
