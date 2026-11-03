@@ -7,6 +7,7 @@ home win rate, and the results-only Elo.
 import csv
 import math
 import sqlite3
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import datetime
@@ -81,6 +82,8 @@ class BacktestReport:
     success: bool
     notes: tuple[str, ...]
     credits: tuple[str, ...]
+    # Scored games, with the goalie who started, that had each kind of missing input.
+    missing_inputs: Mapping[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +202,14 @@ def _records(games: Sequence[_Scored]) -> list[GameRecord]:
     ]
 
 
+def _missing_counts(games: Sequence[_Scored]) -> dict[str, int]:
+    """Count the scored games that had each kind of missing input."""
+    counts: Counter[str] = Counter()
+    for game in games:
+        counts.update({m.kind.value for m in game.row.features.missing})
+    return dict(sorted(counts.items()))
+
+
 def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple[str, ...]:
     notes = [f"{len(FEATURES)} candidate features were tested together as one joint test."]
     if vetoed:
@@ -248,6 +259,7 @@ def run_backtest(
         success=success,
         notes=_notes(tested, vetoed, success),
         credits=(MONEYPUCK_CREDIT,) if uses_moneypuck else (),
+        missing_inputs=_missing_counts(games),
     )
     return report, _records(games)
 

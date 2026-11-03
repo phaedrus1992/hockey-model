@@ -11,8 +11,9 @@ PROB_FLOOR = 1e-6
 CALIBRATION_BINS = 10
 BOOTSTRAP_RESAMPLES = 1000
 BOOTSTRAP_SEED = 0
-# Games of one night share goalies and teams, so a block is at least one night's slate.
-# The busiest NHL night has 16 games.
+# Games of one night share goalies and teams, so a block is one night's slate. The busiest
+# NHL night has 16 games. The lag-1 autocorrelation of a per-game loss difference is near
+# zero, so a longer block would add code and no width.
 MIN_BLOCK_LENGTH = 16
 _LOW_PERCENTILE = 0.05
 _HIGH_PERCENTILE = 0.95
@@ -25,8 +26,8 @@ class CalibrationBin:
     low: float
     high: float
     count: int
-    mean_prob: float
-    win_rate: float
+    mean_prob: float | None
+    win_rate: float | None
 
 
 def _check(probs: Sequence[float], wins: Sequence[bool]) -> None:
@@ -78,38 +79,15 @@ def calibration(probs: Sequence[float], wins: Sequence[bool]) -> tuple[Calibrati
         if games:
             mean_prob = sum(p for p, _ in games) / len(games)
             win_rate = sum(w for _, w in games) / len(games)
+            result.append(CalibrationBin(low, high, len(games), mean_prob, win_rate))
         else:
-            mean_prob = win_rate = math.nan
-        result.append(CalibrationBin(low, high, len(games), mean_prob, win_rate))
+            result.append(CalibrationBin(low, high, 0, None, None))
     return tuple(result)
 
 
-def _lag1_autocorrelation(values: Sequence[float]) -> float:
-    count = len(values)
-    if count < 3:  # noqa: PLR2004  # a lag needs at least three values
-        return 0.0
-    mean = sum(values) / count
-    spread = sum((v - mean) ** 2 for v in values)
-    if spread == 0.0 or max(values) == min(values):
-        return 0.0
-    pairs = sum((values[i] - mean) * (values[i + 1] - mean) for i in range(count - 1))
-    return max(-1.0, min(1.0, pairs / spread))
-
-
-def block_length(values: Sequence[float]) -> int:
-    """Return the block length: one night's slate, or more when the series is autocorrelated.
-
-    The longer length is the Politis-Romano-Wolf rule that sportsbettr uses for its own
-    bootstrap, ``ceil(n^(1/3) * (2 rho / (1 - rho^2))^(2/3))`` for a positive lag-1 rho.
-    """
-    count = len(values)
-    rho = _lag1_autocorrelation(values)
-    derived = 1
-    if rho >= 1.0:
-        derived = count
-    elif rho > 0.0:
-        derived = math.ceil(count ** (1 / 3) * (2 * rho / (1 - rho * rho)) ** (2 / 3))
-    return min(count, max(MIN_BLOCK_LENGTH, derived))
+def block_length(count: int) -> int:
+    """Return the block length for ``count`` games: one night's slate, at most the series."""
+    return min(count, MIN_BLOCK_LENGTH)
 
 
 def block_bootstrap_mean_ci(values: Sequence[float]) -> tuple[float, float]:
@@ -123,7 +101,7 @@ def block_bootstrap_mean_ci(values: Sequence[float]) -> tuple[float, float]:
     if not all(math.isfinite(v) for v in values):
         raise ValueError("bootstrap the mean: a value is not finite; check the scores")
     count = len(values)
-    length = block_length(values)
+    length = block_length(count)
     rng = random.Random(BOOTSTRAP_SEED)
     means = []
     for _ in range(BOOTSTRAP_RESAMPLES):

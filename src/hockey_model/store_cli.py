@@ -1,7 +1,6 @@
 """CLI commands that work on the SQLite store: refresh, and the model commands."""
 
 import argparse
-import math
 import os
 from collections.abc import Callable
 from dataclasses import asdict
@@ -125,17 +124,6 @@ def _game(args: argparse.Namespace) -> tuple[object, int]:
         conn.close()
 
 
-def _clean(value: object) -> object:
-    """Replace a non-finite float with ``None``, because JSON has no NaN."""
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if isinstance(value, dict):
-        return {key: _clean(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_clean(item) for item in value]
-    return value
-
-
 def _backtest(args: argparse.Namespace) -> tuple[object, int]:
     conn = connect(db_path_from_env(os.environ))
     try:
@@ -144,7 +132,7 @@ def _backtest(args: argparse.Namespace) -> tuple[object, int]:
         conn.close()
     if args.games_out is not None:
         write_game_records(args.games_out, records)
-    return _clean(asdict(report)), 0
+    return asdict(report), 0
 
 
 _HANDLERS = {"refresh": _refresh, "fit": _fit, "game": _game, "backtest": _backtest}

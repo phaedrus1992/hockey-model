@@ -326,6 +326,7 @@ def _fake_backtest(success: bool) -> object:
         success,
         ("note",),
         (),
+        {"xg_form": 3},
     )
     record = GameRecord(1, datetime(2026, 1, 1, tzinfo=UTC), "TOR", "BOS", "elo", 0.55, True)
     return lambda conn: (report, [record])
@@ -344,6 +345,7 @@ def test_cli_backtest_prints_report_and_exits_zero(
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is success
     assert out["live_features"] == (["xg_form"] if success else [])
+    assert out["missing_inputs"] == {"xg_form": 3}
     empty_bin = out["runs"][0]["calibration"][0]
     assert empty_bin["count"] == 0
     assert empty_bin["mean_prob"] is None

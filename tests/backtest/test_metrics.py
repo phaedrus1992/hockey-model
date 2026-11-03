@@ -79,11 +79,11 @@ def test_calibration_puts_one_in_the_last_bin() -> None:
     assert calibration([0.0], [False])[0].count == 1
 
 
-def test_empty_calibration_bins_have_nan_means() -> None:
+def test_empty_calibration_bins_have_no_means() -> None:
     bins = calibration([0.5], [True])
     assert bins[0].count == 0
-    assert math.isnan(bins[0].mean_prob)
-    assert math.isnan(bins[0].win_rate)
+    assert bins[0].mean_prob is None
+    assert bins[0].win_rate is None
 
 
 def test_bootstrap_of_a_constant_list() -> None:
@@ -133,15 +133,9 @@ def test_bootstrap_of_a_zero_mean_straddles_zero() -> None:
     assert low < 0 < high
 
 
-def test_blocks_are_wider_than_one_night() -> None:
-    assert block_length([0.1, -0.1] * 200) == MIN_BLOCK_LENGTH
-    assert block_length([0.1, -0.1, 0.3]) == 3
-
-
-def test_block_length_grows_with_positive_autocorrelation() -> None:
-    drift = [math.sin(i / 40) for i in range(2000)]
-    assert block_length(drift) > MIN_BLOCK_LENGTH
-    assert block_length(drift) <= len(drift)
+def test_a_block_is_one_nights_slate_or_the_whole_series() -> None:
+    assert block_length(1000) == MIN_BLOCK_LENGTH == 16
+    assert block_length(3) == 3
 
 
 def test_a_short_series_uses_one_block_of_its_own_size() -> None:
