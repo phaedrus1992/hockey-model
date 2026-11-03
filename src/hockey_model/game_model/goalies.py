@@ -66,7 +66,7 @@ def _unknown(team: str, note: str) -> MissingInput:
     return MissingInput(MissingKind.GOALIE_UNKNOWN, team, note)
 
 
-def _boxscore_starter(
+def boxscore_starter(
     conn: sqlite3.Connection, game: Game, team: str, catalog: Catalog
 ) -> GoalieStart | None:
     row = conn.execute(
@@ -158,7 +158,7 @@ def resolve_goalie(
         return given, ()
     catalog = player_catalog(conn) if catalog is None else catalog
     if as_of >= game.start:
-        started = _boxscore_starter(conn, game, team, catalog)
+        started = boxscore_starter(conn, game, team, catalog)
         if started is not None:
             note = "prediction made after puck drop; the goalie is the boxscore starter"
             return started, (MissingInput(MissingKind.LATE_RUN, team, note),)
