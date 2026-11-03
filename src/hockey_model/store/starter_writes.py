@@ -31,9 +31,8 @@ def _find_game(conn: sqlite3.Connection, read: StarterRead) -> int | None:
     low = iso_utc(read.start - START_TOLERANCE)
     high = iso_utc(read.start + START_TOLERANCE)
     rows = conn.execute(
-        "SELECT DISTINCT g.game_id FROM games g JOIN (SELECT game_id, MAX(fetched_at) AS latest"
-        " FROM games GROUP BY game_id) n ON g.game_id = n.game_id AND g.fetched_at = n.latest"
-        f" WHERE (g.home IN ({marks}) OR g.away IN ({marks})) AND g.start_utc BETWEEN ? AND ?",
+        "SELECT DISTINCT game_id FROM latest_games"
+        f" WHERE (home IN ({marks}) OR away IN ({marks})) AND start_utc BETWEEN ? AND ?",
         (*codes, *codes, low, high),
     ).fetchall()
     if len(rows) > 1:

@@ -9,6 +9,7 @@ from hockey_model.types import HockeyModelError
 DB_ENV = "HOCKEY_MODEL_DB"
 SCHEMA_VERSION = 1
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+_VIEWS_PATH = Path(__file__).with_name("views.sql")
 
 
 class StoreError(HockeyModelError):
@@ -64,6 +65,8 @@ def _prepare(conn: sqlite3.Connection, path: Path) -> sqlite3.Connection:
             f"open store {str(path)!r}: schema version {stored} does not match "
             f"expected {SCHEMA_VERSION}; use a store made by this version or a new path"
         )
+    # The views are code, not data, so every connection makes them again.
+    conn.executescript(_VIEWS_PATH.read_text(encoding="utf-8"))
     return conn
 
 
