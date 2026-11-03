@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add `hockey-model backtest`, a walk-forward backtest that refits before each scored season, tests all features together against the results-only Elo, and writes per-game predictions with `--games-out`. [feat:backtest]
 - Add mutation testing with mutmut: `uv run mutmut run` mutates the parsers and the rate math, and an advisory CI job reports the survivors without failing the build. [chore:test]
 - Python project skeleton: uv, ruff, ty, pytest with coverage and a per-module floor, editorconfig, prek hooks, and CI validation, test, and editorconfig jobs.
+- Certify each logistic fit by the gradient of the penalized loss and save its diagnostics (iterations, objective, gradient, conditioning, penalty, scaling, stop reason) with the fit. A clipped step no longer counts as convergence. [feat:model]
 - Add the November 2026 backtest report. The joint test passed with expected-goals form and rest, and the guess run vetoed goalie goals saved above expected. [docs:backtest]
 
 [Unreleased]: https://github.com/slackworks/hockey-model/commits/main

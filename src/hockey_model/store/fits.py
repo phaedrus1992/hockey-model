@@ -2,9 +2,11 @@
 
 import json
 import sqlite3
+from dataclasses import asdict
 from datetime import datetime
+from typing import Any
 
-from hockey_model.game_model.logistic import LogisticFit
+from hockey_model.game_model.logistic import FitDiagnostics, LogisticFit
 from hockey_model.store.db import StoreError
 from hockey_model.store.timestamps import iso_utc
 
@@ -13,11 +15,13 @@ def save_fit(
     conn: sqlite3.Connection, fit: LogisticFit, fit_through_season: int, created_at: datetime
 ) -> int:
     """Store a fit and return its id."""
-    weights = {
+    weights: dict[str, object] = {
         "intercept": fit.intercept,
         "elo_weight": fit.elo_weight,
         "features": dict(fit.weights),
     }
+    if fit.diagnostics is not None:
+        weights["diagnostics"] = asdict(fit.diagnostics)
     with conn:
         cursor = conn.execute(
             "INSERT INTO model_fits (fit_through_season, features, weights, created_at)"
@@ -49,9 +53,26 @@ def newest_fit(conn: sqlite3.Connection) -> LogisticFit:
             float(stored["intercept"]),
             float(stored["elo_weight"]),
             {name: float(value) for name, value in stored["features"].items()},
+            _diagnostics(stored.get("diagnostics")),
         )
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise StoreError(
             f"load the model fit: the saved fit is malformed ({type(exc).__name__}: {exc}); "
             "run `hockey-model fit` again"
         ) from exc
+
+
+def _diagnostics(stored: dict[str, Any] | None) -> FitDiagnostics | None:
+    """Rebuild the saved diagnostics. A fit saved before they existed has none."""
+    if stored is None:
+        return None
+    return FitDiagnostics(
+        iterations=int(stored["iterations"]),
+        objective=float(stored["objective"]),
+        gradient_norm=float(stored["gradient_norm"]),
+        condition=float(stored["condition"]),
+        l2=float(stored["l2"]),
+        means={str(k): float(v) for k, v in stored["means"].items()},
+        scales={str(k): float(v) for k, v in stored["scales"].items()},
+        stop_reason=str(stored["stop_reason"]),
+    )

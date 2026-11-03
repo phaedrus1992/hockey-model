@@ -258,6 +258,8 @@ def test_cli_fit_saves_a_fit(
     assert out["games"] == 3
     assert out["features"] == ["rest"]
     assert out["through_season"] == 20152016
+    assert out["diagnostics"]["gradient_norm"] < 1e-6
+    assert out["diagnostics"]["stop_reason"].startswith("converged")
 
 
 def test_cli_fit_with_empty_features_saves_the_elo_alone(
@@ -268,6 +270,7 @@ def test_cli_fit_with_empty_features_saves_the_elo_alone(
     out = json.loads(capsys.readouterr().out)
     assert code == 0
     assert (out["features"], out["elo_weight"], out["intercept"]) == ([], 1.0, 0.0)
+    assert out["diagnostics"] is None
 
 
 def test_cli_game_prints_prediction(
