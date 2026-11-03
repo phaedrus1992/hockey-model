@@ -1,0 +1,211 @@
+"""Tests for the game features."""
+
+import math
+import sqlite3
+from datetime import timedelta
+
+import pytest
+from seeding import (
+    add_game,
+    add_goalie,
+    add_goalie_form,
+    add_starter_read,
+    add_team_form,
+    utc,
+)
+
+from hockey_model.game import Game, MissingKind
+from hockey_model.game_model.elo import EloBook
+from hockey_model.game_model.features import (
+    FEATURES,
+    REST_CAP_DAYS,
+    GoalieMode,
+    build_features,
+)
+
+START = utc("2026-01-20T00:00")
+AS_OF = utc("2026-01-19T16:00")
+HOME, AWAY = "TOR", "BOS"
+
+
+def game() -> Game:
+    return Game(100, HOME, AWAY, START)
+
+
+def features(store: sqlite3.Connection, mode: GoalieMode = GoalieMode.GUESS, as_of=AS_OF):
+    return build_features(store, game(), as_of, EloBook(), goalie_mode=mode)
+
+
+def kinds(row) -> list[MissingKind]:
+    return [m.kind for m in row.missing]
+
+
+def history(store: sqlite3.Connection, days: tuple[int, ...] = (17, 18, 19)) -> None:
+    """Games of TOR and BOS on the given January days, each with MoneyPuck form."""
+    for day in days:
+        gid = 10 + day
+        add_game(store, gid, f"2026-01-{day:02d}T00:00", home=HOME, away="MTL")
+        add_game(store, gid + 100, f"2026-01-{day:02d}T00:00", home="MTL", away=AWAY)
+        add_team_form(store, gid, HOME, 3.0, 1.0)
+        add_team_form(store, gid + 100, AWAY, 1.0, 3.0)
+        add_goalie(store, gid, HOME, 11, "C. Ingram")
+        add_goalie(store, gid + 100, AWAY, 21, "J. Swayman")
+        add_goalie_form(store, gid, 11, 3.0, 1)
+        add_goalie_form(store, gid + 100, 21, 2.0, 3)
+
+
+def test_feature_names() -> None:
+    assert FEATURES == ("xg_form", "goalie_gsax", "rest")
+
+
+def test_elo_logit_matches_the_book(store: sqlite3.Connection) -> None:
+    chance = EloBook().home_win_chance(HOME, AWAY)
+    row = features(store)
+    assert row.elo_logit == pytest.approx(math.log(chance / (1 - chance)))
+    assert row.game_id == 100
+    assert set(row.values) == set(FEATURES)
+
+
+def test_xg_form_is_home_share_minus_away_share(store: sqlite3.Connection) -> None:
+    history(store)
+    row = features(store)
+    assert row.values["xg_form"] == pytest.approx(0.75 - 0.25)
+    assert row.uses_moneypuck
+
+
+def test_xg_form_uses_the_window(store: sqlite3.Connection) -> None:
+    base = utc("2025-12-01T00:00")
+    for number in range(13):
+        old = number < 3
+        gid = 200 + number
+        stamp = (base + timedelta(days=number)).strftime("%Y-%m-%dT%H:%M")
+        add_game(store, gid, stamp, home=HOME, away="MTL")
+        add_team_form(store, gid, HOME, 1.0 if old else 3.0, 3.0 if old else 1.0)
+        add_game(store, gid + 100, stamp, home="MTL", away=AWAY)
+        add_team_form(store, gid + 100, AWAY, 2.0, 2.0)
+    row = features(store)
+    assert row.values["xg_form"] == pytest.approx(0.75 - 0.5)
+
+
+def test_xg_form_missing_reports_xg_form(store: sqlite3.Connection) -> None:
+    row = features(store)
+    assert row.values["xg_form"] == 0.0
+    assert kinds(row).count(MissingKind.XG_FORM) == 2
+    assert not row.uses_moneypuck
+
+
+def test_xg_form_missing_for_one_team(store: sqlite3.Connection) -> None:
+    history(store)
+    add_game(store, 300, "2026-01-18T00:00", home="NYR", away="MTL")
+    row = build_features(
+        store, Game(101, "NYR", AWAY, START), AS_OF, EloBook(), goalie_mode=GoalieMode.GUESS
+    )
+    assert row.values["xg_form"] == 0.0
+    assert [m.team for m in row.missing if m.kind is MissingKind.XG_FORM] == ["NYR"]
+
+
+def test_goalie_gsax_actual_uses_the_boxscore_starter(store: sqlite3.Connection) -> None:
+    history(store)
+    add_game(store, 100, "2026-01-20T00:00")
+    add_goalie(store, 100, HOME, 12, "J. Woll")
+    add_goalie(store, 100, AWAY, 21, "J. Swayman")
+    add_goalie_form(store, 50, 12, 1.0, 3)
+    add_game(store, 50, "2026-01-15T00:00", home=HOME, away="MTL")
+    row = features(store, GoalieMode.ACTUAL, as_of=START)
+    woll = 1.0 - 3
+    swayman = 2.0 - 3
+    assert row.values["goalie_gsax"] == pytest.approx(woll - swayman)
+
+
+def test_goalie_gsax_guess_uses_recent_starts(store: sqlite3.Connection) -> None:
+    history(store)
+    row = features(store, GoalieMode.GUESS)
+    assert row.values["goalie_gsax"] == pytest.approx((3.0 - 1) - (2.0 - 3))
+    assert MissingKind.GOALIE_UNKNOWN in kinds(row)
+
+
+def test_goalie_gsax_reads_use_a_confirmed_goalie(store: sqlite3.Connection) -> None:
+    history(store)
+    add_game(store, 50, "2026-01-15T00:00", home=HOME, away="MTL")
+    add_goalie(store, 50, HOME, 12, "J. Woll")
+    add_goalie_form(store, 50, 12, 0.5, 4)
+    add_starter_read(store, 100, HOME, "espn", "Joseph Woll", "confirmed", "2026-01-19T14:00")
+    row = features(store, GoalieMode.READS)
+    assert row.values["goalie_gsax"] == pytest.approx((0.5 - 4) - (2.0 - 3))
+
+
+def test_goalie_gsax_missing_form_reports_goalie_form(store: sqlite3.Connection) -> None:
+    for day in (17, 18):
+        add_game(store, day, f"2026-01-{day}T00:00")
+        add_goalie(store, day, HOME, 11, "C. Ingram")
+    row = features(store)
+    assert row.values["goalie_gsax"] == 0.0
+    assert MissingKind.GOALIE_FORM in kinds(row)
+
+
+def test_goalie_gsax_actual_without_boxscore_reports_unknown(store: sqlite3.Connection) -> None:
+    history(store)
+    row = features(store, GoalieMode.ACTUAL)
+    assert row.values["goalie_gsax"] == 0.0
+    assert kinds(row).count(MissingKind.GOALIE_UNKNOWN) == 2
+
+
+def test_goalie_form_uses_only_the_window(store: sqlite3.Connection) -> None:
+    base = utc("2025-12-01T00:00")
+    for number in range(23):
+        gid = 400 + number
+        stamp = (base + timedelta(days=number)).strftime("%Y-%m-%dT%H:%M")
+        add_game(store, gid, stamp, home=HOME, away="MTL")
+        add_goalie(store, gid, HOME, 11, "C. Ingram")
+        add_goalie_form(store, gid, 11, 5.0 if number < 3 else 1.0, 0)
+    row = features(store, GoalieMode.GUESS)
+    assert row.values["goalie_gsax"] == pytest.approx(1.0)
+
+
+def test_rest_back_to_back_is_one(store: sqlite3.Connection) -> None:
+    add_game(store, 1, "2026-01-19T00:00", home=HOME, away="MTL")
+    add_game(store, 2, "2026-01-18T00:00", home="NYR", away=AWAY)
+    add_game(store, 3, "2026-01-16T00:00", home="NYR", away=AWAY)
+    row = features(store)
+    assert row.values["rest"] == pytest.approx(1.0 - 2.0)
+
+
+def test_rest_caps_at_four(store: sqlite3.Connection) -> None:
+    add_game(store, 1, "2026-01-01T00:00", home=HOME, away="MTL")
+    add_game(store, 2, "2026-01-12T00:00", home="NYR", away=AWAY)
+    row = features(store)
+    assert row.values["rest"] == 0.0
+    assert REST_CAP_DAYS == 4.0
+
+
+def test_rest_first_game_in_store_is_the_cap(store: sqlite3.Connection) -> None:
+    add_game(store, 2, "2026-01-18T00:00", home="NYR", away=AWAY)
+    row = features(store)
+    assert row.values["rest"] == pytest.approx(REST_CAP_DAYS - 2.0)
+
+
+def test_features_use_only_games_before_start(store: sqlite3.Connection) -> None:
+    history(store)
+    before = features(store, GoalieMode.GUESS)
+    for gid, day in ((900, 21), (901, 22)):
+        add_game(store, gid, f"2026-01-{day}T00:00", home=HOME, away=AWAY)
+        add_team_form(store, gid, HOME, 0.1, 5.0)
+        add_team_form(store, gid, AWAY, 5.0, 0.1)
+        add_goalie(store, gid, HOME, 12, "J. Woll")
+        add_goalie_form(store, gid, 12, 0.0, 9)
+    after = features(store, GoalieMode.GUESS)
+    assert after == before
+
+
+def test_a_late_run_ignores_the_game_itself(store: sqlite3.Connection) -> None:
+    history(store)
+    add_game(store, 100, "2026-01-20T00:00")
+    add_team_form(store, 100, HOME, 0.1, 5.0)
+    add_team_form(store, 100, AWAY, 5.0, 0.1)
+    for team, nhl_id, name in ((HOME, 11, "C. Ingram"), (AWAY, 21, "J. Swayman")):
+        add_goalie(store, 100, team, nhl_id, name)
+        add_goalie_form(store, 100, nhl_id, 0.0, 9)
+    late = START + timedelta(hours=6)
+    on_time = features(store, GoalieMode.GUESS, as_of=AS_OF)
+    after = features(store, GoalieMode.GUESS, as_of=late)
+    assert after.values == on_time.values
