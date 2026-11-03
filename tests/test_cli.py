@@ -10,6 +10,7 @@ from hockey_model import cli
 from hockey_model.cli import CliRuntime
 from hockey_model.identity import Catalog
 from hockey_model.models import FixedStatModel
+from hockey_model.sources.errors import SourceError
 from hockey_model.types import Player, Projection, Roster, Slot, Standing
 
 PLAYER_PROJECTION = Projection(0.4, 0.1, 0.7, 0.8)
@@ -171,3 +172,38 @@ def test_empty_player_reference_exits_two(capsys: pytest.CaptureFixture[str]) ->
     runtime = _runtime((_player("p-a"),))
     assert cli.main(["player", "goals", ""], runtime) == 2
     assert "must not be empty" in capsys.readouterr().err
+
+
+class _RefreshClient:
+    """Stands in for HttpClient: every request fails, so each source reports an error."""
+
+    def get(self, source: str, url: str) -> bytes:
+        raise SourceError(source, url, "HTTP 503")
+
+
+def test_cli_refresh_requires_db_env(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("HOCKEY_MODEL_DB", raising=False)
+    assert cli.main(["refresh"]) == 2
+    assert "HOCKEY_MODEL_DB" in capsys.readouterr().err
+
+
+def test_cli_refresh_exits_one_on_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    monkeypatch.setattr("hockey_model.store_cli.HttpClient", _RefreshClient)
+    code = cli.main(["refresh", "--backfill-from", "2026-01-10"])
+    report = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert report["errors"]
+    assert report["errors"][0]["type"] == "SourceError"
+    assert report["credits"] == []
+
+
+def test_cli_refresh_rejects_bad_backfill_date(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["refresh", "--backfill-from", "yesterday"]) == 2

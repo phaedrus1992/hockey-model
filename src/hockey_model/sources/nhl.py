@@ -239,14 +239,24 @@ def parse_boxscore(payload: object) -> BoxscoreRows:
     return out
 
 
+def score_day_url(day: date) -> str:
+    """Return the URL of the NHL score feed for one calendar day."""
+    return f"{NHL_BASE}/score/{day.isoformat()}"
+
+
 def fetch_score_day(client: HttpClient, day: date) -> list[GameRow]:
     """Fetch and parse the NHL score feed for one calendar day."""
-    return parse_score_day(get_json(client, SOURCE, f"{NHL_BASE}/score/{day.isoformat()}"))
+    return parse_score_day(get_json(client, SOURCE, score_day_url(day)))
+
+
+def boxscore_url(game_id: int) -> str:
+    """Return the URL of the boxscore of one game."""
+    return f"{NHL_BASE}/gamecenter/{game_id}/boxscore"
 
 
 def fetch_boxscore(client: HttpClient, game_id: int) -> BoxscoreRows:
     """Fetch and parse the boxscore of one final game."""
-    rows = parse_boxscore(get_json(client, SOURCE, f"{NHL_BASE}/gamecenter/{game_id}/boxscore"))
+    rows = parse_boxscore(get_json(client, SOURCE, boxscore_url(game_id)))
     if rows.game_id != game_id:
         raise SourceParseError(SOURCE, f"boxscore for game {game_id} names game {rows.game_id}")
     return rows

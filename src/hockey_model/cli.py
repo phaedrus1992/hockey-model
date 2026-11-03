@@ -12,6 +12,7 @@ from hockey_model.identity import Catalog
 from hockey_model.matchup import matchup, playoff_probability
 from hockey_model.models import JointModel, MatchupModel, StandingsModel, StatModel
 from hockey_model.projections import project_player, project_team
+from hockey_model.store_cli import STORE_COMMANDS, add_store_commands, run_store_command
 from hockey_model.types import (
     AmbiguousPlayerError,
     HockeyModelError,
@@ -70,6 +71,7 @@ def _parser() -> argparse.ArgumentParser:
     playoffs = commands.add_parser("playoffs", help="project a team's playoff probability")
     playoffs.add_argument("team_code")
     _add_projection_options(playoffs, horizon=False)
+    add_store_commands(commands.add_parser)
     return parser
 
 
@@ -188,9 +190,16 @@ def _json_default(value: Any) -> Any:
 
 
 def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -> int:
-    """Run the JSON CLI, returning zero on success and two for caller errors."""
+    """Run the JSON CLI, returning zero on success and two for caller errors.
+
+    ``refresh`` returns one when a source failed, after it prints the report.
+    """
     try:
         args = _parser().parse_args(argv)
+        if args.command in STORE_COMMANDS:
+            payload, code = run_store_command(args)
+            print(json.dumps(payload, sort_keys=True))
+            return code
         if runtime is None:
             raise ModelNotConfiguredError(
                 "run CLI command: no models are configured; "

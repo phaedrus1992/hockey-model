@@ -8,30 +8,45 @@ from hockey_model.sources.nhl import FINAL_STATES, BoxscoreRows, GameRow
 from hockey_model.store.timestamps import iso_utc
 
 
+def _values(row: GameRow) -> tuple[object, ...]:
+    return (
+        row.season,
+        row.game_type,
+        iso_utc(row.start),
+        row.home,
+        row.away,
+        row.state,
+        row.home_score,
+        row.away_score,
+        row.last_period,
+    )
+
+
+def _newest_reads(conn: sqlite3.Connection, game_ids: list[int]) -> dict[int, tuple[object, ...]]:
+    marks = ",".join("?" for _ in game_ids)
+    cursor = conn.execute(
+        "SELECT g.game_id, g.season, g.game_type, g.start_utc, g.home, g.away, g.state,"
+        " g.home_score, g.away_score, g.last_period FROM games g JOIN (SELECT game_id,"
+        f" MAX(fetched_at) AS latest FROM games WHERE game_id IN ({marks}) GROUP BY game_id) n"
+        " ON g.game_id = n.game_id AND g.fetched_at = n.latest",
+        game_ids,
+    )
+    return {game_id: tuple(rest) for game_id, *rest in cursor}
+
+
 def write_games(conn: sqlite3.Connection, rows: Sequence[GameRow], fetched_at: datetime) -> int:
-    """Append one read of each game. An earlier read of the same game stays."""
+    """Append a read of each game that is new or changed. An earlier read stays."""
+    if not rows:
+        return 0
+    newest = _newest_reads(conn, [row.game_id for row in rows])
+    fresh = [row for row in rows if newest.get(row.game_id) != _values(row)]
     stamp = iso_utc(fetched_at)
     conn.executemany(
         "INSERT INTO games (game_id, season, game_type, start_utc, home, away, state,"
         " home_score, away_score, last_period, fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [
-            (
-                row.game_id,
-                row.season,
-                row.game_type,
-                iso_utc(row.start),
-                row.home,
-                row.away,
-                row.state,
-                row.home_score,
-                row.away_score,
-                row.last_period,
-                stamp,
-            )
-            for row in rows
-        ],
+        [(row.game_id, *_values(row), stamp) for row in fresh],
     )
-    return len(rows)
+    return len(fresh)
 
 
 def _write_players(conn: sqlite3.Connection, rows: BoxscoreRows, stamp: str) -> None:
