@@ -92,6 +92,7 @@ def add_starter_read(
     source: str,
     name: str,
     status: str,
+    *,
     fetched_at: str,
 ) -> None:
     """Store one goalie read."""

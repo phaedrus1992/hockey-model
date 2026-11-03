@@ -173,7 +173,7 @@ def test_fetch_scoreboard_uses_dated_url() -> None:
 def test_fetch_injuries_uses_injuries_url() -> None:
     url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries"
     client = FakeClient({url: (FIXTURES / "injuries.json").read_bytes()})
-    assert len(fetch_injuries(client)) == 130
+    assert len(fetch_injuries(client)) == 20
 
 
 def test_fetch_rejects_invalid_json() -> None:

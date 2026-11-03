@@ -6,6 +6,7 @@ from their fetch time. The result tables have no fetch-time limit: a backfill fe
 games late, and the backtest must still see them.
 """
 
+import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from hockey_model.types import Player, Slot
 # An NHL game ends about three hours after the puck drops, with overtime and a shootout.
 RESULT_DELAY = timedelta(hours=3)
 _POSITION_SLOTS = {"C": Slot.C, "L": Slot.W, "R": Slot.W, "D": Slot.D, "G": Slot.G}
+# The states go into the SQL text as literals, so each must be plain capital letters.
+assert all(re.fullmatch("[A-Z]+", state) for state in FINAL_STATES)
 _FINAL = ",".join(f"'{state}'" for state in sorted(FINAL_STATES))
 # The newest final read of each game.
 _LATEST_FINAL = (

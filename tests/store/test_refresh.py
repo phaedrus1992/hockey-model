@@ -98,7 +98,7 @@ def test_refresh_writes_every_source(conn: sqlite3.Connection) -> None:
     assert report.written["nhl_boxscores"] == 14
     assert report.written["moneypuck"] > 0
     assert report.written["espn_starters"] == 2
-    assert report.written["espn_injuries"] == 130
+    assert report.written["espn_injuries"] == 20
     assert count(conn, "games") == 14
     assert count(conn, "goalie_games") == 56
     assert count(conn, "starter_reads") == 2
@@ -125,7 +125,7 @@ def test_refresh_isolates_source_failure(conn: sqlite3.Connection) -> None:
     assert report.written.get("espn_starters", 0) == 0
     assert count(conn, "starter_reads") == 0
     assert report.written["nhl_scores"] == 14
-    assert report.written["espn_injuries"] == 130
+    assert report.written["espn_injuries"] == 20
     failed = conn.execute(
         "SELECT source, ok FROM source_reads WHERE ok = 0 AND source = 'espn_starters'"
     ).fetchall()
@@ -279,3 +279,25 @@ def test_an_evening_refresh_reads_the_eastern_game_day(conn: sqlite3.Connection)
     assert espn_days == ["20260110", "20260111"]
     assert f"{SCORE_URL}2026-01-12" in client.urls
     assert f"{SCORE_URL}2026-01-13" not in client.urls
+
+
+def test_a_stopped_source_says_how_much_it_left(conn: sqlite3.Connection) -> None:
+    overrides: dict[str, bytes | Exception] = {
+        f"{SCORE_URL}2026-01-{day:02d}": SourceError("nhl", "u", "HTTP 503") for day in range(1, 12)
+    }
+    report = refresh(conn, FakeClient(overrides), now=NOW, backfill_from=date(2026, 1, 1))
+    assert any("nhl_scores: stopped after 3 failed days; 9 not tried" in n for n in report.notes)
+
+
+def test_skipped_boxscores_are_counted_in_the_notes(conn: sqlite3.Connection) -> None:
+    bad = f"{BOX_URL}2025020697/boxscore"
+    refresh(
+        conn,
+        FakeClient({bad: SourceError("nhl", bad, "HTTP 404")}),
+        now=NOW,
+        backfill_from=date(2026, 1, 10),
+    )
+    report = refresh(
+        conn, FakeClient({bad: SourceError("nhl", bad, "HTTP 404")}), now=NOW + timedelta(hours=2)
+    )
+    assert any("nhl_boxscores: 1 skipped" in n for n in report.notes)

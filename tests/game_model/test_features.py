@@ -130,7 +130,9 @@ def test_goalie_gsax_reads_use_a_confirmed_goalie(store: sqlite3.Connection) -> 
     add_game(store, 50, "2026-01-15T00:00", home=HOME, away="MTL")
     add_goalie(store, 50, HOME, 12, "J. Woll")
     add_goalie_form(store, 50, 12, 0.5, 4)
-    add_starter_read(store, 100, HOME, "espn", "Joseph Woll", "confirmed", "2026-01-19T14:00")
+    add_starter_read(
+        store, 100, HOME, "espn", "Joseph Woll", "confirmed", fetched_at="2026-01-19T14:00"
+    )
     row = features(store, GoalieMode.READS)
     assert row.values["goalie_gsax"] == pytest.approx((0.5 - 4) - (2.0 - 3))
 

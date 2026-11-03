@@ -57,9 +57,17 @@ def test_game_goalie_wins(season: sqlite3.Connection) -> None:
 
 
 def test_resolve_first_confirmed_wins(season: sqlite3.Connection) -> None:
-    add_starter_read(season, 100, "TOR", "espn", "Joseph Woll", "confirmed", "2026-01-19T15:00")
     add_starter_read(
-        season, 100, "TOR", "daily_faceoff", "Connor Ingram", "confirmed", "2026-01-19T14:00"
+        season, 100, "TOR", "espn", "Joseph Woll", "confirmed", fetched_at="2026-01-19T15:00"
+    )
+    add_starter_read(
+        season,
+        100,
+        "TOR",
+        "daily_faceoff",
+        "Connor Ingram",
+        "confirmed",
+        fetched_at="2026-01-19T14:00",
     )
     start, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert start is not None
@@ -69,16 +77,26 @@ def test_resolve_first_confirmed_wins(season: sqlite3.Connection) -> None:
 
 
 def test_resolve_ignores_a_read_fetched_after_as_of(season: sqlite3.Connection) -> None:
-    add_starter_read(season, 100, "TOR", "espn", "Joseph Woll", "confirmed", "2026-01-19T17:00")
+    add_starter_read(
+        season, 100, "TOR", "espn", "Joseph Woll", "confirmed", fetched_at="2026-01-19T17:00"
+    )
     start, _ = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert start is not None
     assert start.source is StarterSource.MODEL_GUESS
 
 
 def test_resolve_likely_reports_unconfirmed(season: sqlite3.Connection) -> None:
-    add_starter_read(season, 100, "TOR", "espn", "Joseph Woll", "likely", "2026-01-19T12:00")
     add_starter_read(
-        season, 100, "TOR", "daily_faceoff", "Connor Ingram", "likely", "2026-01-19T13:00"
+        season, 100, "TOR", "espn", "Joseph Woll", "likely", fetched_at="2026-01-19T12:00"
+    )
+    add_starter_read(
+        season,
+        100,
+        "TOR",
+        "daily_faceoff",
+        "Connor Ingram",
+        "likely",
+        fetched_at="2026-01-19T13:00",
     )
     start, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert start is not None
@@ -88,9 +106,17 @@ def test_resolve_likely_reports_unconfirmed(season: sqlite3.Connection) -> None:
 
 
 def test_resolve_confirmed_beats_a_newer_likely(season: sqlite3.Connection) -> None:
-    add_starter_read(season, 100, "TOR", "espn", "Joseph Woll", "confirmed", "2026-01-19T12:00")
     add_starter_read(
-        season, 100, "TOR", "daily_faceoff", "Connor Ingram", "likely", "2026-01-19T13:00"
+        season, 100, "TOR", "espn", "Joseph Woll", "confirmed", fetched_at="2026-01-19T12:00"
+    )
+    add_starter_read(
+        season,
+        100,
+        "TOR",
+        "daily_faceoff",
+        "Connor Ingram",
+        "likely",
+        fetched_at="2026-01-19T13:00",
     )
     start, _ = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert names(start) == "J. Woll"
@@ -126,7 +152,9 @@ def test_resolve_guess_counts_only_the_window(store: sqlite3.Connection) -> None
 
 
 def test_resolve_unknown_name_reports_name(season: sqlite3.Connection) -> None:
-    add_starter_read(season, 100, "TOR", "espn", "Nobody Here", "confirmed", "2026-01-19T14:00")
+    add_starter_read(
+        season, 100, "TOR", "espn", "Nobody Here", "confirmed", fetched_at="2026-01-19T14:00"
+    )
     start, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert names(start) == "C. Ingram"
     assert kinds(missing) == [MissingKind.GOALIE_UNKNOWN, MissingKind.GOALIE_UNKNOWN]
@@ -136,7 +164,9 @@ def test_resolve_unknown_name_reports_name(season: sqlite3.Connection) -> None:
 def test_resolve_two_matching_goalies_is_unknown(season: sqlite3.Connection) -> None:
     add_game(season, 50, "2026-01-11T00:00")
     add_goalie(season, 50, "TOR", 13, "Cole Ingram")
-    add_starter_read(season, 100, "TOR", "espn", "Connor Ingram", "confirmed", "2026-01-19T14:00")
+    add_starter_read(
+        season, 100, "TOR", "espn", "Connor Ingram", "confirmed", fetched_at="2026-01-19T14:00"
+    )
     _, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert "matches 2 goalies" in missing[0].note
 
@@ -145,7 +175,13 @@ def test_resolve_finds_a_traded_goalie_in_the_league(season: sqlite3.Connection)
     add_game(season, 60, "2026-01-12T00:00", home="MTL", away="NYR")
     add_goalie(season, 60, "MTL", 31, "S. Montembeault")
     add_starter_read(
-        season, 100, "TOR", "espn", "Samuel Montembeault", "confirmed", "2026-01-19T14:00"
+        season,
+        100,
+        "TOR",
+        "espn",
+        "Samuel Montembeault",
+        "confirmed",
+        fetched_at="2026-01-19T14:00",
     )
     start, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert names(start) == "S. Montembeault"
@@ -155,7 +191,9 @@ def test_resolve_finds_a_traded_goalie_in_the_league(season: sqlite3.Connection)
 def test_resolve_late_run_uses_boxscore(season: sqlite3.Connection) -> None:
     add_game(season, 100, "2026-01-20T00:00", fetched_at=utc("2026-01-20T04:00"))
     add_goalie(season, 100, "TOR", 12, "J. Woll", fetched_at=utc("2026-01-20T04:00"))
-    add_starter_read(season, 100, "TOR", "espn", "Connor Ingram", "confirmed", "2026-01-19T14:00")
+    add_starter_read(
+        season, 100, "TOR", "espn", "Connor Ingram", "confirmed", fetched_at="2026-01-19T14:00"
+    )
     late = START + timedelta(hours=1)
     start, missing = resolve_goalie(season, game(), "TOR", late, use_reads=True)
     assert start is not None
@@ -181,7 +219,9 @@ def test_resolve_before_start_ignores_the_boxscore(season: sqlite3.Connection) -
 
 
 def test_resolve_without_reads_ignores_reads(season: sqlite3.Connection) -> None:
-    add_starter_read(season, 100, "TOR", "espn", "Joseph Woll", "confirmed", "2026-01-19T14:00")
+    add_starter_read(
+        season, 100, "TOR", "espn", "Joseph Woll", "confirmed", fetched_at="2026-01-19T14:00"
+    )
     start, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=False)
     assert names(start) == "C. Ingram"
     assert kinds(missing) == [MissingKind.GOALIE_UNKNOWN]
@@ -196,7 +236,7 @@ def test_resolve_with_no_history_returns_none(store: sqlite3.Connection) -> None
 
 def test_resolve_skips_a_read_with_unknown_status(season: sqlite3.Connection) -> None:
     add_starter_read(
-        season, 100, "TOR", "daily_faceoff", "Joseph Woll", "unknown", "2026-01-19T14:00"
+        season, 100, "TOR", "daily_faceoff", "Joseph Woll", "unknown", fetched_at="2026-01-19T14:00"
     )
     start, _ = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert start is not None
@@ -211,6 +251,8 @@ def test_an_injury_on_another_team_does_not_remove_the_goalie(season: sqlite3.Co
 
 
 def test_a_one_word_name_says_why_it_does_not_match(season: sqlite3.Connection) -> None:
-    add_starter_read(season, 100, "TOR", "espn", "Ingram", "confirmed", "2026-01-19T14:00")
+    add_starter_read(
+        season, 100, "TOR", "espn", "Ingram", "confirmed", fetched_at="2026-01-19T14:00"
+    )
     _, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert "no first name or initial" in missing[0].note

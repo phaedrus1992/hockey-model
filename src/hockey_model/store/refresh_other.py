@@ -80,7 +80,12 @@ def moneypuck(run: RefreshRun) -> None:
     failures = 0
     for season in range(FIRST_SEASON, current + 1):
         url = goalie_games_url(season)
-        if failures >= MAX_UNIT_FAILURES or not _goalie_file_stale(run, season, current):
+        if failures >= MAX_UNIT_FAILURES:
+            run.notes.append(
+                f"{MONEYPUCK}: stopped after {failures} failed files; the rest not tried"
+            )
+            break
+        if not _goalie_file_stale(run, season, current):
             continue
 
         def unit(stamp: datetime, season: int = season) -> int:

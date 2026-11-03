@@ -138,10 +138,12 @@ def test_mp_goalie_form(store: sqlite3.Connection) -> None:
 
 
 def test_starter_reads_hide_rows_fetched_after_as_of(store: sqlite3.Connection) -> None:
-    add_starter_read(store, 1, "TOR", "espn", "B", "likely", "2026-01-10T15:00")
-    add_starter_read(store, 1, "TOR", "daily_faceoff", "A", "confirmed", "2026-01-10T14:00")
-    add_starter_read(store, 1, "TOR", "espn", "C", "confirmed", "2026-01-10T20:00")
-    add_starter_read(store, 1, "BOS", "espn", "D", "confirmed", "2026-01-10T14:00")
+    add_starter_read(store, 1, "TOR", "espn", "B", "likely", fetched_at="2026-01-10T15:00")
+    add_starter_read(
+        store, 1, "TOR", "daily_faceoff", "A", "confirmed", fetched_at="2026-01-10T14:00"
+    )
+    add_starter_read(store, 1, "TOR", "espn", "C", "confirmed", fetched_at="2026-01-10T20:00")
+    add_starter_read(store, 1, "BOS", "espn", "D", "confirmed", fetched_at="2026-01-10T14:00")
     reads = starter_reads_before(store, 1, "TOR", utc("2026-01-10T16:00"))
     assert [(r.goalie_name, r.source.value, r.status.value) for r in reads] == [
         ("A", "daily_faceoff", "confirmed"),
