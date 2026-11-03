@@ -34,8 +34,13 @@ def game() -> Game:
     return Game(100, HOME, AWAY, START)
 
 
-def features(store: sqlite3.Connection, mode: GoalieMode = GoalieMode.GUESS, as_of=AS_OF):
-    return build_features(store, game(), as_of, EloBook(), goalie_mode=mode)
+def features(
+    store: sqlite3.Connection,
+    mode: GoalieMode = GoalieMode.GUESS,
+    as_of=AS_OF,
+    names: tuple[str, ...] = FEATURES,
+):
+    return build_features(store, game(), as_of, EloBook(), goalie_mode=mode, names=names)
 
 
 def kinds(row) -> list[MissingKind]:
@@ -65,7 +70,7 @@ def test_elo_logit_matches_the_book(store: sqlite3.Connection) -> None:
     row = features(store)
     assert row.elo_logit == pytest.approx(math.log(chance / (1 - chance)))
     assert row.game_id == 100
-    assert set(row.values) == {*FEATURES, "attempt_form"}
+    assert set(row.values) == set(FEATURES)
 
 
 def test_xg_form_is_home_share_minus_away_share(store: sqlite3.Connection) -> None:
@@ -265,17 +270,30 @@ def test_attempt_form_uses_shot_attempts_not_expected_goals(store: sqlite3.Conne
     add_game(store, 110, "2026-01-18T00:00", home="MTL", away=AWAY)
     add_team_form(store, 10, HOME, 3.0, 1.0, attempts=(60, 40))
     add_team_form(store, 110, AWAY, 1.0, 3.0, attempts=(30, 70))
-    row = features(store)
+    row = features(store, names=("xg_form", "attempt_form", "goalie_gsax", "rest"))
     assert row.values["attempt_form"] == pytest.approx(0.6 - 0.3)
     assert row.values["xg_form"] == pytest.approx(0.75 - 0.25)
     assert row.uses_moneypuck
 
 
 def test_attempt_form_missing_reports_attempt_form(store: sqlite3.Connection) -> None:
-    row = features(store)
+    row = features(store, names=ATTEMPT_FEATURES)
     assert row.values["attempt_form"] == 0.0
     assert kinds(row).count(MissingKind.ATTEMPT_FORM) == 2
 
 
-def test_attempt_candidates_replace_only_xg_form() -> None:
-    assert ATTEMPT_FEATURES == ("attempt_form", "goalie_gsax", "rest")
+def test_production_features_do_not_read_attempts(store: sqlite3.Connection) -> None:
+    row = features(store)
+    assert "attempt_form" not in row.values
+    assert MissingKind.ATTEMPT_FORM not in kinds(row)
+
+
+def test_attempt_candidates_do_not_read_expected_goals(store: sqlite3.Connection) -> None:
+    row = features(store, names=ATTEMPT_FEATURES)
+    assert "xg_form" not in row.values
+    assert MissingKind.XG_FORM not in kinds(row)
+
+
+def test_an_unknown_feature_name_is_refused(store: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="unknown feature 'nope'"):
+        features(store, names=("nope",))

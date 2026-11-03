@@ -60,3 +60,11 @@ def test_the_attempt_candidates_replace_xg_form(store: sqlite3.Connection) -> No
     assert report.candidate_features == ("attempt_form", "goalie_gsax", "rest")
     assert set(report.validation) == {"elo", "elo+attempt_form", "elo+goalie_gsax", "elo+rest"}
     assert "xg_form" not in report.tested_features
+
+
+def test_an_attempt_run_ships_nothing_and_says_so(store: sqlite3.Connection) -> None:
+    seed(store, range(1, 8))
+    report, _ = run_backtest(store, PLAN, candidates=ATTEMPT_FEATURES)
+    assert report.live_features == ()
+    assert any("Nothing ships from it" in note for note in report.notes)
+    assert not any(kind.startswith("xg_form") for kind in report.missing_inputs)

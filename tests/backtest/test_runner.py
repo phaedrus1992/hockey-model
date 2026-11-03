@@ -80,8 +80,8 @@ def feed(monkeypatch: pytest.MonkeyPatch):
     """Return a function that makes the runner read the given dataset."""
 
     def use(rows: dict[GoalieMode, list[TrainingRow]]) -> None:
-        def fake(conn, first, last, mode, burn_in=0):
-            del conn, burn_in
+        def fake(conn, first, last, mode, burn_in=0, names=FEATURES):
+            del conn, burn_in, names
             return [r for r in rows[mode] if first <= r.game.season <= last]
 
         monkeypatch.setattr(runner, "training_rows", fake)
@@ -214,12 +214,8 @@ def test_moneypuck_note_and_credit_when_a_moneypuck_feature_is_tested(feed) -> N
 
 
 def test_no_moneypuck_note_when_only_rest_is_tested(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert MONEYPUCK_LEAK_NOTE not in runner._notes(
-        ("rest",), (), success=True, candidates=FEATURES
-    )
-    assert MONEYPUCK_LEAK_NOTE in runner._notes(
-        ("rest", "xg_form"), (), success=True, candidates=FEATURES
-    )
+    assert MONEYPUCK_LEAK_NOTE not in runner._notes(("rest",), (), success=True)
+    assert MONEYPUCK_LEAK_NOTE in runner._notes(("rest", "xg_form"), (), success=True)
 
 
 def test_the_notes_state_how_many_features_were_tested(feed) -> None:
@@ -326,10 +322,10 @@ def test_the_game_csv_reads_back_to_the_records(records: list[GameRecord], tmp_p
 
 
 def test_the_notes_say_why_the_two_model_runs_are_equal_without_a_goalie_feature() -> None:
-    notes = runner._notes(("rest", "xg_form"), ("goalie_gsax",), success=True, candidates=FEATURES)
+    notes = runner._notes(("rest", "xg_form"), ("goalie_gsax",), success=True)
     assert runner.GUESS_EQUALS_ACTUAL_NOTE in notes
 
 
 def test_the_notes_leave_out_that_remark_when_a_goalie_feature_is_tested() -> None:
-    notes = runner._notes(("goalie_gsax", "rest"), (), success=True, candidates=FEATURES)
+    notes = runner._notes(("goalie_gsax", "rest"), (), success=True)
     assert runner.GUESS_EQUALS_ACTUAL_NOTE not in notes

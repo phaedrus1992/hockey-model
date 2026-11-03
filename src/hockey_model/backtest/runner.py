@@ -43,10 +43,8 @@ INJURY_HISTORY_NOTE = (
     "The store has no ESPN injury history before it began to keep injury reads, so the goalie "
     "guess run never leaves out an injured goalie. The live model does."
 )
-# Every feature here reads MoneyPuck data, so the run carries its credit.
+# Every feature here reads MoneyPuck data, so a run that uses one carries the credit and the note.
 MONEYPUCK_FEATURES = frozenset({"xg_form", "attempt_form", "goalie_gsax"})
-# The MoneyPuck expected-goals model is the source of the leak worry, so only these count.
-XG_MODEL_FEATURES = frozenset({"xg_form", "goalie_gsax"})
 ELO = "elo"
 HOME_RATE = "home_rate"
 MODEL_ACTUAL = "model_actual"
@@ -225,20 +223,33 @@ def _missing_counts(games: Sequence[_Scored]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _notes(
-    tested: Sequence[str], vetoed: Sequence[str], success: bool, candidates: Sequence[str]
-) -> tuple[str, ...]:
-    notes = [f"{len(candidates)} candidate features were tested together as one joint test."]
+def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple[str, ...]:
+    count = len(tested) + len(vetoed)
+    notes = [f"{count} candidate features were tested together as one joint test."]
     if vetoed:
         notes.append(f"The guess run vetoed: {', '.join(vetoed)}.")
     if not success:
         notes.append("The joint test failed, so the Elo alone ships.")
-    if XG_MODEL_FEATURES & set(tested):
+    if MONEYPUCK_FEATURES & set(tested):
         notes.append(MONEYPUCK_LEAK_NOTE)
     if GOALIE_FEATURE not in tested:
         notes.append(GUESS_EQUALS_ACTUAL_NOTE)
     notes.append(INJURY_HISTORY_NOTE)
     return tuple(notes)
+
+
+def _is_production(candidates: Sequence[str]) -> bool:
+    return tuple(candidates) == FEATURES
+
+
+def _candidate_notes(candidates: Sequence[str]) -> tuple[str, ...]:
+    """Say so when a run tests a set other than the production set, so no result reads as live."""
+    if _is_production(candidates):
+        return ()
+    return (
+        "This candidate set is a test. Nothing ships from it, and the live model reads only the "
+        "production features.",
+    )
 
 
 def run_backtest(
@@ -253,8 +264,8 @@ def run_backtest(
     is below zero. The guess run never changes success.
     """
     first, last = plan.fit_first, plan.scored[1]
-    actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in)
-    guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in)
+    actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in, candidates)
+    guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in, candidates)
     validation, vetoed = _validate(actual, guess, plan, candidates)
     tested = tuple(f for f in candidates if f not in vetoed)
     games = _score_seasons(actual, guess, tested, plan)
@@ -275,11 +286,11 @@ def run_backtest(
         candidate_features=tuple(candidates),
         vetoed=vetoed,
         tested_features=tested,
-        live_features=tested if success else (),
+        live_features=tested if success and _is_production(candidates) else (),
         validation=validation,
         runs=runs,
         success=success,
-        notes=_notes(tested, vetoed, success, candidates),
+        notes=_notes(tested, vetoed, success) + _candidate_notes(candidates),
         credits=(MONEYPUCK_CREDIT,) if uses_moneypuck else (),
         missing_inputs=_missing_counts(games),
     )
