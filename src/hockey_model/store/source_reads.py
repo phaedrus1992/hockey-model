@@ -27,3 +27,13 @@ def last_ok_read(conn: sqlite3.Connection, source: str, url: str) -> datetime | 
         (source, url),
     ).fetchone()
     return None if row[0] is None else parse_iso_utc(row[0])
+
+
+def failed_since(conn: sqlite3.Connection, source: str, url: str, since: datetime) -> bool:
+    """Return True when the newest read of ``url`` failed and came after ``since``."""
+    row = conn.execute(
+        "SELECT ok, fetched_at FROM source_reads WHERE source = ? AND url = ?"
+        " ORDER BY fetched_at DESC LIMIT 1",
+        (source, url),
+    ).fetchone()
+    return row is not None and not row[0] and parse_iso_utc(row[1]) > since

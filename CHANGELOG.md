@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add NHL API score-day and boxscore reads, and store them as dated reads that keep earlier reads. [feat:sources]
 - Add MoneyPuck team and goalie game-by-game reads (expected goals), stored as dated reads that keep earlier values. Data from MoneyPuck.com. [feat:sources]
 - Add ESPN probable starting goalie and injury reads, and Daily Faceoff starting goalie reads, stored as dated reads. [feat:sources]
+- Add `hockey-model refresh`, which reads every source into the store, keeps each source failure apart, and exits 1 when a source failed. [feat:store]
 - Python project skeleton: uv, ruff, ty, pytest with coverage and a per-module floor, editorconfig, prek hooks, and CI validation, test, and editorconfig jobs.
 
 [Unreleased]: https://github.com/slackworks/hockey-model/commits/main
