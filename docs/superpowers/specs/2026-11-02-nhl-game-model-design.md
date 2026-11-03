@@ -89,7 +89,7 @@ hockey-model must not fetch any other MoneyPuck URL.
 The data page (`https://moneypuck.com/data.htm`, read on 2026-11-02) lists these files, among others:
 
 - Team game-by-game, all seasons: `https://moneypuck.com/moneypuck/playerData/careers/gameByGame/all_teams.csv`.
-- Goalie game-by-game, one ZIP per season from 2008: `https://peter-tanner.com/moneypuck/downloads/seasonPlayersSummary/goalies/{YEAR}.zip`. `{YEAR}` is the first year of the season, so 2024 is 2024-25.
+- Goalie and skater game-by-game, one ZIP per season from 2008: `https://peter-tanner.com/moneypuck/downloads/seasonPlayersSummary/{goalies,skaters}/{YEAR}.zip`. `{YEAR}` is the first year of the season, so 2024 is 2024-25.
 - Season summaries: `https://moneypuck.com/moneypuck/playerData/seasonSummary/{YEAR}/regular/{skaters,goalies,teams}.csv`.
 - The players data dictionary: `https://peter-tanner.com/moneypuck/downloads/MoneyPuckDataDictionaryForPlayers.csv`.
 
@@ -104,8 +104,23 @@ hockey-model reads the starting goalies from ESPN and from Daily Faceoff.
 When neither source has a confirmed goalie, a likely goalie from either source is used, and the result lists the goalie as unconfirmed.
 When neither source names a goalie, the model estimates the starter from each goalie's recent share of starts, and the result lists the goalie as unknown.
 
-**My call:** ESPN injuries feed only this starter estimate: a goalie that ESPN lists as out cannot be the estimated starter.
-No other v1 feature uses injuries, so hockey-model stores only what this rule needs.
+**My call:** a goalie that ESPN lists as out cannot be the estimated starter.
+
+### Injuries and missing regulars
+
+**Decided:** the model has a "missing regulars" feature: the value of the regular players who do not play in a game.
+
+- In the backtest, the missing regulars come from the NHL boxscores. Each team has a usual lineup from its recent games, and the boxscore shows who actually played. This data goes back to 2015, so the feature can be backtested.
+- In a live prediction, the missing regulars come from the ESPN injury feed. A player that ESPN lists as out does not play.
+- The backtest version uses the real lineup, so it is a best case, the same as the actual-starter run.
+
+The ESPN feed lists only current injuries.
+The per-player injury endpoint on `sports.core.api.espn.com` returned 404 on 2026-11-02, so no injury history is available.
+For this reason, the backtest cannot use the ESPN feed itself.
+hockey-model stores each injury read with its fetch time, so a history builds up from now on.
+
+The builder decides how to define a regular and how to value a missing player.
+The NHL boxscores (ice time, points, shots) and the MoneyPuck skater game-by-game files are both available for this.
 
 ESPN overwrites the morning status after a game.
 Every past game that was checked (2021, 2024, and 2026) shows "Confirmed".
@@ -150,6 +165,7 @@ The prediction call reads only stored data and makes no network request.
 1. MoneyPuck expected-goals form for each team, from the games before this game.
 2. The starting goalie's goals saved above expected.
 3. Rest days for each team.
+4. Missing regulars for each team (owner decision, see "Injuries and missing regulars").
 
 Each feature is measured on its own in the backtest.
 A feature that does not lower the backtest log loss is left out of the final model.
@@ -258,8 +274,9 @@ These are separate projects, each with its own issue:
 - The two scored seasons are 2024-25 and 2025-26, with playoffs. Preseason is excluded.
 - The baseline Elo is sportsbettr's NHL Elo without the market shrink, and the model uses the same Elo core.
 - Features are chosen on 2015-16 to 2023-24. The weights are refit before each scored season, from all earlier seasons. (Owner decision.)
-- ESPN injuries feed only the starter estimate.
+- A goalie that ESPN lists as out cannot be the estimated starter.
+- A "missing regulars" feature: from NHL boxscores in the backtest, from the ESPN injury feed live. (Owner decision.)
 - One shared SQLite database at a caller-set path. An unset path is an error.
 - The prediction call makes no network request. A refresh fills the database.
-- The model features are Elo, MoneyPuck expected-goals form, goalie goals saved above expected, and rest days, each tested on its own.
+- The model features are Elo, MoneyPuck expected-goals form, goalie goals saved above expected, rest days, and missing regulars, each tested on its own.
 - Daily Faceoff lines are out of v1.
