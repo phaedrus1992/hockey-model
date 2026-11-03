@@ -19,6 +19,9 @@ Opener = Callable[[urllib.request.Request, float], bytes]
 
 _LOG = logging.getLogger(__name__)
 TIMEOUT_S = 30.0
+# The socket timeout bounds one blocking call. This bounds a whole response, even a slow trickle.
+TOTAL_TIMEOUT_S = 120.0
+_CHUNK_BYTES = 64 * 1024
 MAX_BACKOFF_S = 30.0
 # A response larger than this is refused rather than read into memory.
 MAX_BODY_BYTES = 64 * 1024 * 1024
@@ -52,12 +55,31 @@ class _PolicyRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_PolicyRedirect)
 
 
-def _default_opener(request: urllib.request.Request, timeout: float) -> bytes:
+def _default_opener(
+    request: urllib.request.Request,
+    timeout: float,
+    clock: Callable[[], float] = time.monotonic,
+) -> bytes:
+    deadline = clock() + TOTAL_TIMEOUT_S
     with _OPENER.open(request, timeout=timeout) as response:
-        body: bytes = response.read(MAX_BODY_BYTES + 1)
-    if len(body) > MAX_BODY_BYTES:
-        raise _Refused(f"response is larger than {MAX_BODY_BYTES} bytes; raise MAX_BODY_BYTES")
-    return body
+        return _read_bounded(response, deadline, clock)
+
+
+def _read_bounded(response: IO[bytes], deadline: float, clock: Callable[[], float]) -> bytes:
+    """Read the body in chunks. The socket timeout bounds one read, so this bounds the total."""
+    chunks: list[bytes] = []
+    size = 0
+    while clock() < deadline:
+        chunk = response.read(_CHUNK_BYTES)
+        if not chunk:
+            return b"".join(chunks)
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            raise _Refused(f"response is larger than {MAX_BODY_BYTES} bytes; raise MAX_BODY_BYTES")
+        chunks.append(chunk)
+    raise _Refused(
+        f"response body not finished within {TOTAL_TIMEOUT_S:g} s; raise TOTAL_TIMEOUT_S"
+    )
 
 
 def _policy_for(url: str) -> HostPolicy:
