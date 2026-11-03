@@ -164,3 +164,17 @@ def test_a_late_prediction_does_not_use_the_game_result(store: sqlite3.Connectio
     add_game(store, 100, "2026-01-20T00:00", fetched_at=FETCHED)
     late = model(store).predict(GAME, START + timedelta(hours=6), 0.8)
     assert late.home_win == pytest.approx(pregame.home_win)
+
+
+def test_expected_goals_from_actual_goals_say_so(store: sqlite3.Connection) -> None:
+    add_game(store, 1, "2026-01-15T00:00", home="TOR", away="MTL")
+    add_game(store, 2, "2026-01-16T00:00", home="MTL", away="BOS")
+    notes = [m.note for m in model(store).predict(GAME, AS_OF, 0.8).missing]
+    assert sum("from actual goals" in note for note in notes) == 2
+
+
+def test_the_prediction_elo_starts_at_the_burn_in_season(store: sqlite3.Connection) -> None:
+    add_game(store, 1, "2013-11-01T00:00", season=20132014, score=(9, 0))
+    add_game(store, 2, "2014-11-01T00:00", season=20142015, home="MTL", away="OTT")
+    baseline = model(store).predict(GAME, AS_OF, 0.8).home_win
+    assert baseline == pytest.approx(1 / (1 + 10 ** (-28 / 400)))

@@ -8,6 +8,7 @@ from hockey_model.game import Game, GamePrediction, MissingInput, MissingKind
 from hockey_model.game_model.elo import replay
 from hockey_model.game_model.features import FORM_WINDOW, GoalieMode, build_features
 from hockey_model.game_model.logistic import LogisticFit, predict_logistic
+from hockey_model.game_model.seasons import ELO_BURN_IN
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
 from hockey_model.sources.teams import franchise
 from hockey_model.store.reads import final_games_before, mp_team_form_before, team_games_before
@@ -49,7 +50,9 @@ def _goals_for_and_against(
     allowed: list[float] = []
     for game in team_games_before(conn, team, cutoff, FORM_WINDOW):
         mine_home = franchise(game.home) == franchise(team)
-        home_score, away_score = game.home_score or 0, game.away_score or 0
+        if game.home_score is None or game.away_score is None:
+            raise ValueError(f"read game {game.game_id}: a final game has no score; refresh again")
+        home_score, away_score = game.home_score, game.away_score
         scored.append(home_score if mine_home else away_score)
         allowed.append(away_score if mine_home else home_score)
     return scored, allowed, False
@@ -75,27 +78,30 @@ class NhlGameModel:
     def _expected_goals(
         self, game: Game, cutoff: datetime
     ) -> tuple[float, float, list[MissingInput]]:
-        home_for, home_against, _ = _goals_for_and_against(self._conn, game.home, cutoff)
-        away_for, away_against, _ = _goals_for_and_against(self._conn, game.away, cutoff)
+        home_for, home_against, home_xg = _goals_for_and_against(self._conn, game.home, cutoff)
+        away_for, away_against, away_xg = _goals_for_and_against(self._conn, game.away, cutoff)
         notes: list[MissingInput] = []
         rates: list[float] = []
-        for team, own, theirs in (
-            (game.home, home_for, away_against),
-            (game.away, away_for, home_against),
+        for team, own, theirs, used_xg in (
+            (game.home, home_for, away_against, home_xg),
+            (game.away, away_for, home_against, away_xg),
         ):
             attack, defence = _mean(own), _mean(theirs)
             if attack is None or defence is None:
                 note = f"no games before this game; {LEAGUE_GOALS} goals is used"
                 notes.append(MissingInput(MissingKind.XG_FORM, team, note))
-            rates.append(
-                LEAGUE_GOALS if attack is None or defence is None else (attack + defence) / 2
-            )
+                rates.append(LEAGUE_GOALS)
+                continue
+            if not used_xg:
+                note = "the expected goals come from actual goals, not MoneyPuck expected goals"
+                notes.append(MissingInput(MissingKind.XG_FORM, team, note))
+            rates.append((attack + defence) / 2)
         return rates[0], rates[1], notes
 
     def predict(self, game: Game, as_of: datetime, level: float) -> GamePrediction:
         """Return the win chances and expected goals of ``game`` as known at ``as_of``."""
         cutoff = min(as_of, game.start)
-        elo = replay(final_games_before(self._conn, cutoff))
+        elo = replay(g for g in final_games_before(self._conn, cutoff) if g.season >= ELO_BURN_IN)
         row = build_features(self._conn, game, as_of, elo, goalie_mode=self._mode)
         home_win = predict_logistic(self._fit, row)
         home_rate, away_rate, goal_notes = self._expected_goals(game, cutoff)
