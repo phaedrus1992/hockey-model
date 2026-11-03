@@ -12,7 +12,8 @@ from hockey_model.types import HockeyModelError
 
 @given(st.datetimes(timezones=st.timezones() | st.just(UTC)))
 def test_parse_reverses_iso_utc(moment: datetime) -> None:
-    assert parse_iso_utc(iso_utc(moment)) == moment
+    # Compare in UTC: Python calls two zones' datetimes unequal inside a daylight-saving fold.
+    assert parse_iso_utc(iso_utc(moment)) == moment.astimezone(UTC)
 
 
 @given(st.datetimes(timezones=st.just(UTC)))
