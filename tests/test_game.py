@@ -135,3 +135,11 @@ def test_game_rejects_non_utc_offset() -> None:
 def test_game_rejects_same_team_ignoring_padding() -> None:
     with pytest.raises(HockeyModelError, match="differ"):
         Game(1, "CAR", " CAR ", START)
+
+
+@pytest.mark.parametrize("code", ["BSO", "tor", "TOR ", "XYZ"])
+def test_game_rejects_unknown_team_code(code: str) -> None:
+    with pytest.raises(HockeyModelError, match=r"unknown NHL team code.*known codes"):
+        Game(1, code, "MTL", datetime(2026, 1, 1, tzinfo=UTC))
+    with pytest.raises(HockeyModelError, match="unknown NHL team code"):
+        Game(1, "MTL", code, datetime(2026, 1, 1, tzinfo=UTC))

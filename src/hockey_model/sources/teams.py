@@ -4,12 +4,9 @@ Daily Faceoff and MoneyPuck maps are added with their sources (plan Tasks 6 and 
 """
 
 from hockey_model.sources.shape_errors import SourceShapeError
+from hockey_model.team_codes import NHL_TEAM_CODES
 
-# The 32 current teams, plus ARI for seasons before the 2024-25 move to UTA.
-NHL_TEAM_CODES: frozenset[str] = frozenset(
-    "ANA BOS BUF CAR CBJ CGY CHI COL DAL DET EDM FLA LAK MIN MTL NJD NSH NYI NYR OTT PHI "
-    "PIT SEA SJS STL TBL TOR UTA VAN VGK WPG WSH ARI".split()
-)
+__all__ = ["NHL_TEAM_CODES", "franchise", "from_espn"]
 
 # ESPN writes four codes that differ from the NHL codes. Other codes match as written.
 _ESPN_TO_NHL = {"LA": "LAK", "NJ": "NJD", "SJ": "SJS", "TB": "TBL"}
