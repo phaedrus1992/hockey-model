@@ -54,6 +54,9 @@ The goalie features read no starter, so the actual run and the guess run give th
 The interval comes from a block bootstrap with 16-game blocks.
 The success test needs the 95th percentile of the difference below zero.
 The interval of `model_actual` is fully below zero, so the test passed.
+The rows `model_actual` and `model_guess` are equal because neither live feature reads the starting goalie.
+The equal scores do not show that a wrong goalie costs nothing.
+The goalie feature was vetoed, so the guess run had nothing to differ on.
 
 ## Calibration
 
@@ -80,6 +83,7 @@ Both models still underrate the home side in the 0.3 to 0.5 range.
    The backtest uses today's MoneyPuck files for past games.
    The `xg_form` gain may look better than it would have in real time.
    The data cannot measure the size of this leak.
+   Issue #77 tests it: replace the xG form with a form built from shot-attempt counts, which no model produced.
 2. The Elo beats the home rate by 0.0022 log loss only.
    The model gain over the Elo is five times larger.
    Most of that gain comes from the `xg_form` feature.
@@ -90,7 +94,13 @@ Both models still underrate the home side in the 0.3 to 0.5 range.
 4. The store holds no ESPN injury history before 2026-11-03.
    The goalie guess run therefore never leaves out an injured goalie, and the live model does.
    The veto of `goalie_gsax` rests on a guess run without that rule.
-5. The test beat the Elo, which is level with the market in earlier work.
+5. Treat the headline as unconfirmed until the leak test of #77 is done.
+   A reviewer scored a DraftKings no-vig morning line at 0.6829 log loss on 1,280 regular season games of 2025-26.
+   The game set differs from ours (no playoffs, one season), so the figure is rough.
+   On its face, 0.6763 would beat that line by about 0.007, and no earlier work came close.
+6. The Elo beats the home rate by little, so the baseline of the joint test is weak.
+   The market comparison is the stronger bar, and the gate in the spec for the sportsbettr follow-up applies it.
+7. The test beat the Elo, which is level with the market in earlier work.
    Beating the Elo is necessary and not sufficient for a bet.
    The gate in the spec for the sportsbettr follow-up still applies.
 

@@ -128,6 +128,7 @@ The 95% interval of the difference is -0.0144 to -0.0083.
 The live features are expected-goals form and rest.
 The guess run vetoed goalie goals saved above expected.
 MoneyPuck's expected-goals model may have trained on the scored games, so the gain may look larger than it was.
+Issue #77 tests this with a form built from shot-attempt counts.
 The result says nothing about betting markets.
 The full report is in [docs/backtest/2026-11-nhl-game-model.md](docs/backtest/2026-11-nhl-game-model.md).
 
