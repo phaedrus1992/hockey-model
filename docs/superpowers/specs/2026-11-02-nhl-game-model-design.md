@@ -72,10 +72,12 @@ The protocol takes the time of the prediction, so a backtest can ask for a predi
 | Source | Data | Use | Terms |
 | --- | --- | --- | --- |
 | NHL API, `api-web.nhle.com/v1` | Schedule, scores, boxscores, play-by-play | Game results, Elo, rest days, actual starting goalie | Public, no key. It returns 403 to a default urllib User-Agent. |
-| NHL stats API, `api.nhle.com/stats/rest` | Player and team stat reports | Player catalog and identity | Public, no key, rate limited |
 | MoneyPuck CSV files | `careers/gameByGame/all_teams.csv` (every team game, every season), goalie game-by-game ZIP files per season | Expected-goals form, goalie goals saved above expected | See below |
 | ESPN, `site.api.espn.com/apis/site/v2/sports/hockey/nhl` | Scoreboard with `probableStartingGoalie` and a status, injuries with return dates | Starting goalies, injuries | Unofficial. ESPN tolerates use that is not abuse. |
 | Daily Faceoff, `dailyfaceoff.com/starting-goalies` | Starting goalies with a status, in the page's `__NEXT_DATA__` JSON | Starting goalies | No API and no terms. The owner allows this read. |
+
+The player catalog comes from the NHL boxscores, which name every player with an NHL ID and a position.
+The NHL stats API (`api.nhle.com/stats/rest`) is not needed for v1.
 
 ### MoneyPuck terms
 
