@@ -7,10 +7,13 @@ from http.client import HTTPMessage, IncompleteRead
 from urllib.error import HTTPError, URLError
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 import hockey_model.sources.http as http_module
 from hockey_model.sources.errors import SourceError
 from hockey_model.sources.http import HttpClient, _PolicyRedirect, _Refused
+from hockey_model.sources.policy import HOST_POLICIES
 
 NHL_URL = "https://api-web.nhle.com/v1/schedule/now"
 
@@ -260,3 +263,93 @@ def test_trickling_body_surfaces_as_source_error(monkeypatch: pytest.MonkeyPatch
     client = HttpClient(opener=opener, clock=clock, sleep=clock.sleep)
     with pytest.raises(SourceError, match="not finished within"):
         client.get("nhl", NHL_URL)
+
+
+_HOSTS = {
+    "api-web.nhle.com": "https://api-web.nhle.com/v1/x",
+    "site.api.espn.com": "https://site.api.espn.com/apis/x",
+    "www.dailyfaceoff.com": "https://www.dailyfaceoff.com/x",
+}
+_MAX_TRIES = HOST_POLICIES["api-web.nhle.com"].max_retries + 1
+
+
+@given(
+    st.lists(
+        st.tuples(st.sampled_from(sorted(_HOSTS)), st.floats(min_value=0.0, max_value=10.0)),
+        min_size=1,
+        max_size=30,
+    )
+)
+def test_property_requests_to_one_host_start_min_interval_apart(
+    steps: list[tuple[str, float]],
+) -> None:
+    clock = FakeClock()
+    starts: dict[str, list[float]] = {host: [] for host in _HOSTS}
+    current_host = ""
+
+    def opener(request: urllib.request.Request, timeout: float) -> bytes:
+        del request, timeout
+        starts[current_host].append(clock.now)
+        return b"ok"
+
+    client = HttpClient(opener=opener, clock=clock, sleep=clock.sleep)
+    for host, gap in steps:
+        clock.now += gap
+        current_host = host
+        client.get("src", _HOSTS[host])
+    for host, times in starts.items():
+        interval = HOST_POLICIES[host].min_interval_s
+        assert all(b - a >= interval - 1e-9 for a, b in zip(times, times[1:], strict=False))
+
+
+_OUTCOMES = {
+    "ok": b"ok",
+    "503": _http_error(503),
+    "429": _http_error(429),
+    "404": _http_error(404),
+    "net": URLError("down"),
+}
+
+
+@given(st.lists(st.sampled_from(sorted(_OUTCOMES)), min_size=_MAX_TRIES, max_size=8))
+def test_property_retries_stop_at_first_final_outcome_or_the_limit(names: list[str]) -> None:
+    clock = FakeClock()
+    opener = ScriptedOpener([_OUTCOMES[name] for name in names])
+    expected_calls = _MAX_TRIES
+    expect_body = False
+    for index, name in enumerate(names[:_MAX_TRIES]):
+        if name in {"ok", "404"}:
+            expected_calls, expect_body = index + 1, name == "ok"
+            break
+    client = _client(opener, clock)
+    if expect_body:
+        assert client.get("nhl", NHL_URL) == b"ok"
+    else:
+        with pytest.raises(SourceError):
+            client.get("nhl", NHL_URL)
+    assert len(opener.requests) == expected_calls
+    assert all(0.0 < pause <= http_module.MAX_BACKOFF_S for pause in clock.sleeps)
+
+
+@given(st.integers(min_value=0, max_value=999_999), st.sampled_from(["", " ", "\t", "\n "]))
+def test_property_retry_after_digits_are_used_and_capped(seconds: int, pad: str) -> None:
+    result = http_module._backoff_s(0, f"{pad}{seconds}{pad}")
+    assert result == min(float(seconds), http_module.MAX_BACKOFF_S)
+
+
+def _is_plain_seconds(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.isascii() and stripped.isdigit() and len(stripped) <= 6
+
+
+@given(
+    st.integers(min_value=0, max_value=60),
+    st.none()
+    | st.text(max_size=12).filter(lambda text: not _is_plain_seconds(text))
+    | st.integers(min_value=1_000_000).map(str),
+)
+def test_property_other_retry_after_text_falls_back_to_exponential(
+    attempt: int, header: str | None
+) -> None:
+    result = http_module._backoff_s(attempt, header)
+    assert result == min(2.0**attempt, http_module.MAX_BACKOFF_S)

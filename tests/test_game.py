@@ -4,8 +4,11 @@ import math
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from hockey_model.game import Game, GamePrediction, MissingKind, game_win_probability
+from hockey_model.team_codes import NHL_TEAM_CODES
 from hockey_model.types import HockeyModelError, ProbabilityError, Projection
 
 START = datetime(2026, 1, 10, 0, 0, tzinfo=UTC)
@@ -143,3 +146,31 @@ def test_game_rejects_unknown_team_code(code: str) -> None:
         Game(1, code, "MTL", datetime(2026, 1, 1, tzinfo=UTC))
     with pytest.raises(HockeyModelError, match="unknown NHL team code"):
         Game(1, "MTL", code, datetime(2026, 1, 1, tzinfo=UTC))
+
+
+_START_ZONES = st.none() | st.just(UTC) | st.timezones() | st.just(timezone(timedelta(0)))
+
+
+@given(
+    game_id=st.integers(min_value=-5, max_value=10),
+    home=st.sampled_from(sorted(NHL_TEAM_CODES)) | st.text(max_size=5),
+    away=st.sampled_from(sorted(NHL_TEAM_CODES)) | st.text(max_size=5),
+    start=st.datetimes(timezones=_START_ZONES),
+)
+def test_property_game_accepts_exactly_the_valid_inputs(
+    game_id: int, home: str, away: str, start: datetime
+) -> None:
+    valid = (
+        game_id > 0
+        and home in NHL_TEAM_CODES
+        and away in NHL_TEAM_CODES
+        and home != away
+        and start.tzinfo is not None
+        and start.utcoffset() == timedelta(0)
+    )
+    if valid:
+        game = Game(game_id, home, away, start)
+        assert (game.home, game.away) == (home, away)
+    else:
+        with pytest.raises(HockeyModelError):
+            Game(game_id, home, away, start)
