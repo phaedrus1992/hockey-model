@@ -218,6 +218,16 @@ def _parse_goalies(side: Mapping[str, object], team: str, out: BoxscoreRows) -> 
         )
 
 
+def _check_starters(rows: BoxscoreRows, where: str) -> None:
+    """Raise unless each team has one starting goalie, so a stored game always has its starter."""
+    for team in sorted({g.team for g in rows.goalies} | {p.team for p in rows.players}):
+        count = sum(1 for g in rows.goalies if g.team == team and g.started)
+        if count != 1:
+            raise SourceParseError(
+                SOURCE, f"{where} has {count} starting goalies for {team}; expected 1"
+            )
+
+
 def parse_boxscore(payload: object) -> BoxscoreRows:
     """Return the player and stat rows of a final boxscore.
 
@@ -236,6 +246,7 @@ def parse_boxscore(payload: object) -> BoxscoreRows:
         team = as_mapping(SOURCE, field(SOURCE, top, key, where), f"{where} {key}")
         side = as_mapping(SOURCE, field(SOURCE, stats, key, where), f"{where} stats {key}")
         _parse_side(side, _team_code(team, f"{where} {key}"), out)
+    _check_starters(out, where)
     return out
 
 

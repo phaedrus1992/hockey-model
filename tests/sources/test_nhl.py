@@ -220,3 +220,18 @@ def test_parse_does_not_mutate_payload() -> None:
 def test_deeply_nested_json_is_a_named_error() -> None:
     with pytest.raises(SourceParseError, match="not valid JSON"):
         get_json_text("nhl", "[" * 200_000, "the body")
+
+
+def test_parse_boxscore_rejects_a_team_with_no_goalie() -> None:
+    payload = load(f"boxscore_{BOX_ID}.json")
+    payload["playerByGameStats"]["homeTeam"]["goalies"] = []
+    with pytest.raises(SourceParseError, match="0 starting goalies for EDM"):
+        parse_boxscore(payload)
+
+
+def test_parse_boxscore_rejects_two_starters_for_one_team() -> None:
+    payload = load(f"boxscore_{BOX_ID}.json")
+    for goalie in payload["playerByGameStats"]["homeTeam"]["goalies"]:
+        goalie["starter"] = True
+    with pytest.raises(SourceParseError, match="starting goalies"):
+        parse_boxscore(payload)
