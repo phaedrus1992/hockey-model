@@ -241,3 +241,41 @@ def test_refresh_uses_clock_for_each_read(conn: sqlite3.Connection) -> None:
 )
 def test_current_season_start(moment: datetime, season: int) -> None:
     assert current_season_start(moment) == season
+
+
+def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
+    conn: sqlite3.Connection,
+) -> None:
+    mid_season = datetime(2026, 4, 10, tzinfo=UTC)
+    record_read(conn, "moneypuck", TEAM_GAMES_URL, mid_season)
+    for season in range(2014, 2026):
+        record_read(conn, "moneypuck", goalie_games_url(season), mid_season)
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=datetime(2026, 7, 2, tzinfo=UTC), backfill_from=date(2026, 7, 1))
+    requested = [url for url in client.urls if "peter-tanner" in url]
+    assert goalie_games_url(2025) in requested
+    assert goalie_games_url(2026) in requested
+    assert goalie_games_url(2024) not in requested
+
+
+def test_a_season_read_after_it_ended_is_not_read_again(conn: sqlite3.Connection) -> None:
+    after_season = datetime(2026, 7, 2, tzinfo=UTC)
+    record_read(conn, "moneypuck", TEAM_GAMES_URL, after_season)
+    for season in range(2014, 2027):
+        record_read(conn, "moneypuck", goalie_games_url(season), after_season)
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=datetime(2026, 12, 1, tzinfo=UTC), backfill_from=date(2026, 12, 1))
+    requested = [url for url in client.urls if "peter-tanner" in url]
+    assert requested == [goalie_games_url(2026)]
+
+
+def test_an_evening_refresh_reads_the_eastern_game_day(conn: sqlite3.Connection) -> None:
+    evening = datetime(2026, 1, 11, 1, 0, tzinfo=UTC)  # 8 pm Eastern on January 10
+    client = FakeClient()
+    refresh(conn, client, now=evening, backfill_from=date(2026, 1, 10))
+    espn_days = sorted(u[-8:] for u in client.urls if "scoreboard?dates=" in u)
+    assert espn_days == ["20260110", "20260111"]
+    assert f"{SCORE_URL}2026-01-13" in client.urls
+    assert f"{SCORE_URL}2026-01-14" not in client.urls

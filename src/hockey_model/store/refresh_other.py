@@ -1,6 +1,6 @@
 """The MoneyPuck, ESPN, and Daily Faceoff steps of a refresh."""
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from hockey_model.sources.daily_faceoff import STARTERS_URL, fetch_starters
 from hockey_model.sources.espn import ESPN_BASE, fetch_injuries, fetch_scoreboard_starters
@@ -20,7 +20,7 @@ from hockey_model.store.moneypuck_writes import (
     write_goalie_games,
     write_team_games,
 )
-from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
+from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun, game_day
 from hockey_model.store.starter_writes import write_starter_reads
 
 MONEYPUCK = "moneypuck"
@@ -44,6 +44,21 @@ def _stale(run: RefreshRun, url: str, *, refresh_weekly: bool) -> bool:
     return refresh_weekly and run.now - last >= REFRESH_AFTER
 
 
+def _goalie_file_stale(run: RefreshRun, season: int, current: int) -> bool:
+    """Return True when the goalie file of ``season`` needs a read.
+
+    The file of the current season is read again after a week. The file of a finished
+    season is read once, and that read must come after the season ended, so a read from
+    the middle of the season does not leave the last weeks and the playoffs missing.
+    """
+    url = goalie_games_url(season)
+    if season == current:
+        return _stale(run, url, refresh_weekly=True)
+    last = last_moneypuck_fetch(run.conn, url)
+    season_over = datetime(season + 1, _SEASON_STARTS_IN_MONTH, 1, tzinfo=UTC)
+    return last is None or last < season_over
+
+
 def _note_credit(run: RefreshRun, rows_written: int) -> int:
     if rows_written and MONEYPUCK_CREDIT not in run.credits:
         run.credits.append(MONEYPUCK_CREDIT)
@@ -65,7 +80,7 @@ def moneypuck(run: RefreshRun) -> None:
     failures = 0
     for season in range(FIRST_SEASON, current + 1):
         url = goalie_games_url(season)
-        if failures >= MAX_UNIT_FAILURES or not _stale(run, url, refresh_weekly=season == current):
+        if failures >= MAX_UNIT_FAILURES or not _goalie_file_stale(run, season, current):
             continue
 
         def unit(stamp: datetime, season: int = season) -> int:
@@ -86,8 +101,8 @@ def _write_starters(run: RefreshRun, source: str, reads: list[StarterRead], stam
 
 
 def espn_starters(run: RefreshRun) -> None:
-    """Read the ESPN probable goalies for today and tomorrow, in UTC."""
-    today = run.now.date()
+    """Read the ESPN probable goalies for today and tomorrow, as game days in Eastern time."""
+    today = game_day(run.now)
     days: list[date] = [today, today + timedelta(days=1)]
 
     def unit(stamp: datetime) -> int:
