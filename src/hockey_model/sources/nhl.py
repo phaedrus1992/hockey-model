@@ -1,6 +1,5 @@
 """Read NHL API score days and boxscores. This module fetches and parses; it stores nothing."""
 
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from hockey_model.sources.payload import (
     as_list,
     as_mapping,
     field,
+    get_json,
     int_field,
     str_field,
     utc_field,
@@ -239,22 +239,14 @@ def parse_boxscore(payload: object) -> BoxscoreRows:
     return out
 
 
-def _get_json(client: HttpClient, url: str) -> object:
-    body = client.get(SOURCE, url)
-    try:
-        return json.loads(body)
-    except ValueError as exc:
-        raise SourceParseError(SOURCE, f"{url} is not valid JSON: {exc}") from exc
-
-
 def fetch_score_day(client: HttpClient, day: date) -> list[GameRow]:
     """Fetch and parse the NHL score feed for one calendar day."""
-    return parse_score_day(_get_json(client, f"{NHL_BASE}/score/{day.isoformat()}"))
+    return parse_score_day(get_json(client, SOURCE, f"{NHL_BASE}/score/{day.isoformat()}"))
 
 
 def fetch_boxscore(client: HttpClient, game_id: int) -> BoxscoreRows:
     """Fetch and parse the boxscore of one final game."""
-    rows = parse_boxscore(_get_json(client, f"{NHL_BASE}/gamecenter/{game_id}/boxscore"))
+    rows = parse_boxscore(get_json(client, SOURCE, f"{NHL_BASE}/gamecenter/{game_id}/boxscore"))
     if rows.game_id != game_id:
         raise SourceParseError(SOURCE, f"boxscore for game {game_id} names game {rows.game_id}")
     return rows

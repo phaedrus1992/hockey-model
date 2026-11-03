@@ -1,8 +1,10 @@
 """Typed field readers for parsed JSON, so a changed source shape fails with a named error."""
 
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
+from hockey_model.sources.http import HttpClient
 from hockey_model.sources.shape_errors import SourceParseError
 
 
@@ -53,3 +55,16 @@ def utc_field(source: str, obj: Mapping[str, object], key: str, where: str) -> d
     if moment.tzinfo is None:
         raise SourceParseError(source, f"{where} field {key!r} has no timezone: {text!r}")
     return moment.astimezone(UTC)
+
+
+def get_json_text(source: str, text: str | bytes, where: str) -> object:
+    """Parse JSON text, or raise naming ``where``."""
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise SourceParseError(source, f"{where} is not valid JSON: {exc}") from exc
+
+
+def get_json(client: HttpClient, source: str, url: str) -> object:
+    """Fetch ``url`` and parse the body as JSON."""
+    return get_json_text(source, client.get(source, url), url)
