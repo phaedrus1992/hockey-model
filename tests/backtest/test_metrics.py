@@ -194,3 +194,27 @@ def test_every_calibration_bin_states_its_edges() -> None:
     assert [(b.low, b.high) for b in bins][:2] == [(0.0, 0.1), (0.1, 0.2)]
     assert all(b.low is not None and b.high is not None for b in bins)
     assert (bins[3].low, bins[3].high) == (0.3, 0.4)
+
+
+_OUTCOMES = st.lists(st.booleans(), min_size=2, max_size=60).filter(lambda w: 0 < sum(w) < len(w))
+
+
+@given(wins=_OUTCOMES, other=st.floats(min_value=0.02, max_value=0.98))
+def test_the_win_rate_is_the_best_constant_forecast(wins: list[bool], other: float) -> None:
+    rate = sum(wins) / len(wins)
+    at_rate = [rate] * len(wins)
+    at_other = [other] * len(wins)
+    assert log_loss(at_rate, wins) <= log_loss(at_other, wins) + 1e-12
+    assert brier(at_rate, wins) <= brier(at_other, wins) + 1e-12
+
+
+@given(
+    probs=st.lists(st.floats(min_value=0.01, max_value=0.99), min_size=1, max_size=40),
+    data=st.data(),
+)
+def test_swapping_both_sides_leaves_the_scores_unchanged(probs: list[float], data) -> None:
+    wins = data.draw(st.lists(st.booleans(), min_size=len(probs), max_size=len(probs)))
+    flipped_probs = [1.0 - p for p in probs]
+    flipped_wins = [not w for w in wins]
+    assert log_loss(flipped_probs, flipped_wins) == pytest.approx(log_loss(probs, wins))
+    assert brier(flipped_probs, flipped_wins) == pytest.approx(brier(probs, wins))
