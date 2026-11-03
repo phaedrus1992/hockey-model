@@ -117,9 +117,19 @@ def mp_team_form_before(
     conn: sqlite3.Connection, team: str, before: datetime, limit: int
 ) -> list[tuple[float, float]]:
     """Return ``(xg_for, xg_against)`` of the newest MoneyPuck games of the franchise."""
+    return _mp_pairs_before(conn, ("xg_for", "xg_against"), team, before, limit)
+
+
+def _mp_pairs_before(
+    conn: sqlite3.Connection, columns: tuple[str, str], team: str, before: datetime, limit: int
+) -> list[tuple[float, float]]:
+    """Return two named MoneyPuck team-game columns of the newest games of the franchise.
+
+    ``columns`` comes from code, never from input, so it is safe to place in the SQL.
+    """
     codes = franchise_codes(team)
     cursor = conn.execute(
-        "SELECT m.xg_for, m.xg_against FROM latest_mp_team_games m"
+        f"SELECT m.{columns[0]}, m.{columns[1]} FROM latest_mp_team_games m"
         " JOIN latest_final_games g ON g.game_id = m.game_id"
         f" WHERE m.team IN ({_marks(codes)}) AND g.start_utc <= ?"
         " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
@@ -212,14 +222,8 @@ def game_row(conn: sqlite3.Connection, game_id: int) -> GameRow | None:
 
 def mp_attempt_form_before(
     conn: sqlite3.Connection, team: str, before: datetime, limit: int
-) -> list[tuple[int, int]]:
+) -> list[tuple[float, float]]:
     """Return ``(shot attempts for, against)`` of the newest MoneyPuck games of the franchise."""
-    codes = franchise_codes(team)
-    cursor = conn.execute(
-        "SELECT m.shot_attempts_for, m.shot_attempts_against FROM latest_mp_team_games m"
-        " JOIN latest_final_games g ON g.game_id = m.game_id"
-        f" WHERE m.team IN ({_marks(codes)}) AND g.start_utc <= ?"
-        " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
-        (*codes, _cutoff(before), limit),
+    return _mp_pairs_before(
+        conn, ("shot_attempts_for", "shot_attempts_against"), team, before, limit
     )
-    return [(row[0], row[1]) for row in cursor]

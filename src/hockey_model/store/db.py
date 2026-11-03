@@ -63,7 +63,9 @@ def _prepare(conn: sqlite3.Connection, path: Path) -> sqlite3.Connection:
     if stored != SCHEMA_VERSION:
         raise StoreError(
             f"open store {str(path)!r}: schema version {stored} does not match "
-            f"expected {SCHEMA_VERSION}; use a store made by this version or a new path"
+            f"expected {SCHEMA_VERSION}. Version 2 adds the MoneyPuck shot-attempt columns, "
+            "so a version 1 store must be rebuilt: run `hockey-model refresh --backfill-from "
+            "2014-10-01` on a new path, or open a store made by this version"
         )
     # The views are code, not data, so every connection makes them again.
     conn.executescript(_VIEWS_PATH.read_text(encoding="utf-8"))

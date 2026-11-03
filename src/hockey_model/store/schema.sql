@@ -66,10 +66,10 @@ CREATE TABLE mp_team_games (
     game_date TEXT,
     xg_for REAL,
     xg_against REAL,
-    shot_attempts_for INTEGER,
-    shot_attempts_against INTEGER,
-    unblocked_for INTEGER,
-    unblocked_against INTEGER,
+    shot_attempts_for INTEGER NOT NULL,
+    shot_attempts_against INTEGER NOT NULL,
+    unblocked_for INTEGER NOT NULL,
+    unblocked_against INTEGER NOT NULL,
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (game_id, team, fetched_at)
 );
