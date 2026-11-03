@@ -12,7 +12,6 @@ from hockey_model.backtest.metrics import (
     MIN_BLOCK_LENGTH,
     PROB_FLOOR,
     block_bootstrap_mean_ci,
-    block_length,
     brier,
     calibration,
     log_loss,
@@ -133,9 +132,13 @@ def test_bootstrap_of_a_zero_mean_straddles_zero() -> None:
     assert low < 0 < high
 
 
-def test_a_block_is_one_nights_slate_or_the_whole_series() -> None:
-    assert block_length(1000) == MIN_BLOCK_LENGTH == 16
-    assert block_length(3) == 3
+def test_a_series_shorter_than_a_block_still_gets_an_interval_inside_its_range() -> None:
+    low, high = block_bootstrap_mean_ci([0.1, 0.5, 0.9])
+    assert 0.1 <= low <= high <= 0.9
+
+
+def test_a_block_is_one_nights_slate() -> None:
+    assert MIN_BLOCK_LENGTH == 16
 
 
 def test_a_short_series_uses_one_block_of_its_own_size() -> None:

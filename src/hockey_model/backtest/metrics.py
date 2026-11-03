@@ -85,11 +85,6 @@ def calibration(probs: Sequence[float], wins: Sequence[bool]) -> tuple[Calibrati
     return tuple(result)
 
 
-def block_length(count: int) -> int:
-    """Return the block length for ``count`` games: one night's slate, at most the series."""
-    return min(count, MIN_BLOCK_LENGTH)
-
-
 def block_bootstrap_mean_ci(values: Sequence[float]) -> tuple[float, float]:
     """Return the 5th and 95th percentile of the mean over block resamples.
 
@@ -101,7 +96,8 @@ def block_bootstrap_mean_ci(values: Sequence[float]) -> tuple[float, float]:
     if not all(math.isfinite(v) for v in values):
         raise ValueError("bootstrap the mean: a value is not finite; check the scores")
     count = len(values)
-    length = block_length(count)
+    # One night's slate, and no more than the whole series.
+    length = min(count, MIN_BLOCK_LENGTH)
     rng = random.Random(BOOTSTRAP_SEED)
     means = []
     for _ in range(BOOTSTRAP_RESAMPLES):
