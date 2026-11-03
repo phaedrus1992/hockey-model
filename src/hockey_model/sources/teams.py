@@ -6,7 +6,7 @@ The Daily Faceoff map is added with its source (plan Task 8).
 from hockey_model.sources.shape_errors import SourceShapeError
 from hockey_model.team_codes import NHL_TEAM_CODES
 
-__all__ = ["NHL_TEAM_CODES", "franchise", "from_espn", "from_moneypuck"]
+__all__ = ["NHL_TEAM_CODES", "franchise", "from_espn", "from_moneypuck", "from_daily_faceoff"]
 
 # ESPN writes four codes that differ from the NHL codes. Other codes match as written.
 _ESPN_TO_NHL = {"LA": "LAK", "NJ": "NJD", "SJ": "SJS", "TB": "TBL"}
@@ -39,3 +39,10 @@ def from_moneypuck(code: str) -> str:
     if nhl not in NHL_TEAM_CODES:
         raise SourceShapeError("moneypuck", code)
     return nhl
+
+
+def from_daily_faceoff(code: str) -> str:
+    """Return the NHL code for a team abbreviation that Daily Faceoff writes."""
+    if code not in NHL_TEAM_CODES:
+        raise SourceShapeError("daily_faceoff", code)
+    return code
