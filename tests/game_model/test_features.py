@@ -209,3 +209,17 @@ def test_a_late_run_ignores_the_game_itself(store: sqlite3.Connection) -> None:
     on_time = features(store, GoalieMode.GUESS, as_of=AS_OF)
     after = features(store, GoalieMode.GUESS, as_of=late)
     assert after.values == on_time.values
+
+
+def test_guess_mode_ignores_the_boxscore_even_after_puck_drop(store: sqlite3.Connection) -> None:
+    history(store)
+    add_game(store, 100, "2026-01-20T00:00")
+    add_goalie(store, 100, HOME, 12, "J. Woll")
+    add_goalie(store, 100, AWAY, 21, "J. Swayman")
+    add_goalie_form(store, 50, 12, 0.5, 4)
+    add_game(store, 50, "2026-01-15T00:00", home=HOME, away="MTL")
+    guess = features(store, GoalieMode.GUESS, as_of=START)
+    actual = features(store, GoalieMode.ACTUAL, as_of=START)
+    assert MissingKind.LATE_RUN not in kinds(guess)
+    assert guess.values["goalie_gsax"] == pytest.approx((3.0 - 1) - (2.0 - 3))
+    assert actual.values["goalie_gsax"] != guess.values["goalie_gsax"]

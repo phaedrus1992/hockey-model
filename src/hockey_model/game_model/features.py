@@ -35,7 +35,7 @@ class GoalieMode(StrEnum):
 
     ACTUAL = "actual"  # the boxscore starter, which only a backtest can know
     READS = "reads"  # the source reads, then the estimate: a live prediction
-    GUESS = "guess"  # the estimate only: shows the cost of a morning guess
+    GUESS = "guess"  # the estimate only, even after puck drop: the cost of a morning guess
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +90,13 @@ def _starter(
         note = "the game has no boxscore starter"
         return None, [MissingInput(MissingKind.GOALIE_UNKNOWN, team, note)]
     start, notes = resolve_goalie(
-        conn, game, team, as_of, use_reads=mode is GoalieMode.READS, catalog=catalog
+        conn,
+        game,
+        team,
+        as_of,
+        use_reads=mode is GoalieMode.READS,
+        use_boxscore=mode is not GoalieMode.GUESS,
+        catalog=catalog,
     )
     return start, list(notes)
 

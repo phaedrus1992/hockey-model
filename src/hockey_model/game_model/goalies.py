@@ -144,6 +144,7 @@ def resolve_goalie(
     as_of: datetime,
     *,
     use_reads: bool,
+    use_boxscore: bool = True,
     catalog: Catalog | None = None,
 ) -> tuple[GoalieStart | None, tuple[MissingInput, ...]]:
     """Return the goalie for ``team`` in ``game`` at ``as_of``, and what was missing.
@@ -151,13 +152,15 @@ def resolve_goalie(
     The order is: a goalie on ``game``; the boxscore starter when the game has started;
     the earliest confirmed read; the newest likely read; the goalie with the most starts
     in the last ``STARTER_WINDOW`` games. With ``use_reads`` false, only the first two
-    and the last apply. A caller that resolves many games passes one ``catalog`` to reuse.
+    and the last apply. With ``use_boxscore`` false, the boxscore of a game that has
+    started is ignored, so a backtest can ask what a morning guess would have been.
+    A caller that resolves many games passes one ``catalog`` to reuse.
     """
     given = game.home_goalie if team == game.home else game.away_goalie
     if given is not None:
         return given, ()
     catalog = player_catalog(conn) if catalog is None else catalog
-    if as_of >= game.start:
+    if use_boxscore and as_of >= game.start:
         started = boxscore_starter(conn, game, team, catalog)
         if started is not None:
             note = "prediction made after puck drop; the goalie is the boxscore starter"

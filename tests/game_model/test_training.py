@@ -4,7 +4,7 @@ import math
 import sqlite3
 
 import pytest
-from seeding import add_game, utc
+from seeding import add_game, add_goalie, add_goalie_form, utc
 
 from hockey_model.game_model.elo import EloBook, replay
 from hockey_model.game_model.features import GoalieMode
@@ -72,3 +72,19 @@ def test_game_input_copies_the_stored_game(store: sqlite3.Connection) -> None:
     row = training_rows(store, 20152016, 20152016, GoalieMode.ACTUAL)[0]
     game = game_input(row.game)
     assert (game.game_id, game.home, game.away, game.start) == (2, "TOR", "BOS", row.game.start)
+
+
+def test_guess_rows_use_the_guessed_goalie_not_the_boxscore(store: sqlite3.Connection) -> None:
+    for number in (1, 2, 3):
+        add_game(store, number, f"2015-11-0{number}T00:00", season=20152016)
+        add_goalie(store, number, "TOR", 11, "C. Ingram")
+        add_goalie_form(store, number, 11, 3.0, 0)
+    add_goalie_form(store, 3, 12, 0.0, 3)
+    add_game(store, 4, "2015-11-04T00:00", season=20152016)
+    add_goalie(store, 4, "TOR", 12, "J. Woll")
+    guess = training_rows(store, 20152016, 20152016, GoalieMode.GUESS)[-1]
+    actual = training_rows(store, 20152016, 20152016, GoalieMode.ACTUAL)[-1]
+    assert guess.game.game_id == actual.game.game_id == 4
+    assert guess.features.values["goalie_gsax"] == pytest.approx(3.0)
+    assert actual.features.values["goalie_gsax"] == pytest.approx(-3.0)
+    assert all(m.kind.value != "late_run" for m in guess.features.missing)
