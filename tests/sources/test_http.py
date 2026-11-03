@@ -207,3 +207,56 @@ def test_default_opener_refuses_oversize_body(monkeypatch: pytest.MonkeyPatch) -
 def test_source_error_message_names_operation_and_reason() -> None:
     error = SourceError("nhl", NHL_URL, "HTTP 404")
     assert str(error) == f"fetch nhl {NHL_URL}: HTTP 404"
+
+
+class _TricklingResponse:
+    """A response that returns one byte per read and takes one second for each."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock = clock
+        self.reads = 0
+
+    def __enter__(self) -> _TricklingResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        del size
+        self.reads += 1
+        self.clock.now += 1.0
+        return b"x"
+
+
+class _TricklingOpener:
+    def __init__(self, response: _TricklingResponse) -> None:
+        self.response = response
+
+    def open(self, request: urllib.request.Request, timeout: float) -> _TricklingResponse:
+        del request, timeout
+        return self.response
+
+
+def test_default_opener_bounds_total_time_of_a_trickling_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    response = _TricklingResponse(clock)
+    monkeypatch.setattr(http_module, "_OPENER", _TricklingOpener(response))
+    request = urllib.request.Request(NHL_URL)
+    with pytest.raises(_Refused, match=r"not finished within 120 s"):
+        http_module._default_opener(request, 1.0, clock=clock)
+    assert response.reads <= http_module.TOTAL_TIMEOUT_S + 1
+
+
+def test_trickling_body_surfaces_as_source_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    monkeypatch.setattr(http_module, "_OPENER", _TricklingOpener(_TricklingResponse(clock)))
+
+    def opener(request: urllib.request.Request, timeout: float) -> bytes:
+        return http_module._default_opener(request, timeout, clock=clock)
+
+    client = HttpClient(opener=opener, clock=clock, sleep=clock.sleep)
+    with pytest.raises(SourceError, match="not finished within"):
+        client.get("nhl", NHL_URL)
