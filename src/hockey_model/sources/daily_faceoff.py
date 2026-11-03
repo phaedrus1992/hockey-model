@@ -38,12 +38,12 @@ def _page_games(html: str) -> list[object]:
 
 
 def _side_read(game: Mapping[str, object], side: str, where: str) -> StarterRead | None:
-    name = game.get(f"{side}GoalieName")
+    name = field(SOURCE, game, f"{side}GoalieName", where)
+    label = field(SOURCE, game, f"{side}NewsStrengthName", where)
     if name is None:
         return None
     if not isinstance(name, str) or not name:
         raise SourceParseError(SOURCE, f"{where} {side}GoalieName must be a string, got {name!r}")
-    label = game.get(f"{side}NewsStrengthName")
     status = _STATUS_MAP.get(label) if label is None or isinstance(label, str) else None
     if status is None:
         raise SourceParseError(

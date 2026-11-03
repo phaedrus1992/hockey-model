@@ -77,14 +77,16 @@ def _event_reads(event: Mapping[str, object]) -> list[StarterRead]:
         return []
     start = utc_field(SOURCE, event, "date", where)
     competitions = as_list(SOURCE, field(SOURCE, event, "competitions", where), f"{where} games")
-    competition = as_mapping(SOURCE, competitions[0] if competitions else None, f"{where} game")
+    if not competitions:
+        raise SourceParseError(SOURCE, f"{where} has an empty 'competitions' list")
+    competition = as_mapping(SOURCE, competitions[0], f"{where} game")
     reads: list[StarterRead] = []
     for raw in as_list(SOURCE, field(SOURCE, competition, "competitors", where), where):
         competitor = as_mapping(SOURCE, raw, f"{where} competitor")
         team = _team_code(competitor, where)
         for item in as_list(SOURCE, competitor.get("probables", []), f"{where} {team} probables"):
             probable = as_mapping(SOURCE, item, f"{where} {team} probable")
-            if probable.get("name") != PROBABLE_GOALIE:
+            if field(SOURCE, probable, "name", f"{where} {team} probable") != PROBABLE_GOALIE:
                 continue
             name, goalie_status = _starter(probable, f"{where} {team}")
             reads.append(StarterRead(start, team, name, goalie_status, StarterSource.ESPN))
