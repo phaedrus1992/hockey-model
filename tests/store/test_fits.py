@@ -34,3 +34,24 @@ def test_the_newest_fit_wins(store: sqlite3.Connection) -> None:
 def test_save_fit_returns_increasing_ids(store: sqlite3.Connection) -> None:
     fit = LogisticFit((), 0.0, 1.0, {})
     assert save_fit(store, fit, 20252026, T0) < save_fit(store, fit, 20252026, T0)
+
+
+@pytest.mark.parametrize(
+    ("features", "weights"),
+    [
+        ("not json", "{}"),
+        ('["rest"]', "{}"),
+        ('["rest"]', '{"intercept": 0, "elo_weight": 1}'),
+        ('["rest"]', '{"intercept": "x", "elo_weight": 1, "features": {}}'),
+    ],
+)
+def test_a_malformed_saved_fit_says_to_fit_again(
+    store: sqlite3.Connection, features: str, weights: str
+) -> None:
+    store.execute(
+        "INSERT INTO model_fits (fit_through_season, features, weights, created_at)"
+        " VALUES (1, ?, ?, '2026-01-01T00:00:00.000000+00:00')",
+        (features, weights),
+    )
+    with pytest.raises(StoreError, match="malformed.*run `hockey-model fit` again"):
+        newest_fit(store)
