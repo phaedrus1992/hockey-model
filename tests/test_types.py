@@ -3,7 +3,7 @@
 import math
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from hockey_model.types import Player, Projection, Roster, Slot, Standing, Team
@@ -95,6 +95,7 @@ def test_roster_rejects_duplicate_players() -> None:
         team=st.one_of(st.just(None), st.text(min_size=1)),
     ),
 )
+@settings(max_examples=500)
 def test_player_eligible_contains_only_valid_slots(player: Player) -> None:
     if player.eligible is not None:
         assert player.eligible <= {Slot.C, Slot.W, Slot.D, Slot.G}
