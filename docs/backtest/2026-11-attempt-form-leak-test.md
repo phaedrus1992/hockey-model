@@ -41,3 +41,29 @@ The CI is reported next to it and does not change the call.
 - Fenwick counts (`unblockedShotAttemptsFor` and `unblockedShotAttemptsAgainst`) are stored, but no feature uses them in this run.
 - `goalie_gsax` still uses MoneyPuck expected goals. A collapse therefore cannot be read as the whole leak, because that feature may carry the same leak.
 - The Vince comparison against the DraftKings no-vig line runs outside this repository.
+
+## Result
+
+Both runs used the same 2,792 games, the same seasons, and the same code, and differed only in the form feature.
+The rebuilt store reproduces the first run: the xG run gives a log loss of 0.676326 against 0.687598 for Elo.
+Its difference is -0.011272, with CI -0.014446 to -0.008337.
+
+The attempt run gives a log loss of 0.675631 against 0.687598 for Elo.
+Its difference is -0.011967, with CI -0.015398 to -0.008810.
+The attempt difference is 1.06 times the xG difference.
+
+Decision rule: the attempt gain is at least two thirds of the xG gain, so the outcome is "recovers most".
+The xG gain is not explained by the leak that the test checks for.
+
+On the validation seasons (2022-24), Elo scores 0.662759, Elo with `xg_form` scores 0.661119, and Elo with `attempt_form` scores 0.659134.
+
+`goalie_gsax` was vetoed in both runs, so neither tested model used a MoneyPuck goalie feature.
+This test therefore says nothing about that feature.
+
+Limits of this result:
+
+- The attempt counts come from the same MoneyPuck file as the xG values. The test removes the MoneyPuck expected-goals model, not the MoneyPuck data source.
+- The two differences were not tested against each other with a paired interval. The point estimates decide the call, as the protocol says.
+- This result does not change the separate comparison with the DraftKings no-vig line, which runs outside this repository.
+
+Outputs: `~/.cache/hockey-model/results-attempts/` (`xg.json`, `attempt.json`, and the per-game CSVs).
