@@ -215,3 +215,22 @@ def test_solve_reports_the_pivot_ratio_as_the_condition() -> None:
 def test_solve_rejects_a_singular_system() -> None:
     with pytest.raises(ValueError, match="singular"):
         solve_linear([[1.0, 1.0], [1.0, 1.0]], [1.0, 2.0])
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    size=st.integers(1, 4),
+    seed=st.integers(0, 10_000),
+)
+def test_solve_linear_answers_the_system(size: int, seed: int) -> None:
+    rng = random.Random(seed)
+    matrix = [[rng.uniform(-1, 1) for _ in range(size)] for _ in range(size)]
+    for i in range(size):
+        matrix[i][i] += size + 1.0  # strictly diagonally dominant, so never singular
+    vector = [rng.uniform(-5, 5) for _ in range(size)]
+    solution, condition = solve_linear(matrix, vector)
+    for row, target in zip(matrix, vector, strict=True):
+        assert sum(a * x for a, x in zip(row, solution, strict=True)) == pytest.approx(
+            target, abs=1e-9
+        )
+    assert condition >= 1.0
