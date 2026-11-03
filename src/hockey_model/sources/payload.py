@@ -61,7 +61,7 @@ def get_json_text(source: str, text: str | bytes, where: str) -> object:
     """Parse JSON text, or raise naming ``where``."""
     try:
         return json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise SourceParseError(source, f"{where} is not valid JSON: {exc}") from exc
 
 

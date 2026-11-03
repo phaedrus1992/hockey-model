@@ -253,3 +253,39 @@ def test_parse_goalie_games_refuses_oversized_csv(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("hockey_model.sources.moneypuck.MAX_CSV_BYTES", 10)
     with pytest.raises(SourceParseError, match="refusing it"):
         parse_goalie_games((FIXTURES / "goalies_2025_sample.zip").read_bytes())
+
+
+def test_a_zip_with_a_forged_size_is_a_named_error() -> None:
+    data = bytearray((FIXTURES / "goalies_2025_sample.zip").read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    with pytest.raises(SourceParseError):
+        parse_goalie_games(bytes(data))
+
+
+def test_a_zip_member_that_is_not_utf8_is_a_named_error() -> None:
+    with pytest.raises(SourceParseError, match="cannot be read"):
+        parse_goalie_games(_latin1_zip())
+
+
+def _latin1_zip() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("2025.csv", b"playerId,season\n\xff\xfe\n")
+    return buf.getvalue()
+
+
+def test_a_team_file_that_is_not_utf8_is_a_named_error() -> None:
+    client = FakeClient({TEAM_GAMES_URL: b"\xff\xfe"})
+    with pytest.raises(SourceParseError, match="not UTF-8"):
+        fetch_team_games(client)
+
+
+def test_a_csv_field_over_the_size_limit_is_a_named_error() -> None:
+    header = team_text().splitlines()[0]
+    with pytest.raises(SourceParseError, match="not valid CSV"):
+        parse_team_games(header + "\n" + "x" * 200_000 + "\n")
+
+
+def test_a_unicode_digit_season_is_not_a_season() -> None:
+    text = edit_row(team_text(), *BOS_GAME, season="٢٠٢٥")
+    assert all(r.team != "BOS" or r.game_id != 2025020697 for r in parse_team_games(text))

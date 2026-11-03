@@ -43,6 +43,7 @@ TEAM_COLUMNS = (
     "goalsAgainst",
 )
 GOALIE_COLUMNS = ("playerId", "season", "gameId", "playerTeam", "situation", "xGoals", "goals")
+_SEASON = re.compile(r"[0-9]{4}")
 _GAME_ID = re.compile(r"[0-9]{10}")
 _GAME_DATE = re.compile(r"[0-9]{8}")
 _ALLOWED_GOALIE_URL = re.compile(
@@ -137,11 +138,19 @@ def _kept_rows(reader: csv.DictReader[str]) -> Iterator[tuple[int, Mapping[str, 
             raise SourceParseError(SOURCE, f"line {line} has a different number of fields")
         if row["situation"] != ALL_SITUATIONS:
             continue
-        if not row["season"].isdigit() or int(row["season"]) < FIRST_SEASON:
+        if not _SEASON.fullmatch(row["season"]) or int(row["season"]) < FIRST_SEASON:
             continue
         if row["gameId"][4:6] not in KEPT_GAME_TYPES:
             continue
         yield line, row
+
+
+def _checked_rows(reader: csv.DictReader[str]) -> Iterator[tuple[int, Mapping[str, str]]]:
+    """Yield the kept rows, and turn a CSV format error into a named parse error."""
+    try:
+        yield from _kept_rows(reader)
+    except csv.Error as exc:
+        raise SourceParseError(SOURCE, f"the file is not valid CSV: {exc}") from exc
 
 
 def _game_date(text: str, line: int) -> str:
@@ -159,7 +168,7 @@ def parse_team_games(text: str) -> list[TeamGameRow]:
     _check_columns(reader, TEAM_COLUMNS)
     rows: list[TeamGameRow] = []
     seen: set[tuple[int, str]] = set()
-    for line, row in _kept_rows(reader):
+    for line, row in _checked_rows(reader):
         game_id = _game_id(row, line)
         team = from_moneypuck(row["team"])
         if (game_id, team) in seen:
@@ -194,7 +203,10 @@ def _csv_text(data: bytes) -> str:
             raise SourceParseError(
                 SOURCE, f"the goalie file expands to {members[0].file_size} bytes; refusing it"
             )
-        return archive.read(members[0]).decode("utf-8")
+        try:
+            return archive.read(members[0]).decode("utf-8")
+        except (zipfile.BadZipFile, RuntimeError, NotImplementedError, UnicodeDecodeError) as exc:
+            raise SourceParseError(SOURCE, f"the goalie file cannot be read: {exc}") from exc
 
 
 def parse_goalie_games(data: bytes) -> list[GoalieGameRow]:
@@ -203,7 +215,7 @@ def parse_goalie_games(data: bytes) -> list[GoalieGameRow]:
     _check_columns(reader, GOALIE_COLUMNS)
     rows: list[GoalieGameRow] = []
     seen: set[tuple[int, int]] = set()
-    for line, row in _kept_rows(reader):
+    for line, row in _checked_rows(reader):
         game_id = _game_id(row, line)
         nhl_id = _count(row, "playerId", line)
         if (game_id, nhl_id) in seen:
@@ -225,7 +237,11 @@ def fetch_team_games(client: HttpClient) -> list[TeamGameRow]:
     """Download and parse ``all_teams.csv``."""
     check_allowed(TEAM_GAMES_URL)
     body = client.get(SOURCE, TEAM_GAMES_URL)
-    return parse_team_games(body.decode("utf-8"))
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SourceParseError(SOURCE, f"the team file is not UTF-8 text: {exc}") from exc
+    return parse_team_games(text)
 
 
 def fetch_goalie_games(client: HttpClient, season_start_year: int) -> list[GoalieGameRow]:
