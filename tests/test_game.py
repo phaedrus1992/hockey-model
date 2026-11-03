@@ -43,13 +43,13 @@ class StubModel:
         )
 
 
-def _game(*, game_id: int = 1, away: str = "MTL") -> Game:
+def _game(*, game_id: int = 1, away: str = "CAR") -> Game:
     return Game(game_id=game_id, home="TOR", away=away, start=START)
 
 
 def test_game_rejects_naive_start() -> None:
     with pytest.raises(ValueError, match="timezone"):
-        Game(1, "TOR", "MTL", datetime(2026, 1, 1))
+        Game(1, "TOR", "CAR", datetime(2026, 1, 1))
 
 
 def test_game_rejects_same_team() -> None:
