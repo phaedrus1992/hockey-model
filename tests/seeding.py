@@ -1,0 +1,121 @@
+"""Helpers that put small, known rows into a test store."""
+
+import sqlite3
+from datetime import UTC, datetime
+
+from hockey_model.sources.moneypuck import GoalieGameRow, TeamGameRow
+from hockey_model.sources.nhl import BoxscoreRows, GameRow, GoalieRow, PlayerRow
+from hockey_model.store.moneypuck_writes import write_goalie_games, write_team_games
+from hockey_model.store.nhl_writes import write_boxscore, write_games
+from hockey_model.store.source_reads import ESPN_INJURIES, record_read
+from hockey_model.store.timestamps import iso_utc
+
+FETCHED = datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def utc(text: str) -> datetime:
+    """Parse ``2026-01-10T03:30`` as UTC."""
+    return datetime.fromisoformat(text).replace(tzinfo=UTC)
+
+
+def add_game(
+    conn: sqlite3.Connection,
+    game_id: int,
+    start: str,
+    home: str = "TOR",
+    away: str = "BOS",
+    *,
+    state: str = "OFF",
+    fetched_at: datetime = FETCHED,
+    season: int = 20252026,
+    score: tuple[int, int] = (3, 2),
+) -> GameRow:
+    """Store one game. A final game gets a 3-2 score unless ``score`` says otherwise."""
+    final = state in {"OFF", "FINAL"}
+    row = GameRow(
+        game_id,
+        season,
+        2,
+        utc(start),
+        home,
+        away,
+        state,
+        score[0] if final else None,
+        score[1] if final else None,
+        "REG" if final else None,
+    )
+    write_games(conn, [row], fetched_at)
+    return row
+
+
+def add_goalie(
+    conn: sqlite3.Connection,
+    game_id: int,
+    team: str,
+    nhl_id: int,
+    name: str,
+    *,
+    started: bool = True,
+    fetched_at: datetime = FETCHED,
+) -> None:
+    """Store a goalie line of a final game, and the goalie as a player."""
+    rows = BoxscoreRows(
+        game_id,
+        [PlayerRow(nhl_id, name, "G", team)],
+        [],
+        [GoalieRow(team, nhl_id, 3600 if started else 0, started)],
+    )
+    write_boxscore(conn, game_id, rows, fetched_at)
+
+
+def add_team_form(
+    conn: sqlite3.Connection, game_id: int, team: str, xg_for: float, xg_against: float
+) -> None:
+    """Store one MoneyPuck team-game row."""
+    row = TeamGameRow(game_id, team, "2026-01-01", xg_for, xg_against)
+    write_team_games(conn, [row], FETCHED)
+
+
+def add_goalie_form(
+    conn: sqlite3.Connection, game_id: int, nhl_id: int, xg_against: float, goals_against: int
+) -> None:
+    """Store one MoneyPuck goalie-game row."""
+    write_goalie_games(
+        conn, [GoalieGameRow(game_id, nhl_id, "TOR", xg_against, goals_against)], FETCHED
+    )
+
+
+def add_starter_read(
+    conn: sqlite3.Connection,
+    game_id: int,
+    team: str,
+    source: str,
+    name: str,
+    status: str,
+    *,
+    fetched_at: str,
+) -> None:
+    """Store one goalie read."""
+    conn.execute(
+        "INSERT INTO starter_reads (game_id, team, source, goalie_name, nhl_id, status, fetched_at)"
+        " VALUES (?,?,?,?,NULL,?,?)",
+        (game_id, team, source, name, status, iso_utc(utc(fetched_at))),
+    )
+
+
+def add_injury(
+    conn: sqlite3.Connection, team: str, name: str, status: str, fetched_at: str
+) -> None:
+    """Store one injury read, and the good read of the list that it came from."""
+    stamp = utc(fetched_at)
+    conn.execute(
+        "INSERT INTO injury_reads (team, player_name, nhl_id, status, return_date, fetched_at)"
+        " VALUES (?,?,NULL,?,NULL,?)",
+        (team, name, status, iso_utc(stamp)),
+    )
+    record_injury_snapshot(conn, fetched_at)
+
+
+def record_injury_snapshot(conn: sqlite3.Connection, fetched_at: str) -> None:
+    """Record a good read of the injury list at ``fetched_at``, even when the list is empty."""
+    record_read(conn, ESPN_INJURIES, "u", utc(fetched_at))

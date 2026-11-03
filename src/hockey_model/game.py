@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from hockey_model.matchup import check_win_pair
 from hockey_model.models import GameModel
+from hockey_model.team_codes import NHL_TEAM_CODES
 from hockey_model.types import HockeyModelError, Player, Projection
 
 
@@ -35,6 +36,7 @@ class MissingKind(StrEnum):
     GOALIE_FORM = "goalie_form"
     STALE_SOURCE = "stale_source"
     LATE_RUN = "late_run"
+    REST_UNKNOWN = "rest_unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,14 @@ class GoalieStart:
 
     def __post_init__(self) -> None:
         _require_utc(self.read_at, "read_at")
+
+
+def _require_team_code(role: str, code: str) -> None:
+    if code not in NHL_TEAM_CODES:
+        known = " ".join(sorted(NHL_TEAM_CODES))
+        raise HockeyModelError(
+            f"{role} is an unknown NHL team code {code!r}; use one of the known codes: {known}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +80,8 @@ class Game:
             raise HockeyModelError("home and away team codes must not be empty")
         if home == away:
             raise HockeyModelError(f"home and away must differ, both are {home!r}")
+        _require_team_code("home", self.home)
+        _require_team_code("away", self.away)
         _require_utc(self.start, "start")
 
 

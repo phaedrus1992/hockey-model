@@ -9,6 +9,7 @@ Hockey player stat and game prediction library. Python 3.14, managed with uv.
 - Per-module coverage floor: `uv run python3 scripts/check_per_module_coverage.py`
 - Lint and format: `uv run ruff check .` and `uv run ruff format --check .`
 - Type check: `uv run ty check`
+- Mutation testing (advisory, about 4 minutes): `uv run mutmut run`, then `uv run mutmut results`. It mutates the parsers and the rate math listed in `[tool.mutmut]`.
 - Hooks: `prek install`, then `prek run --all-files`
 
 MUST use `uv run python3`, not bare `python3`.

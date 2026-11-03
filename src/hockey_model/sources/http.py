@@ -7,6 +7,7 @@ import urllib.request
 from collections.abc import Callable
 from http.client import HTTPException, HTTPMessage
 from importlib.metadata import PackageNotFoundError, version
+from io import BufferedIOBase
 from typing import IO
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -19,9 +20,8 @@ Opener = Callable[[urllib.request.Request, float], bytes]
 
 _LOG = logging.getLogger(__name__)
 TIMEOUT_S = 30.0
+_CHUNK_BYTES = 64 * 1024
 MAX_BACKOFF_S = 30.0
-# A response larger than this is refused rather than read into memory.
-MAX_BODY_BYTES = 64 * 1024 * 1024
 # ASCII digits only. str.isdigit() also accepts characters that float() rejects.
 _RETRY_AFTER = re.compile(r"[0-9]{1,6}")
 
@@ -52,12 +52,43 @@ class _PolicyRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_PolicyRedirect)
 
 
-def _default_opener(request: urllib.request.Request, timeout: float) -> bytes:
+def _default_opener(
+    request: urllib.request.Request,
+    timeout: float,
+    clock: Callable[[], float] = time.monotonic,
+) -> bytes:
+    policy = _policy_for(request.full_url)
+    deadline = clock() + policy.total_timeout_s
     with _OPENER.open(request, timeout=timeout) as response:
-        body: bytes = response.read(MAX_BODY_BYTES + 1)
-    if len(body) > MAX_BODY_BYTES:
-        raise _Refused(f"response is larger than {MAX_BODY_BYTES} bytes; raise MAX_BODY_BYTES")
-    return body
+        return _read_bounded(response, deadline, clock, policy)
+
+
+def _read_bounded(
+    response: BufferedIOBase, deadline: float, clock: Callable[[], float], policy: HostPolicy
+) -> bytes:
+    """Read the body in chunks.
+
+    The socket timeout bounds one read, so the deadline bounds the total. ``read1`` returns
+    after one socket read, where ``read`` keeps reading until it has a whole chunk, so a
+    host that sends one byte at a time cannot hold the loop past the deadline.
+    """
+    chunks: list[bytes] = []
+    size = 0
+    while clock() < deadline:
+        chunk = response.read1(_CHUNK_BYTES)
+        if not chunk:
+            return b"".join(chunks)
+        size += len(chunk)
+        if size > policy.max_body_bytes:
+            raise _Refused(
+                f"response is larger than {policy.max_body_bytes} bytes; "
+                "raise max_body_bytes in HOST_POLICIES"
+            )
+        chunks.append(chunk)
+    raise _Refused(
+        f"response body not finished within {policy.total_timeout_s:g} s; "
+        "raise total_timeout_s in HOST_POLICIES"
+    )
 
 
 def _policy_for(url: str) -> HostPolicy:
@@ -121,6 +152,7 @@ class HttpClient:
             try:
                 return self._opener(request, TIMEOUT_S)
             except HTTPError as exc:
+                exc.close()
                 if not _is_retryable_status(exc.code):
                     raise SourceError(source, url, f"HTTP {exc.code}") from exc
                 reason = f"HTTP {exc.code}"

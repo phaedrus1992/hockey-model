@@ -1,0 +1,1444 @@
+{
+  "timestamp": "2026-11-03T11:03:03Z",
+  "status": "success",
+  "season": {
+    "year": 2027,
+    "type": 2,
+    "name": "Regular Season",
+    "displayName": "2026-27"
+  },
+  "injuries": [
+    {
+      "id": "25",
+      "displayName": "Anaheim Ducks",
+      "injuries": [
+        {
+          "id": "598256",
+          "shortComment": "Greer (upper body) was placed on injured reserve Monday.",
+          "status": "Injured Reserve",
+          "date": "2026-11-02T18:46Z",
+          "athlete": {
+            "firstName": "A.J.",
+            "lastName": "Greer",
+            "displayName": "A.J. Greer",
+            "shortName": "A.J. Greer",
+            "position": {
+              "id": "2",
+              "name": "Left Wing",
+              "displayName": "Left Wing",
+              "abbreviation": "LW",
+              "leaf": true
+            },
+            "team": {
+              "id": "25",
+              "uid": "s:70~l:90~t:25",
+              "slug": "anaheim-ducks",
+              "name": "Ducks",
+              "abbreviation": "ANA",
+              "displayName": "Anaheim Ducks"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "598256",
+                  "type": "news",
+                  "date": "2026-11-02T18:46Z",
+                  "headline": "Greer (upper body) was placed on injured reserve Monday.",
+                  "text": "Greer suffered an upper-body injury in Sunday's 6-3 win over Ottawa. He will miss at least the next four games, starting with Tuesday's matchup against Vancouver, but it's unclear when he will be ready to return. Greer has four goals, six points, 23 shots on net and 36 hits in 13 appearances this season.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3648015/injuries/598256?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "598252",
+                  "type": "news",
+                  "date": "2026-11-02T18:41Z",
+                  "headline": "ir",
+                  "text": "ir",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3648015/injuries/598252?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597528",
+                  "type": "news",
+                  "date": "2026-10-28T06:25Z",
+                  "headline": "Greer scored two goals and added three hits in Tuesday's 6-5 overtime loss to the Canucks.",
+                  "text": "Greer has been productive with four goals and an assist over his last five games. He's mostly played on the fourth line lately, though the Ducks have mixed and matched their combinations regularly this season. Greer has six points, 20 shots on net, 27 hits, 28 PIM and an even plus-minus rating through 11 outings overall. That's a scoring pace that would show last year's 32-point campaign with the Panthers wasn't a fluke.",
+                  "source": "RotoWire"
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Upper Body",
+            "returnDate": "2026-11-11"
+          }
+        },
+        {
+          "id": "598009",
+          "shortComment": "Although Terry's (hip) return doesn't appear to be imminent, he is getting close to playing, Derek Lee of The Hockey News reports Saturday.",
+          "status": "Injured Reserve",
+          "date": "2026-10-31T19:55Z",
+          "athlete": {
+            "firstName": "Troy",
+            "lastName": "Terry",
+            "displayName": "Troy Terry",
+            "shortName": "T. Terry",
+            "position": {
+              "id": "3",
+              "name": "Right Wing",
+              "displayName": "Right Wing",
+              "abbreviation": "RW",
+              "leaf": true
+            },
+            "team": {
+              "id": "25",
+              "uid": "s:70~l:90~t:25",
+              "slug": "anaheim-ducks",
+              "name": "Ducks",
+              "abbreviation": "ANA",
+              "displayName": "Anaheim Ducks"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "598009",
+                  "type": "news",
+                  "date": "2026-10-31T19:55Z",
+                  "headline": "Although Terry's (hip) return doesn't appear to be imminent, he is getting close to playing, Derek Lee of The Hockey News reports Saturday.",
+                  "text": "\"Troy is closer. When I say closer, hopefully, definitely, in the next, I'm gonna say, week or so,\" Quenneville told Lee. Terry hasn't played yet this campaign because of the injury. He had 19 goals and 57 points in 61 regular-season outings in 2025-26. The 29-year-old is expected to take on a top-six role once he's healthy.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3942905/injuries/598009?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR-LT",
+              "abbreviation": "IR-LT"
+            },
+            "type": "Hip",
+            "detail": "Surgery",
+            "returnDate": "2026-11-06"
+          }
+        },
+        {
+          "id": "596179",
+          "shortComment": "Head coach Joel Quenneville said Friday that Moore (lower body) is still \"a ways from skating,\" Patrick Present of The Hockey News reports.",
+          "status": "Injured Reserve",
+          "date": "2026-10-16T18:17Z",
+          "athlete": {
+            "firstName": "Ian",
+            "lastName": "Moore",
+            "displayName": "Ian Moore",
+            "shortName": "I. Moore",
+            "position": {
+              "id": "4",
+              "name": "Defense",
+              "displayName": "Defense",
+              "abbreviation": "D",
+              "leaf": true
+            },
+            "team": {
+              "id": "25",
+              "uid": "s:70~l:90~t:25",
+              "slug": "anaheim-ducks",
+              "name": "Ducks",
+              "abbreviation": "ANA",
+              "displayName": "Anaheim Ducks"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Lower Body",
+            "detail": "Not Specified",
+            "side": "Not Specified",
+            "returnDate": "2026-11-08"
+          }
+        },
+        {
+          "id": "595699",
+          "shortComment": "Poehling (knee) is expected to miss 6-8 weeks with an MCL sprain.",
+          "status": "Injured Reserve",
+          "date": "2026-10-13T17:19Z",
+          "athlete": {
+            "firstName": "Ryan",
+            "lastName": "Poehling",
+            "displayName": "Ryan Poehling",
+            "shortName": "R. Poehling",
+            "position": {
+              "id": "1",
+              "name": "Center",
+              "displayName": "Center",
+              "abbreviation": "C",
+              "leaf": true
+            },
+            "team": {
+              "id": "25",
+              "uid": "s:70~l:90~t:25",
+              "slug": "anaheim-ducks",
+              "name": "Ducks",
+              "abbreviation": "ANA",
+              "displayName": "Anaheim Ducks"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Lower Body",
+            "returnDate": "2026-11-25"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8",
+      "displayName": "Los Angeles Kings",
+      "injuries": [
+        {
+          "id": "598131",
+          "shortComment": "day-to-day",
+          "status": "Day-To-Day",
+          "date": "2026-11-01T13:42Z",
+          "athlete": {
+            "firstName": "Adrian",
+            "lastName": "Kempe",
+            "displayName": "Adrian Kempe",
+            "shortName": "A. Kempe",
+            "position": {
+              "id": "3",
+              "name": "Right Wing",
+              "displayName": "Right Wing",
+              "abbreviation": "RW",
+              "leaf": true
+            },
+            "team": {
+              "id": "8",
+              "uid": "s:70~l:90~t:8",
+              "slug": "los-angeles-kings",
+              "name": "Kings",
+              "abbreviation": "LA",
+              "displayName": "Los Angeles Kings"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "598131",
+                  "type": "news",
+                  "date": "2026-11-01T13:42Z",
+                  "headline": "day-to-day",
+                  "text": "day-to-day",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3114802/injuries/598131?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597998",
+                  "type": "news",
+                  "date": "2026-10-31T18:17Z",
+                  "headline": "Kempe (undisclosed) won't be in the lineup against Buffalo on Saturday, per Zach Dooley of the Kings' official site.",
+                  "text": "Kempe is day-to-day and will miss at least one game. He has earned three goals, eight points, 41 shots on net, 18 hits and three blocked shots in 12 appearances this season. With Kempe unavailable, Martin Chromiak will make his NHL debut against the Sabres on Saturday.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3114802/injuries/597998?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597995",
+                  "type": "news",
+                  "date": "2026-10-31T18:12Z",
+                  "headline": "out",
+                  "text": "out",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3114802/injuries/597995?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "6",
+            "name": "INJURY_STATUS_DAYTODAY",
+            "description": "day-to-day",
+            "abbreviation": "DD"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "Day-To-Day",
+              "abbreviation": "Day-To-Day"
+            },
+            "type": "Undisclosed",
+            "returnDate": "2026-11-04"
+          }
+        },
+        {
+          "id": "597733",
+          "shortComment": "Zuccarello (upper body) is regarded as week-to-week, Zach Dooley of the Kings' official site reports Thursday.",
+          "status": "Injured Reserve",
+          "date": "2026-10-29T18:43Z",
+          "athlete": {
+            "firstName": "Mats",
+            "lastName": "Zuccarello",
+            "displayName": "Mats Zuccarello",
+            "shortName": "M. Zuccarello",
+            "position": {
+              "id": "3",
+              "name": "Right Wing",
+              "displayName": "Right Wing",
+              "abbreviation": "RW",
+              "leaf": true
+            },
+            "team": {
+              "id": "8",
+              "uid": "s:70~l:90~t:8",
+              "slug": "los-angeles-kings",
+              "name": "Kings",
+              "abbreviation": "LA",
+              "displayName": "Los Angeles Kings"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "597733",
+                  "type": "news",
+                  "date": "2026-10-29T18:43Z",
+                  "headline": "Zuccarello (upper body) is regarded as week-to-week, Zach Dooley of the Kings' official site reports Thursday.",
+                  "text": "Zuccarello hasn't played since Oct. 24 due to the injury. He has an assist in six appearances in 2026-27. Zuccarello should serve in a top-six role once he's healthy.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/5560/injuries/597733?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Upper Body",
+            "returnDate": "2026-11-10"
+          }
+        },
+        {
+          "id": "597732",
+          "shortComment": "Head coach Peter Laviolette said Thursday that Fiala (lower leg) remains on a week-to-week timeline, Zach Dooley of the Kings' official site reports.",
+          "status": "Injured Reserve",
+          "date": "2026-10-29T18:42Z",
+          "athlete": {
+            "firstName": "Kevin",
+            "lastName": "Fiala",
+            "displayName": "Kevin Fiala",
+            "shortName": "K. Fiala",
+            "position": {
+              "id": "2",
+              "name": "Left Wing",
+              "displayName": "Left Wing",
+              "abbreviation": "LW",
+              "leaf": true
+            },
+            "team": {
+              "id": "8",
+              "uid": "s:70~l:90~t:8",
+              "slug": "los-angeles-kings",
+              "name": "Kings",
+              "abbreviation": "LA",
+              "displayName": "Los Angeles Kings"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "597732",
+                  "type": "news",
+                  "date": "2026-10-29T18:42Z",
+                  "headline": "Head coach Peter Laviolette said Thursday that Fiala (lower leg) remains on a week-to-week timeline, Zach Dooley of the Kings' official site reports.",
+                  "text": "Fiala skated in a non-contact sweater during Thursday's morning skate, but Laviolette said later in the day that the 30-year-old still has several steps he needs to take before he's in consideration to return to game action. Fiala has been unavailable since the start of the regular season while continuing his recovery process from a lower leg fracture that required a pair of procedures.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3114743/injuries/597732?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597717",
+                  "type": "news",
+                  "date": "2026-10-29T17:39Z",
+                  "headline": "Fiala (lower leg) was spotted skating in a non-contact jersey at Kings' morning skate Thursday.",
+                  "text": "Fiala's presence at Thursday's practice is an encouraging sign for the Kings, as he's been sidelined since the 2026 Olympics after fracturing his lower leg in Switzerland's group-stage game against Canada. The 30-year-old winger compiled 18 goals, 40 points and 146 shots on net across 56 regular-season outings in the 2025-26 campaign. It remains to be seen how close he is to returning to the lineup, but when he does, he'll add major offensive firepower for the Kings, who currently rank 27th in the NHL with just 2.55 goals per game to start the season. He's a great player to stash on an IR spot in fantasy for the time being.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3114743/injuries/597717?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Lower Leg",
+            "detail": "Surgery",
+            "side": "Left",
+            "returnDate": "2026-11-07"
+          }
+        },
+        {
+          "id": "595345",
+          "shortComment": "ir",
+          "status": "Injured Reserve",
+          "date": "2026-10-10T18:09Z",
+          "athlete": {
+            "firstName": "Alex",
+            "lastName": "Turcotte",
+            "displayName": "Alex Turcotte",
+            "shortName": "A. Turcotte",
+            "position": {
+              "id": "1",
+              "name": "Center",
+              "displayName": "Center",
+              "abbreviation": "C",
+              "leaf": true
+            },
+            "team": {
+              "id": "8",
+              "uid": "s:70~l:90~t:8",
+              "slug": "los-angeles-kings",
+              "name": "Kings",
+              "abbreviation": "LA",
+              "displayName": "Los Angeles Kings"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Undisclosed",
+            "detail": "Not Specified",
+            "side": "Not Specified",
+            "returnDate": "2026-11-04"
+          }
+        },
+        {
+          "id": "593688",
+          "shortComment": "ir-nr",
+          "status": "Injured Reserve",
+          "date": "2026-09-24T19:49Z",
+          "athlete": {
+            "firstName": "Jakub",
+            "lastName": "Dvorak",
+            "displayName": "Jakub Dvorak",
+            "shortName": "J. Dvorak",
+            "position": {
+              "id": "4",
+              "name": "Defense",
+              "displayName": "Defense",
+              "abbreviation": "D",
+              "leaf": true
+            },
+            "team": {
+              "id": "8",
+              "uid": "s:70~l:90~t:8",
+              "slug": "los-angeles-kings",
+              "name": "Kings",
+              "abbreviation": "LA",
+              "displayName": "Los Angeles Kings"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR-NR",
+              "abbreviation": "IR-NR"
+            },
+            "type": "Upper Body",
+            "returnDate": "2026-11-28"
+          }
+        },
+        {
+          "id": "593687",
+          "shortComment": "Jenik (undisclosed) was placed on non-roster injured reserve by Los Angeles on Thursday, per Zach Dooley of LA Kings Insider.",
+          "status": "Injured Reserve",
+          "date": "2026-09-24T19:45Z",
+          "athlete": {
+            "firstName": "Jan",
+            "lastName": "Jenik",
+            "displayName": "Jan Jenik",
+            "shortName": "J. Jenik",
+            "position": {
+              "id": "1",
+              "name": "Center",
+              "displayName": "Center",
+              "abbreviation": "C",
+              "leaf": true
+            },
+            "team": {
+              "id": "8",
+              "uid": "s:70~l:90~t:8",
+              "slug": "los-angeles-kings",
+              "name": "Kings",
+              "abbreviation": "LA",
+              "displayName": "Los Angeles Kings"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR-NR",
+              "abbreviation": "IR-NR"
+            },
+            "type": "Undisclosed",
+            "returnDate": "2026-11-07"
+          }
+        }
+      ]
+    },
+    {
+      "id": "11",
+      "displayName": "New Jersey Devils",
+      "injuries": [
+        {
+          "id": "598247",
+          "shortComment": "Rodrigues (illness) is questionable for Tuesday's matchup against Edmonton, per Amanda Stein of the Devils' official site.",
+          "status": "Day-To-Day",
+          "date": "2026-11-02T18:01Z",
+          "athlete": {
+            "firstName": "Evan",
+            "lastName": "Rodrigues",
+            "displayName": "Evan Rodrigues",
+            "shortName": "E. Rodrigues",
+            "position": {
+              "id": "1",
+              "name": "Center",
+              "displayName": "Center",
+              "abbreviation": "C",
+              "leaf": true
+            },
+            "team": {
+              "id": "11",
+              "uid": "s:70~l:90~t:11",
+              "slug": "new-jersey-devils",
+              "name": "Devils",
+              "abbreviation": "NJ",
+              "displayName": "New Jersey Devils"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "598247",
+                  "type": "news",
+                  "date": "2026-11-02T18:01Z",
+                  "headline": "Rodrigues (illness) is questionable for Tuesday's matchup against Edmonton, per Amanda Stein of the Devils' official site.",
+                  "text": "Rodrigues missed Monday's practice due to an illness. If he can't play against the Oilers on Tuesday, New Jersey may dress seven blueliners or recall a forward from the minors. Rodrigues has two goals, five points, 17 shots on net, five blocked shots and 20 hits in 14 appearances this season.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3648008/injuries/598247?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "598246",
+                  "type": "news",
+                  "date": "2026-11-02T17:56Z",
+                  "headline": "day-to-day",
+                  "text": "day-to-day",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3648008/injuries/598246?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "6",
+            "name": "INJURY_STATUS_DAYTODAY",
+            "description": "day-to-day",
+            "abbreviation": "DD"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "Day-To-Day",
+              "abbreviation": "Day-To-Day"
+            },
+            "type": "Illness",
+            "returnDate": "2026-11-03"
+          }
+        },
+        {
+          "id": "597916",
+          "shortComment": "Mantha (undisclosed) didn't finish Friday's game versus the Golden Knights, and head coach Sheldon Keefe didn't have an update on the winger's status in his postgame comments, Amanda Stein of the Devils' official site reports.",
+          "status": "Day-To-Day",
+          "date": "2026-10-31T01:14Z",
+          "athlete": {
+            "firstName": "Anthony",
+            "lastName": "Mantha",
+            "displayName": "Anthony Mantha",
+            "shortName": "A. Mantha",
+            "position": {
+              "id": "3",
+              "name": "Right Wing",
+              "displayName": "Right Wing",
+              "abbreviation": "RW",
+              "leaf": true
+            },
+            "team": {
+              "id": "11",
+              "uid": "s:70~l:90~t:11",
+              "slug": "new-jersey-devils",
+              "name": "Devils",
+              "abbreviation": "NJ",
+              "displayName": "New Jersey Devils"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "597916",
+                  "type": "news",
+                  "date": "2026-10-31T01:14Z",
+                  "headline": "Mantha (undisclosed) didn't finish Friday's game versus the Golden Knights, and head coach Sheldon Keefe didn't have an update on the winger's status in his postgame comments, Amanda Stein of the Devils' official site reports.",
+                  "text": "Mantha picked up one assist over 13:58 of ice time prior to his exit. The winger left the game in the third period, which partially explains the lack of an update. Keefe added that Mantha would be evaluated when the team gets back to New Jersey. The Devils are off until Tuesday's game versus the Oilers, so Mantha will have a little more time than normal to recover before he'd be at risk of missing games.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3042037/injuries/597916?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597914",
+                  "type": "news",
+                  "date": "2026-10-31T01:13Z",
+                  "headline": "day-to-day",
+                  "text": "day-to-day",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3042037/injuries/597914?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "6",
+            "name": "INJURY_STATUS_DAYTODAY",
+            "description": "day-to-day",
+            "abbreviation": "DD"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "Day-To-Day",
+              "abbreviation": "Day-To-Day"
+            },
+            "type": "Undisclosed",
+            "returnDate": "2026-11-03"
+          }
+        },
+        {
+          "id": "594455",
+          "shortComment": "Casey will be out of action for 6-8 weeks after undergoing a knee procedure, Kristy Flannery of The Hockey News reports Friday.",
+          "status": "Injured Reserve",
+          "date": "2026-10-02T17:31Z",
+          "athlete": {
+            "firstName": "Seamus",
+            "lastName": "Casey",
+            "displayName": "Seamus Casey",
+            "shortName": "S. Casey",
+            "position": {
+              "id": "4",
+              "name": "Defense",
+              "displayName": "Defense",
+              "abbreviation": "D",
+              "leaf": true
+            },
+            "team": {
+              "id": "11",
+              "uid": "s:70~l:90~t:11",
+              "slug": "new-jersey-devils",
+              "name": "Devils",
+              "abbreviation": "NJ",
+              "displayName": "New Jersey Devils"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR-NR",
+              "abbreviation": "IR-NR"
+            },
+            "type": "Knee",
+            "returnDate": "2026-11-21"
+          }
+        }
+      ]
+    },
+    {
+      "id": "18",
+      "displayName": "San Jose Sharks",
+      "injuries": [
+        {
+          "id": "597585",
+          "shortComment": "ir",
+          "status": "Injured Reserve",
+          "date": "2026-10-28T16:49Z",
+          "athlete": {
+            "firstName": "Igor",
+            "lastName": "Chernyshov",
+            "displayName": "Igor Chernyshov",
+            "shortName": "I. Chernyshov",
+            "position": {
+              "id": "2",
+              "name": "Left Wing",
+              "displayName": "Left Wing",
+              "abbreviation": "LW",
+              "leaf": true
+            },
+            "team": {
+              "id": "18",
+              "uid": "s:70~l:90~t:18",
+              "slug": "san-jose-sharks",
+              "name": "Sharks",
+              "abbreviation": "SJ",
+              "displayName": "San Jose Sharks"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "597585",
+                  "type": "news",
+                  "date": "2026-10-28T16:49Z",
+                  "headline": "ir",
+                  "text": "ir",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/5216907/injuries/597585?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Upper Body",
+            "returnDate": "2026-11-14"
+          }
+        },
+        {
+          "id": "597584",
+          "shortComment": "ir",
+          "status": "Injured Reserve",
+          "date": "2026-10-28T16:46Z",
+          "athlete": {
+            "firstName": "Alexander",
+            "lastName": "Wennberg",
+            "displayName": "Alexander Wennberg",
+            "shortName": "A. Wennberg",
+            "position": {
+              "id": "1",
+              "name": "Center",
+              "displayName": "Center",
+              "abbreviation": "C",
+              "leaf": true
+            },
+            "team": {
+              "id": "18",
+              "uid": "s:70~l:90~t:18",
+              "slug": "san-jose-sharks",
+              "name": "Sharks",
+              "abbreviation": "SJ",
+              "displayName": "San Jose Sharks"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "597584",
+                  "type": "news",
+                  "date": "2026-10-28T16:46Z",
+                  "headline": "ir",
+                  "text": "ir",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3042017/injuries/597584?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR",
+              "abbreviation": "IR"
+            },
+            "type": "Upper Body",
+            "returnDate": "2026-11-09"
+          }
+        },
+        {
+          "id": "594145",
+          "shortComment": "Musty (upper body) was put on non-roster injured reserve Monday, according to Curtis Pashelka of The San Jose Mercury News.",
+          "status": "Injured Reserve",
+          "date": "2026-09-28T22:20Z",
+          "athlete": {
+            "firstName": "Quentin",
+            "lastName": "Musty",
+            "displayName": "Quentin Musty",
+            "shortName": "Q. Musty",
+            "position": {
+              "id": "2",
+              "name": "Left Wing",
+              "displayName": "Left Wing",
+              "abbreviation": "LW",
+              "leaf": true
+            },
+            "team": {
+              "id": "18",
+              "uid": "s:70~l:90~t:18",
+              "slug": "san-jose-sharks",
+              "name": "Sharks",
+              "abbreviation": "SJ",
+              "displayName": "San Jose Sharks"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR-NR",
+              "abbreviation": "IR-NR"
+            },
+            "type": "Upper Body",
+            "returnDate": "2026-12-01"
+          }
+        },
+        {
+          "id": "594142",
+          "shortComment": "Keyser (upper body) was placed on non-roster injured reserve by the Sharks on Monday, Curtis Pashelka of The San Jose Mercury News reports.",
+          "status": "Injured Reserve",
+          "date": "2026-09-28T22:10Z",
+          "athlete": {
+            "firstName": "Kyle",
+            "lastName": "Keyser",
+            "displayName": "Kyle Keyser",
+            "shortName": "K. Keyser",
+            "position": {
+              "id": "5",
+              "name": "Goaltender",
+              "displayName": "Goaltender",
+              "abbreviation": "G",
+              "leaf": false
+            },
+            "team": {
+              "id": "18",
+              "uid": "s:70~l:90~t:18",
+              "slug": "san-jose-sharks",
+              "name": "Sharks",
+              "abbreviation": "SJ",
+              "displayName": "San Jose Sharks"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR-NR",
+              "abbreviation": "IR-NR"
+            },
+            "type": "Upper Body",
+            "returnDate": "2026-12-01"
+          }
+        }
+      ]
+    },
+    {
+      "id": "20",
+      "displayName": "Tampa Bay Lightning",
+      "injuries": [
+        {
+          "id": "598238",
+          "shortComment": "Girgensons (lower body) won't play against Detroit on Tuesday, per Lightning reporter Gabby Shirley.",
+          "status": "Out",
+          "date": "2026-11-02T17:13Z",
+          "athlete": {
+            "firstName": "Zemgus",
+            "lastName": "Girgensons",
+            "displayName": "Zemgus Girgensons",
+            "shortName": "Z. Girgensons",
+            "position": {
+              "id": "1",
+              "name": "Center",
+              "displayName": "Center",
+              "abbreviation": "C",
+              "leaf": true
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:70~l:90~t:20",
+              "slug": "tampa-bay-lightning",
+              "name": "Lightning",
+              "abbreviation": "TB",
+              "displayName": "Tampa Bay Lightning"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "598238",
+                  "type": "news",
+                  "date": "2026-11-02T17:13Z",
+                  "headline": "Girgensons (lower body) won't play against Detroit on Tuesday, per Lightning reporter Gabby Shirley.",
+                  "text": "Girgensons will miss his third straight game, and it's unclear if he will be ready for Thursday's matchup against Chicago. If he doesn't play against the Blackhawks, Girgensons might be available for Tampa Bay's upcoming four-game road trip, which begins against Minnesota on Saturday. He has collected one goal, two points, 14 shots on net, 31 hits and nine blocked shots in 11 appearances this season.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/2968829/injuries/598238?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "598237",
+                  "type": "news",
+                  "date": "2026-11-02T17:09Z",
+                  "headline": "out",
+                  "text": "out",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/2968829/injuries/598237?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "598129",
+                  "type": "news",
+                  "date": "2026-11-01T13:42Z",
+                  "headline": "day-to-day",
+                  "text": "day-to-day",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/2968829/injuries/598129?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597989",
+                  "type": "news",
+                  "date": "2026-10-31T17:27Z",
+                  "headline": "Girgensons (lower body) won't play against Nashville on Saturday, per Lightning reporter Gabby Shirley.",
+                  "text": "Girgensons will miss his second straight game, and it's unclear when he will be available to return to the lineup. He has earned one goal, two points, 14 shots on net, 31 hits and nine blocked shots in 11 appearances this season.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/2968829/injuries/597989?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597991",
+                  "type": "news",
+                  "date": "2026-10-31T17:26Z",
+                  "headline": "out",
+                  "text": "out",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/2968829/injuries/597991?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597835",
+                  "type": "news",
+                  "date": "2026-10-30T13:17Z",
+                  "headline": "day-to-day",
+                  "text": "day-to-day",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/2968829/injuries/597835?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597609",
+                  "type": "news",
+                  "date": "2026-10-28T18:01Z",
+                  "headline": "out",
+                  "text": "out",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/2968829/injuries/597609?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "4",
+            "name": "INJURY_STATUS_OUT",
+            "description": "out",
+            "abbreviation": "O"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "OUT",
+              "abbreviation": "OUT"
+            },
+            "type": "Lower Body",
+            "returnDate": "2026-11-05"
+          }
+        },
+        {
+          "id": "598133",
+          "shortComment": "day-to-day",
+          "status": "Day-To-Day",
+          "date": "2026-11-01T13:42Z",
+          "athlete": {
+            "firstName": "Erik",
+            "lastName": "Cernak",
+            "displayName": "Erik Cernak",
+            "shortName": "E. Cernak",
+            "position": {
+              "id": "4",
+              "name": "Defense",
+              "displayName": "Defense",
+              "abbreviation": "D",
+              "leaf": true
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:70~l:90~t:20",
+              "slug": "tampa-bay-lightning",
+              "name": "Lightning",
+              "abbreviation": "TB",
+              "displayName": "Tampa Bay Lightning"
+            },
+            "notes": {
+              "items": [
+                {
+                  "id": "598133",
+                  "type": "news",
+                  "date": "2026-11-01T13:42Z",
+                  "headline": "day-to-day",
+                  "text": "day-to-day",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3904178/injuries/598133?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597991",
+                  "type": "news",
+                  "date": "2026-10-31T17:30Z",
+                  "headline": "Cernak (undisclosed) won't be in the lineup against Nashville on Saturday, according to Lightning reporter Gabby Shirley.",
+                  "text": "Cernak will be considered day-to-day ahead of Tuesday's matchup against Detroit. He has posted two assists, 15 shots on goal, 17 blocked shots and 25 hits in 12 outings this season.",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3904178/injuries/597991?lang=en&region=us"
+                  }
+                },
+                {
+                  "id": "597992",
+                  "type": "news",
+                  "date": "2026-10-31T17:28Z",
+                  "headline": "out",
+                  "text": "out",
+                  "source": "RotoWire",
+                  "injury": {
+                    "$ref": "http://sports.core.api.espn.pvt/v2/sports/hockey/leagues/nhl/seasons/2027/athletes/3904178/injuries/597992?lang=en&region=us"
+                  }
+                }
+              ]
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "6",
+            "name": "INJURY_STATUS_DAYTODAY",
+            "description": "day-to-day",
+            "abbreviation": "DD"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "Day-To-Day",
+              "abbreviation": "Day-To-Day"
+            },
+            "type": "Undisclosed",
+            "returnDate": "2026-11-03"
+          }
+        },
+        {
+          "id": "594107",
+          "shortComment": "Gourde (hip) was placed on the injured non-roster list Monday.",
+          "status": "Injured Reserve",
+          "date": "2026-09-28T19:18Z",
+          "athlete": {
+            "firstName": "Yanni",
+            "lastName": "Gourde",
+            "displayName": "Yanni Gourde",
+            "shortName": "Y. Gourde",
+            "position": {
+              "id": "1",
+              "name": "Center",
+              "displayName": "Center",
+              "abbreviation": "C",
+              "leaf": true
+            },
+            "team": {
+              "id": "20",
+              "uid": "s:70~l:90~t:20",
+              "slug": "tampa-bay-lightning",
+              "name": "Lightning",
+              "abbreviation": "TB",
+              "displayName": "Tampa Bay Lightning"
+            },
+            "notes": {
+              "items": []
+            },
+            "status": {
+              "id": "1",
+              "name": "Active",
+              "type": "active",
+              "abbreviation": "Active"
+            }
+          },
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "5",
+            "name": "INJURY_STATUS_IR",
+            "description": "Injured Reserve",
+            "abbreviation": "IR"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "IR-NR",
+              "abbreviation": "IR-NR"
+            },
+            "type": "Hip",
+            "detail": "Surgery",
+            "returnDate": "2026-12-02"
+          }
+        }
+      ]
+    }
+  ]
+}

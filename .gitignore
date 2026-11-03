@@ -8,3 +8,7 @@ __pycache__/
 coverage.json
 lcov.info
 .tmp/
+
+# mutmut
+mutants/
+mutation-results.txt

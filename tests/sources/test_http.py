@@ -1,16 +1,24 @@
 """Tests for the polite HTTP client. No test touches the network."""
 
+import http.client
 import io
+import socketserver
+import threading
+import time
 import urllib.request
+from collections.abc import Callable
 from email.message import Message
 from http.client import HTTPMessage, IncompleteRead
 from urllib.error import HTTPError, URLError
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 import hockey_model.sources.http as http_module
 from hockey_model.sources.errors import SourceError
 from hockey_model.sources.http import HttpClient, _PolicyRedirect, _Refused
+from hockey_model.sources.policy import HOST_POLICIES, HostPolicy
 
 NHL_URL = "https://api-web.nhle.com/v1/schedule/now"
 
@@ -50,7 +58,7 @@ def _http_error(code: int, retry_after: str | None = None) -> HTTPError:
     headers = Message()
     if retry_after is not None:
         headers["Retry-After"] = retry_after
-    return HTTPError(NHL_URL, code, f"status {code}", headers, None)
+    return HTTPError(NHL_URL, code, f"status {code}", headers, io.BytesIO())
 
 
 def _client(opener: ScriptedOpener, clock: FakeClock) -> HttpClient:
@@ -187,7 +195,7 @@ class _OversizeResponse:
     def __exit__(self, *exc: object) -> None:
         return None
 
-    def read(self, size: int = -1) -> bytes:
+    def read1(self, size: int = -1) -> bytes:
         return b"x" * size
 
 
@@ -207,3 +215,195 @@ def test_default_opener_refuses_oversize_body(monkeypatch: pytest.MonkeyPatch) -
 def test_source_error_message_names_operation_and_reason() -> None:
     error = SourceError("nhl", NHL_URL, "HTTP 404")
     assert str(error) == f"fetch nhl {NHL_URL}: HTTP 404"
+
+
+class _TricklingResponse:
+    """A response that returns one byte per read and takes one second for each."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock = clock
+        self.reads = 0
+
+    def __enter__(self) -> _TricklingResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read1(self, size: int = -1) -> bytes:
+        del size
+        self.reads += 1
+        self.clock.now += 1.0
+        return b"x"
+
+
+class _TricklingOpener:
+    def __init__(self, response: _TricklingResponse) -> None:
+        self.response = response
+
+    def open(self, request: urllib.request.Request, timeout: float) -> _TricklingResponse:
+        del request, timeout
+        return self.response
+
+
+def test_default_opener_bounds_total_time_of_a_trickling_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    response = _TricklingResponse(clock)
+    monkeypatch.setattr(http_module, "_OPENER", _TricklingOpener(response))
+    request = urllib.request.Request(NHL_URL)
+    with pytest.raises(_Refused, match=r"not finished within 120 s"):
+        http_module._default_opener(request, 1.0, clock=clock)
+    assert response.reads <= HOST_POLICIES["api-web.nhle.com"].total_timeout_s + 1
+
+
+def test_trickling_body_surfaces_as_source_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    monkeypatch.setattr(http_module, "_OPENER", _TricklingOpener(_TricklingResponse(clock)))
+
+    def opener(request: urllib.request.Request, timeout: float) -> bytes:
+        return http_module._default_opener(request, timeout, clock=clock)
+
+    client = HttpClient(opener=opener, clock=clock, sleep=clock.sleep)
+    with pytest.raises(SourceError, match="not finished within"):
+        client.get("nhl", NHL_URL)
+
+
+_HOSTS = {
+    "api-web.nhle.com": "https://api-web.nhle.com/v1/x",
+    "site.api.espn.com": "https://site.api.espn.com/apis/x",
+    "www.dailyfaceoff.com": "https://www.dailyfaceoff.com/x",
+}
+_MAX_TRIES = HOST_POLICIES["api-web.nhle.com"].max_retries + 1
+
+
+@given(
+    st.lists(
+        st.tuples(st.sampled_from(sorted(_HOSTS)), st.floats(min_value=0.0, max_value=10.0)),
+        min_size=1,
+        max_size=30,
+    )
+)
+def test_property_requests_to_one_host_start_min_interval_apart(
+    steps: list[tuple[str, float]],
+) -> None:
+    clock = FakeClock()
+    starts: dict[str, list[float]] = {host: [] for host in _HOSTS}
+    current_host = ""
+
+    def opener(request: urllib.request.Request, timeout: float) -> bytes:
+        del request, timeout
+        starts[current_host].append(clock.now)
+        return b"ok"
+
+    client = HttpClient(opener=opener, clock=clock, sleep=clock.sleep)
+    for host, gap in steps:
+        clock.now += gap
+        current_host = host
+        client.get("src", _HOSTS[host])
+    for host, times in starts.items():
+        interval = HOST_POLICIES[host].min_interval_s
+        assert all(b - a >= interval - 1e-9 for a, b in zip(times, times[1:], strict=False))
+
+
+_OUTCOMES: dict[str, Callable[[], bytes | BaseException]] = {
+    "ok": lambda: b"ok",
+    "503": lambda: _http_error(503),
+    "429": lambda: _http_error(429),
+    "404": lambda: _http_error(404),
+    "net": lambda: URLError("down"),
+}
+
+
+@given(st.lists(st.sampled_from(sorted(_OUTCOMES)), min_size=_MAX_TRIES, max_size=8))
+def test_property_retries_stop_at_first_final_outcome_or_the_limit(names: list[str]) -> None:
+    clock = FakeClock()
+    expected_calls = _MAX_TRIES
+    expect_body = False
+    for index, name in enumerate(names[:_MAX_TRIES]):
+        if name in {"ok", "404"}:
+            expected_calls, expect_body = index + 1, name == "ok"
+            break
+    opener = ScriptedOpener([_OUTCOMES[name]() for name in names[:expected_calls]])
+    client = _client(opener, clock)
+    if expect_body:
+        assert client.get("nhl", NHL_URL) == b"ok"
+    else:
+        with pytest.raises(SourceError):
+            client.get("nhl", NHL_URL)
+    assert len(opener.requests) == expected_calls
+    assert all(0.0 < pause <= http_module.MAX_BACKOFF_S for pause in clock.sleeps)
+
+
+@given(st.integers(min_value=0, max_value=999_999), st.sampled_from(["", " ", "\t", "\n "]))
+def test_property_retry_after_digits_are_used_and_capped(seconds: int, pad: str) -> None:
+    result = http_module._backoff_s(0, f"{pad}{seconds}{pad}")
+    assert result == min(float(seconds), http_module.MAX_BACKOFF_S)
+
+
+def _is_plain_seconds(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.isascii() and stripped.isdigit() and len(stripped) <= 6
+
+
+@given(
+    st.integers(min_value=0, max_value=60),
+    st.none()
+    | st.text(max_size=12).filter(lambda text: not _is_plain_seconds(text))
+    | st.integers(min_value=1_000_000).map(str),
+)
+def test_property_other_retry_after_text_falls_back_to_exponential(
+    attempt: int, header: str | None
+) -> None:
+    result = http_module._backoff_s(attempt, header)
+    assert result == min(2.0**attempt, http_module.MAX_BACKOFF_S)
+
+
+def test_read_bounded_refuses_body_over_host_cap() -> None:
+    policy = HostPolicy(min_interval_s=0.0, max_retries=0, max_body_bytes=10)
+    with pytest.raises(_Refused, match="larger than 10 bytes"):
+        http_module._read_bounded(io.BytesIO(b"x" * 11), float("inf"), lambda: 0.0, policy)
+    body = http_module._read_bounded(io.BytesIO(b"x" * 10), float("inf"), lambda: 0.0, policy)
+    assert body == b"x" * 10
+
+
+def test_moneypuck_host_allows_its_large_csv() -> None:
+    assert HOST_POLICIES["moneypuck.com"].max_body_bytes > 200 * 1024 * 1024
+    assert (
+        HOST_POLICIES["moneypuck.com"].total_timeout_s
+        > HOST_POLICIES["api-web.nhle.com"].total_timeout_s
+    )
+
+
+class _TrickleHandler(socketserver.BaseRequestHandler):
+    """Send a response header that promises a large body, then one byte at a time."""
+
+    def handle(self) -> None:
+        self.request.recv(4096)
+        self.request.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n")
+        try:
+            for _ in range(200):
+                self.request.sendall(b"x")
+                time.sleep(0.05)
+        except OSError:
+            return
+
+
+def test_a_real_trickling_socket_is_cut_off_at_the_deadline() -> None:
+    with socketserver.TCPServer(("127.0.0.1", 0), _TrickleHandler) as server:
+        threading.Thread(target=server.handle_request, daemon=True).start()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        policy = HostPolicy(min_interval_s=0.0, max_retries=0, total_timeout_s=0.5)
+        started = time.monotonic()
+        with pytest.raises(_Refused, match="not finished within"):
+            http_module._read_bounded(response, started + 0.5, time.monotonic, policy)
+        assert time.monotonic() - started < 3.0
+        connection.close()
+
+
+def test_a_source_error_keeps_its_parts() -> None:
+    error = SourceError("nhl", NHL_URL, "HTTP 404")
+    assert (error.source, error.url, error.reason) == ("nhl", NHL_URL, "HTTP 404")

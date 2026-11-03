@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sqlite3
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
@@ -12,6 +13,7 @@ from hockey_model.identity import Catalog
 from hockey_model.matchup import matchup, playoff_probability
 from hockey_model.models import JointModel, MatchupModel, StandingsModel, StatModel
 from hockey_model.projections import project_player, project_team
+from hockey_model.store_cli import STORE_COMMANDS, add_store_commands, run_store_command
 from hockey_model.types import (
     AmbiguousPlayerError,
     HockeyModelError,
@@ -70,6 +72,7 @@ def _parser() -> argparse.ArgumentParser:
     playoffs = commands.add_parser("playoffs", help="project a team's playoff probability")
     playoffs.add_argument("team_code")
     _add_projection_options(playoffs, horizon=False)
+    add_store_commands(commands.add_parser)
     return parser
 
 
@@ -188,9 +191,16 @@ def _json_default(value: Any) -> Any:
 
 
 def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -> int:
-    """Run the JSON CLI, returning zero on success and two for caller errors."""
+    """Run the JSON CLI, returning zero on success and two for caller errors.
+
+    ``refresh`` returns one when a source failed, after it prints the report.
+    """
     try:
         args = _parser().parse_args(argv)
+        if args.command in STORE_COMMANDS:
+            payload, code = run_store_command(args)
+            print(json.dumps(payload, default=_json_default, sort_keys=True))
+            return code
         if runtime is None:
             raise ModelNotConfiguredError(
                 "run CLI command: no models are configured; "
@@ -204,7 +214,13 @@ def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -
     except (HockeyModelError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except Exception:
-        print("error: unexpected failure; check the model configuration", file=sys.stderr)
+    except (OSError, sqlite3.Error) as exc:
+        print(
+            f"error: {type(exc).__name__}: {exc}; check the file path and permissions",
+            file=sys.stderr,
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001  # the last guard turns any bug into exit 2
+        print(f"error: unexpected failure: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     return 0
