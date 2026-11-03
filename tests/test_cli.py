@@ -147,3 +147,27 @@ def test_malformed_roster_fields_exit_two(
     path.write_text(json.dumps(roster))
     assert cli.main(["team", "goals", str(path)], _runtime((_player("p-a"),))) == 2
     assert "invalid roster fields" in capsys.readouterr().err
+
+
+def test_roster_property_parses_valid_dicts(tmp_path: Path) -> None:
+    for name, cid, fname in [
+        ("team-a", "p-1", "Player One"),
+        ("team-b", "p-2", "Player Two"),
+        ("team-c", "p-3", "Player Three"),
+    ]:
+        roster = {
+            "name": name,
+            "players": [{"canonical_id": cid, "full_name": fname, "eligible": ["C"]}],
+            "slots": None,
+        }
+        path = tmp_path / f"{cid}.json"
+        path.write_text(json.dumps(roster))
+        result = cli._roster(path)
+        assert isinstance(result, Roster)
+        assert result.name == name
+
+
+def test_empty_player_reference_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    runtime = _runtime((_player("p-a"),))
+    assert cli.main(["player", "goals", ""], runtime) == 2
+    assert "must not be empty" in capsys.readouterr().err

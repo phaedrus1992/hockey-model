@@ -3,6 +3,8 @@
 import math
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from hockey_model.types import Player, Projection, Roster, Slot, Standing, Team
 
@@ -78,3 +80,35 @@ def test_roster_rejects_duplicate_players() -> None:
     player = _player()
     with pytest.raises(ValueError, match="unique"):
         Roster("duplicate", (player, player))
+
+
+@given(
+    st.builds(
+        lambda cid, fname, eligible, team: Player(cid, None, None, fname, eligible, team),
+        cid=st.text(min_size=1).filter(lambda s: s.strip()),
+        fname=st.text(min_size=1).filter(lambda s: s.strip()),
+        eligible=st.sets(
+            st.sampled_from([Slot.C, Slot.W, Slot.D, Slot.G]),
+            min_size=1,
+            max_size=4,
+        ),
+        team=st.one_of(st.just(None), st.text(min_size=1)),
+    ),
+)
+def test_player_eligible_contains_only_valid_slots(player: Player) -> None:
+    if player.eligible is not None:
+        assert player.eligible <= {Slot.C, Slot.W, Slot.D, Slot.G}
+
+
+@st.composite
+def valid_projections(draw):
+    low = draw(st.floats(min_value=0.0, max_value=5.0))
+    point = draw(st.floats(min_value=low, max_value=10.0))
+    high = draw(st.floats(min_value=max(point, 5.0), max_value=10.0))
+    level = draw(st.floats(min_value=0.01, max_value=0.99))
+    return Projection(point, low, high, level)
+
+
+@given(valid_projections())
+def test_projection_satisfies_low_le_point_le_high(projection: Projection) -> None:
+    assert projection.low <= projection.point <= projection.high

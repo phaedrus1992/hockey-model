@@ -74,12 +74,14 @@ class Player:
     yahoo_id: str | None
     nhl_id: int | None
     full_name: str
-    eligible: frozenset[Slot]
+    eligible: frozenset[Slot] | None
     team_code: str | None
 
     def __post_init__(self) -> None:
         _require_text(self.canonical_id, "canonical_id")
         _require_text(self.full_name, "full_name")
+        if self.eligible is None:
+            raise ValueError("eligible must be a frozenset of slot strings")
         if not self.eligible:
             raise ValueError("eligible must contain at least one position")
         invalid = self.eligible - {Slot.C, Slot.W, Slot.D, Slot.G}

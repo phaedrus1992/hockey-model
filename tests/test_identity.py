@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hockey_model.identity import Catalog, resolve_player
+from hockey_model.identity import Catalog, _normalize_name
 from hockey_model.types import AmbiguousPlayerError, Player, Slot, UnknownPlayerError
 
 
@@ -89,4 +89,9 @@ def test_case_and_accent_folding_round_trips(name: str) -> None:
     decomposed = unicodedata.normalize("NFKD", accented)
     unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
     assert Catalog([player]).resolve(accented.swapcase()) == player
-    assert resolve_player(unaccented, Catalog([player])) == player
+    assert Catalog([player]).resolve(unaccented) == player
+
+
+@given(st.text(min_size=1, max_size=100))
+def test_normalize_name_is_idempotent(name: str) -> None:
+    assert _normalize_name(_normalize_name(name)) == _normalize_name(name)

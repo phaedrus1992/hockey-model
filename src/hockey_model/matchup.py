@@ -8,8 +8,6 @@ from hockey_model.models import MatchupModel, StandingsModel
 from hockey_model.roster import validate_roster
 from hockey_model.types import ProbabilityError, Projection, Roster, Standing
 
-PROBABILITY_TOLERANCE = 1e-9
-
 
 @dataclass(frozen=True, slots=True)
 class MatchupResult:
@@ -21,19 +19,6 @@ class MatchupResult:
     away_goals: Projection
 
 
-def _validate_probabilities(home: float, away: float) -> None:
-    values = (home, away)
-    if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in values):
-        raise ProbabilityError(
-            f"predict matchup: invalid win probabilities {values!r}; return finite values in [0, 1]"
-        )
-    if not math.isclose(home + away, 1.0, abs_tol=PROBABILITY_TOLERANCE):
-        raise ProbabilityError(
-            f"predict matchup: win probabilities {values!r} do not sum to 1.0; "
-            "include overtime and shootout wins in one side"
-        )
-
-
 def matchup(home: Roster, away: Roster, model: MatchupModel, level: float = 0.8) -> MatchupResult:
     """Project a matchup between any two valid NHL or fantasy rosters."""
     if not 0.0 < level < 1.0:
@@ -41,7 +26,16 @@ def matchup(home: Roster, away: Roster, model: MatchupModel, level: float = 0.8)
     validate_roster(home)
     validate_roster(away)
     home_win, away_win = model.win_probabilities(home, away)
-    _validate_probabilities(home_win, away_win)
+    values = (home_win, away_win)
+    if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in values):
+        raise ProbabilityError(
+            f"predict matchup: invalid win probabilities {values!r}; return finite values in [0, 1]"
+        )
+    if not math.isclose(home_win + away_win, 1.0, abs_tol=1e-9):
+        raise ProbabilityError(
+            f"predict matchup: win probabilities {values!r} do not sum to 1.0; "
+            "include overtime and shootout wins in one side"
+        )
     return MatchupResult(
         home_win,
         away_win,

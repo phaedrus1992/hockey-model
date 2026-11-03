@@ -11,6 +11,8 @@ SKATER_SLOTS = frozenset({Slot.C, Slot.W, Slot.D})
 def _slot_fits(player: Player, slot: Slot) -> bool:
     if slot is Slot.BENCH:
         return True
+    if player.eligible is None:
+        return False
     if slot is Slot.UTIL:
         return bool(player.eligible & SKATER_SLOTS)
     return slot in player.eligible
@@ -29,7 +31,11 @@ def validate_roster(roster: Roster) -> None:
                 f"{player_id!r}; remove the assignment or add the player"
             )
         if not _slot_fits(player, slot):
-            eligible = ", ".join(sorted(position.value for position in player.eligible))
+            eligible = (
+                ", ".join(sorted(position.value for position in player.eligible))
+                if player.eligible is not None
+                else "(none defined)"
+            )
             raise SlotError(
                 f"validate roster {roster.name!r}: player {player_id!r} cannot fill {slot}; "
                 f"assign an eligible slot ({eligible}) or bench"

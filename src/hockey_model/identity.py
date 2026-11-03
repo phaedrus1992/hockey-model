@@ -68,8 +68,3 @@ class Catalog:
         if len(matches) > 1:
             raise AmbiguousPlayerError(ref, matches)
         raise UnknownPlayerError(ref)
-
-
-def resolve_player(ref: str | int, catalog: Catalog) -> Player:
-    """Resolve a player reference through ``catalog``."""
-    return catalog.resolve(ref)

@@ -13,6 +13,7 @@ from hockey_model.matchup import matchup, playoff_probability
 from hockey_model.models import JointModel, MatchupModel, StandingsModel, StatModel
 from hockey_model.projections import project_player, project_team
 from hockey_model.types import (
+    AmbiguousPlayerError,
     HockeyModelError,
     ModelNotConfiguredError,
     Player,
@@ -96,15 +97,17 @@ def _optional_int(data: dict[str, object], field: str) -> int | None:
 def _player(data: object) -> Player:
     if not isinstance(data, dict):
         raise ValueError("each roster player must be a JSON object")
-    eligible = data.get("eligible")
-    if not isinstance(eligible, list) or any(not isinstance(value, str) for value in eligible):
-        raise ValueError("eligible must be an array of slot strings")
+    raw_eligible = data.get("eligible")
+    if isinstance(raw_eligible, list) and all(isinstance(value, str) for value in raw_eligible):
+        eligible: frozenset[Slot] | None = frozenset(Slot(value) for value in raw_eligible)
+    else:
+        eligible = None
     return Player(
         canonical_id=_required_string(data, "canonical_id"),
         yahoo_id=_optional_string(data, "yahoo_id"),
         nhl_id=_optional_int(data, "nhl_id"),
         full_name=_required_string(data, "full_name"),
-        eligible=frozenset(Slot(value) for value in eligible),
+        eligible=eligible,
         team_code=_optional_string(data, "team_code"),
     )
 
@@ -133,12 +136,18 @@ def _roster(path: Path) -> Roster:
 
 
 def _resolve_player(value: str, catalog: Catalog) -> Player:
+    if not value:
+        raise ValueError("player reference must not be empty")
     try:
         return catalog.resolve(value)
     except UnknownPlayerError:
-        if not value.isdecimal():
-            raise
-        return catalog.resolve(int(value))
+        if value.isascii() and value.isdigit():
+            return catalog.resolve(int(value))
+        raise
+    except AmbiguousPlayerError:
+        if value.isascii() and value.isdigit():
+            return catalog.resolve(int(value))
+        raise
 
 
 def _run(args: argparse.Namespace, runtime: CliRuntime) -> object:
@@ -187,8 +196,15 @@ def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -
                 "run CLI command: no models are configured; "
                 "embed CliRuntime with data-backed models"
             )
-        print(json.dumps(_run(args, runtime), default=_json_default, sort_keys=True))
+        try:
+            print(json.dumps(_run(args, runtime), default=_json_default, sort_keys=True))
+        except TypeError as exc:
+            print(f"error: serialization failed: {exc}", file=sys.stderr)
+            return 2
     except (HockeyModelError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except Exception:
+        print("error: unexpected failure; check the model configuration", file=sys.stderr)
         return 2
     return 0

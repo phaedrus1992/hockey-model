@@ -2,7 +2,7 @@
 
 from importlib.metadata import version
 
-from hockey_model.identity import Catalog, resolve_player
+from hockey_model.identity import Catalog
 from hockey_model.matchup import MatchupResult, matchup, playoff_probability
 from hockey_model.models import (
     FixedStatModel,
@@ -63,6 +63,5 @@ __all__ = [
     "playoff_probability",
     "project_player",
     "project_team",
-    "resolve_player",
     "validate_roster",
 ]
