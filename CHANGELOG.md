@@ -26,4 +26,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Certify each logistic fit by the gradient of the penalized loss and save its diagnostics (iterations, objective, gradient, conditioning, penalty, scaling, stop reason) with the fit. A clipped step no longer counts as convergence. [feat:model]
 - Add the November 2026 backtest report. The joint test passed with expected-goals form and rest, and the guess run vetoed goalie goals saved above expected. [docs:backtest]
 
+### Fixed
+
+- Read a failed NHL score day again on the next refresh, for 30 days. A day that failed and was followed by a good day was never read again, so its games were missing from the Elo and the fit. [fix:store]
+- Refuse a boxscore that does not have exactly one starting goalie for each team. A boxscore without a goalie made the next refresh stop with a database error. [fix:sources]
+- Read MoneyPuck numbers as plain ASCII decimals. A value such as 1_0 or a non-ASCII digit was accepted. [fix:sources]
+- Refuse an ESPN return date that is not text, and a saved fit with an unknown feature or a weight that is not finite. [fix:sources]
+- Match an injury name to the goalies of its own team only. [fix:model]
+- Print the type and message of an unexpected failure in the store commands. [fix:cli]
+- Note in the backtest report that the goalie guess run has no injury history. [fix:backtest]
+
 [Unreleased]: https://github.com/slackworks/hockey-model/commits/main
