@@ -16,12 +16,11 @@ from hockey_model.sources.moneypuck import (
 from hockey_model.sources.starters import StarterRead
 from hockey_model.store.espn_writes import write_injury_reads
 from hockey_model.store.moneypuck_writes import (
-    last_moneypuck_fetch,
     write_goalie_games,
     write_team_games,
 )
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun, game_day
-from hockey_model.store.source_reads import ESPN_INJURIES
+from hockey_model.store.source_reads import ESPN_INJURIES, last_ok_read
 from hockey_model.store.starter_writes import write_starter_reads
 
 MONEYPUCK = "moneypuck"
@@ -37,11 +36,9 @@ def current_season_start(now: datetime) -> int:
     return now.year if now.month >= _SEASON_STARTS_IN_MONTH else now.year - 1
 
 
-def _stale(run: RefreshRun, url: str, *, refresh_weekly: bool) -> bool:
-    last = last_moneypuck_fetch(run.conn, url)
-    if last is None:
-        return True
-    return refresh_weekly and run.now - last >= REFRESH_AFTER
+def _stale(run: RefreshRun, url: str) -> bool:
+    last = last_ok_read(run.conn, MONEYPUCK, url)
+    return last is None or run.now - last >= REFRESH_AFTER
 
 
 def _goalie_file_stale(run: RefreshRun, season: int, current: int) -> bool:
@@ -53,8 +50,8 @@ def _goalie_file_stale(run: RefreshRun, season: int, current: int) -> bool:
     """
     url = goalie_games_url(season)
     if season == current:
-        return _stale(run, url, refresh_weekly=True)
-    last = last_moneypuck_fetch(run.conn, url)
+        return _stale(run, url)
+    last = last_ok_read(run.conn, MONEYPUCK, url)
     season_over = datetime(season + 1, _SEASON_STARTS_IN_MONTH, 1, tzinfo=UTC)
     return last is None or last < season_over
 
@@ -69,7 +66,7 @@ def moneypuck(run: RefreshRun) -> None:
     """Read the team file and each goalie file that is missing or, for the team file and the
     current season, older than a week. A finished season is read once."""
     current = current_season_start(run.now)
-    if _stale(run, TEAM_GAMES_URL, refresh_weekly=True):
+    if _stale(run, TEAM_GAMES_URL):
         run.attempt(
             MONEYPUCK,
             TEAM_GAMES_URL,

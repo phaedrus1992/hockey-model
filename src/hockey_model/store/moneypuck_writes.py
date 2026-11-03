@@ -9,7 +9,6 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from hockey_model.sources.moneypuck import GoalieGameRow, TeamGameRow
-from hockey_model.store.source_reads import last_ok_read
 from hockey_model.store.timestamps import iso_utc
 
 
@@ -51,8 +50,3 @@ def write_goalie_games(
         [(*row, stamp) for row in fresh],
     )
     return len(fresh)
-
-
-def last_moneypuck_fetch(conn: sqlite3.Connection, url: str) -> datetime | None:
-    """Return the time of the newest good read of ``url``, or ``None`` when there is none."""
-    return last_ok_read(conn, "moneypuck", url)

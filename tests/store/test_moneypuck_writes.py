@@ -10,11 +10,10 @@ import pytest
 from hockey_model.sources.moneypuck import GoalieGameRow, TeamGameRow
 from hockey_model.store.db import connect
 from hockey_model.store.moneypuck_writes import (
-    last_moneypuck_fetch,
     write_goalie_games,
     write_team_games,
 )
-from hockey_model.store.source_reads import record_read
+from hockey_model.store.source_reads import last_ok_read, record_read
 
 T0 = datetime(2026, 1, 11, 12, 0, tzinfo=UTC)
 URL = "https://moneypuck.com/x.csv"
@@ -60,13 +59,13 @@ def test_write_goalie_games_skips_unchanged_rows(conn: sqlite3.Connection) -> No
     assert write_goalie_games(conn, [changed], T0 + timedelta(days=14)) == 1
 
 
-def test_last_moneypuck_fetch_is_none_without_reads(conn: sqlite3.Connection) -> None:
-    assert last_moneypuck_fetch(conn, URL) is None
+def test_last_ok_read_is_none_without_reads(conn: sqlite3.Connection) -> None:
+    assert last_ok_read(conn, "moneypuck", URL) is None
 
 
-def test_last_moneypuck_fetch_ignores_failed_reads(conn: sqlite3.Connection) -> None:
+def test_last_ok_read_ignores_failed_reads(conn: sqlite3.Connection) -> None:
     record_read(conn, "moneypuck", URL, T0)
     record_read(conn, "moneypuck", URL, T0 + timedelta(days=1), error="HTTP 503")
     other = "https://moneypuck.com/y.csv"
     record_read(conn, "moneypuck", other, T0 + timedelta(days=2))
-    assert last_moneypuck_fetch(conn, URL) == T0
+    assert last_ok_read(conn, "moneypuck", URL) == T0
