@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 import hockey_model.sources.http as http_module
 from hockey_model.sources.errors import SourceError
 from hockey_model.sources.http import HttpClient, _PolicyRedirect, _Refused
-from hockey_model.sources.policy import HOST_POLICIES
+from hockey_model.sources.policy import HOST_POLICIES, HostPolicy
 
 NHL_URL = "https://api-web.nhle.com/v1/schedule/now"
 
@@ -251,7 +251,7 @@ def test_default_opener_bounds_total_time_of_a_trickling_body(
     request = urllib.request.Request(NHL_URL)
     with pytest.raises(_Refused, match=r"not finished within 120 s"):
         http_module._default_opener(request, 1.0, clock=clock)
-    assert response.reads <= http_module.TOTAL_TIMEOUT_S + 1
+    assert response.reads <= HOST_POLICIES["api-web.nhle.com"].total_timeout_s + 1
 
 
 def test_trickling_body_surfaces_as_source_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -354,3 +354,19 @@ def test_property_other_retry_after_text_falls_back_to_exponential(
 ) -> None:
     result = http_module._backoff_s(attempt, header)
     assert result == min(2.0**attempt, http_module.MAX_BACKOFF_S)
+
+
+def test_read_bounded_refuses_body_over_host_cap() -> None:
+    policy = HostPolicy(min_interval_s=0.0, max_retries=0, max_body_bytes=10)
+    with pytest.raises(_Refused, match="larger than 10 bytes"):
+        http_module._read_bounded(io.BytesIO(b"x" * 11), float("inf"), lambda: 0.0, policy)
+    body = http_module._read_bounded(io.BytesIO(b"x" * 10), float("inf"), lambda: 0.0, policy)
+    assert body == b"x" * 10
+
+
+def test_moneypuck_host_allows_its_large_csv() -> None:
+    assert HOST_POLICIES["moneypuck.com"].max_body_bytes > 200 * 1024 * 1024
+    assert (
+        HOST_POLICIES["moneypuck.com"].total_timeout_s
+        > HOST_POLICIES["api-web.nhle.com"].total_timeout_s
+    )

@@ -19,12 +19,8 @@ Opener = Callable[[urllib.request.Request, float], bytes]
 
 _LOG = logging.getLogger(__name__)
 TIMEOUT_S = 30.0
-# The socket timeout bounds one blocking call. This bounds a whole response, even a slow trickle.
-TOTAL_TIMEOUT_S = 120.0
 _CHUNK_BYTES = 64 * 1024
 MAX_BACKOFF_S = 30.0
-# A response larger than this is refused rather than read into memory.
-MAX_BODY_BYTES = 64 * 1024 * 1024
 # ASCII digits only. str.isdigit() also accepts characters that float() rejects.
 _RETRY_AFTER = re.compile(r"[0-9]{1,6}")
 
@@ -60,13 +56,19 @@ def _default_opener(
     timeout: float,
     clock: Callable[[], float] = time.monotonic,
 ) -> bytes:
-    deadline = clock() + TOTAL_TIMEOUT_S
+    policy = _policy_for(request.full_url)
+    deadline = clock() + policy.total_timeout_s
     with _OPENER.open(request, timeout=timeout) as response:
-        return _read_bounded(response, deadline, clock)
+        return _read_bounded(response, deadline, clock, policy)
 
 
-def _read_bounded(response: IO[bytes], deadline: float, clock: Callable[[], float]) -> bytes:
-    """Read the body in chunks. The socket timeout bounds one read, so this bounds the total."""
+def _read_bounded(
+    response: IO[bytes], deadline: float, clock: Callable[[], float], policy: HostPolicy
+) -> bytes:
+    """Read the body in chunks.
+
+    The socket timeout bounds one read, so the deadline bounds the total.
+    """
     chunks: list[bytes] = []
     size = 0
     while clock() < deadline:
@@ -74,11 +76,15 @@ def _read_bounded(response: IO[bytes], deadline: float, clock: Callable[[], floa
         if not chunk:
             return b"".join(chunks)
         size += len(chunk)
-        if size > MAX_BODY_BYTES:
-            raise _Refused(f"response is larger than {MAX_BODY_BYTES} bytes; raise MAX_BODY_BYTES")
+        if size > policy.max_body_bytes:
+            raise _Refused(
+                f"response is larger than {policy.max_body_bytes} bytes; "
+                "raise max_body_bytes in HOST_POLICIES"
+            )
         chunks.append(chunk)
     raise _Refused(
-        f"response body not finished within {TOTAL_TIMEOUT_S:g} s; raise TOTAL_TIMEOUT_S"
+        f"response body not finished within {policy.total_timeout_s:g} s; "
+        "raise total_timeout_s in HOST_POLICIES"
     )
 
 
