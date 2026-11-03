@@ -55,3 +55,17 @@ def test_accent_and_case_do_not_matter() -> None:
 def test_name_key_never_raises(name: str) -> None:
     key = name_key(name)
     assert key is None or (len(key[0]) == 1 and key[1])
+
+
+_WORDS = st.text(
+    alphabet=st.characters(min_codepoint=97, max_codepoint=122), min_size=2, max_size=8
+)
+
+
+@given(_WORDS, _WORDS)
+def test_name_key_ignores_case_suffix_and_an_initial_dot(first: str, last: str) -> None:
+    key = name_key(f"{first} {last}")
+    assert key == (first[0], last)
+    assert name_key(f"{first} {last}".upper()) == key
+    assert name_key(f"{first} {last} Jr.") == key
+    assert name_key(f"{first[0]}. {last}") == key

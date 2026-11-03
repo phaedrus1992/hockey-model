@@ -14,4 +14,7 @@ def iso_utc(moment: datetime) -> str:
 
 def parse_iso_utc(text: str) -> datetime:
     """Parse text that ``iso_utc`` wrote."""
-    return datetime.fromisoformat(text).astimezone(UTC)
+    moment = datetime.fromisoformat(text)
+    if moment.tzinfo is None:
+        raise HockeyModelError(f"read store time {text!r}: no timezone; the store writes UTC")
+    return moment.astimezone(UTC)

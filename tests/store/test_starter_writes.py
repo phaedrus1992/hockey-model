@@ -118,3 +118,8 @@ def test_write_injury_reads_keeps_earlier_reads(conn: sqlite3.Connection) -> Non
     write_injury_reads(conn, reads, T0 + timedelta(days=1))
     (count,) = conn.execute("SELECT COUNT(*) FROM injury_reads").fetchone()
     assert count == 2
+
+
+def test_write_starter_reads_matches_a_renamed_franchise(conn: sqlite3.Connection) -> None:
+    write_games(conn, [game(2026020001, START, "ARI", "BOS")], T0)
+    assert write_starter_reads(conn, [read("UTA", "A")], T0).written == 1

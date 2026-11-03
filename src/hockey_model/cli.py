@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sqlite3
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
@@ -212,6 +213,12 @@ def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -
             return 2
     except (HockeyModelError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except (OSError, sqlite3.Error) as exc:
+        print(
+            f"error: {type(exc).__name__}: {exc}; check the file path and permissions",
+            file=sys.stderr,
+        )
         return 2
     except Exception:
         print("error: unexpected failure; check the model configuration", file=sys.stderr)

@@ -36,6 +36,7 @@ class MissingKind(StrEnum):
     GOALIE_FORM = "goalie_form"
     STALE_SOURCE = "stale_source"
     LATE_RUN = "late_run"
+    REST_UNKNOWN = "rest_unknown"
 
 
 @dataclass(frozen=True, slots=True)

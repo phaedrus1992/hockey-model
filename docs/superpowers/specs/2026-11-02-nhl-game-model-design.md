@@ -204,10 +204,14 @@ One test also avoids a spread of single-feature tests on the scored seasons.
 
 **Decided:** the goalie-guess run can veto a feature.
 On the 2022-23 and 2023-24 validation seasons, a feature is dropped when the Elo with that feature has a higher log loss than the Elo alone in the guess run.
+The fit uses the training seasons (2015-16 to 2021-22) with the goalie who started, because the live model is fitted that way.
+The guess run scores that same fit with the guessed goalie.
+A difference of 1e-9 or less counts as no difference, so a feature with no variation is not dropped by rounding error.
 A goalie feature can help when the starter is known and hurt when the guess is wrong, and a live prediction often has only a likely starter.
 The validation seasons do not otherwise drop a feature, because the joint test is the test.
 
 **Decided:** when the joint test fails, hockey-model ships the Elo alone, with every feature weight at zero.
+The Elo alone is the raw Elo probability: an intercept of zero and an Elo weight of one, with no refit.
 The data, the goalie starters, and the API still ship, and the report still lists each feature's effect.
 
 **Decided:** the weights are refit for each scored season, from all seasons before it:
@@ -316,3 +320,21 @@ These are separate projects, each with its own issue:
 - The prediction call makes no network request. A refresh fills the database.
 - The candidate features are MoneyPuck expected-goals form, goalie goals saved above expected, and rest days, on top of the Elo.
 - Daily Faceoff lines are out of v1.
+
+## Built as
+
+These points record how the build differs from, or fills in, the text above.
+The code is the authority when this section and an earlier section disagree.
+
+- **Result time.** A game result counts as known three hours after the puck drops, because the store keeps no end time. A result read has no fetch-time limit, because a backfill fetches old games late. A starter read and an injury read are known from their fetch time.
+- **Player names.** The NHL boxscore writes a name as an initial and a surname, such as `C. Ingram`. ESPN and Daily Faceoff write the full name. Two names match when the first initial and the last word match. A name that matches no goalie of the team is looked up among all goalies, so a traded goalie still matches. Two matches are never resolved by a guess.
+- **Daily Faceoff.** The page writes the NHL team abbreviation, so the team map checks the abbreviation against the NHL codes. A goalie that the page names with no strength is read as unknown, and the goalie resolution does not use it.
+- **Source errors.** A response that parses but has a missing or wrongly typed field raises `SourceParseError`. An unknown team code raises `SourceShapeError`. A fetch failure raises `SourceError`.
+- **Refresh.** A refresh runs each source in units that write nothing when they fail: a score day, a boxscore, a MoneyPuck file, or an ESPN or Daily Faceoff read. A source stops after three failed units in a row. A boxscore that failed is tried again after one day. A score day that a read covered after it ended is not read again. A game read is stored only when the game is new or changed.
+- **MoneyPuck.** Rows before the 2014-15 season are not stored. The team file and the current season goalie file are read again after seven days. A finished season goalie file is read once. A row is stored only when it is new or changed.
+- **Starter matching.** An ESPN or Daily Faceoff read matches the one stored game of that team whose start is within 12 hours. A read that matches no stored game is reported in the refresh notes. It is not stored and it is not an error, because ESPN also lists preseason games.
+- **Bootstrap.** A block is 16 games, the busiest NHL night. The lag-1 autocorrelation of a per-game loss difference is near zero, so sportsbettr's longer autocorrelation block would add code and no width.
+- **Missing inputs in the backtest.** The report counts the scored games that had each kind of missing input, so a fit on imputed zeros is visible.
+- **Expected goals.** The expected goals of a side are the mean of its own MoneyPuck expected goals and the other side's expected goals against, over the last ten games. Without MoneyPuck rows the model uses the actual goals. A side with no games gets three goals and a missing-input note. The interval is the Poisson quantiles at the stated level.
+- **Fit.** The fit scales each feature to unit variance and applies the L2 penalty of 1.0 to the scaled weights. The live model is fitted on the goalie who started.
+

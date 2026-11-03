@@ -35,7 +35,7 @@ class GoalieMode(StrEnum):
 
     ACTUAL = "actual"  # the boxscore starter, which only a backtest can know
     READS = "reads"  # the source reads, then the estimate: a live prediction
-    GUESS = "guess"  # the estimate only: shows the cost of a morning guess
+    GUESS = "guess"  # the estimate only, even after puck drop: the cost of a morning guess
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +90,13 @@ def _starter(
         note = "the game has no boxscore starter"
         return None, [MissingInput(MissingKind.GOALIE_UNKNOWN, team, note)]
     start, notes = resolve_goalie(
-        conn, game, team, as_of, use_reads=mode is GoalieMode.READS, catalog=catalog
+        conn,
+        game,
+        team,
+        as_of,
+        use_reads=mode is GoalieMode.READS,
+        use_boxscore=mode is not GoalieMode.GUESS,
+        catalog=catalog,
     )
     return start, list(notes)
 
@@ -111,7 +117,11 @@ def _goalie_gsax(
         start, notes = _starter(conn, game, team, as_of, mode, catalog)
         missing.extend(notes)
         values[team] = 0.0
-        if start is None or start.player.nhl_id is None:
+        if start is None:
+            continue
+        if start.player.nhl_id is None:
+            note = f"{start.player.full_name} has no NHL id, so goalie form is not used"
+            missing.append(MissingInput(MissingKind.GOALIE_FORM, team, note))
             continue
         rows = mp_goalie_form_before(conn, start.player.nhl_id, cutoff, GOALIE_WINDOW)
         if not rows:
@@ -123,11 +133,25 @@ def _goalie_gsax(
     return values[game.home] - values[game.away], missing, used
 
 
-def _days_rested(conn: sqlite3.Connection, team: str, start: datetime) -> float:
+def _days_rested(conn: sqlite3.Connection, team: str, start: datetime) -> float | None:
+    """Return the days since the team's last game, capped, or ``None`` with no earlier game."""
     previous = team_games_before(conn, team, start, 1)
     if not previous:
-        return REST_CAP_DAYS
+        return None
     return min((start - previous[0].start) / _DAY, REST_CAP_DAYS)
+
+
+def _rest(conn: sqlite3.Connection, game: Game) -> tuple[float, list[MissingInput]]:
+    """Return home minus away rest. A team with no earlier game counts as fully rested."""
+    days: dict[str, float] = {}
+    missing: list[MissingInput] = []
+    for team in (game.home, game.away):
+        found = _days_rested(conn, team, game.start)
+        if found is None:
+            note = f"no earlier game in the store; {REST_CAP_DAYS:g} days of rest is used"
+            missing.append(MissingInput(MissingKind.REST_UNKNOWN, team, note))
+        days[team] = REST_CAP_DAYS if found is None else found
+    return days[game.home] - days[game.away], missing
 
 
 def build_features(
@@ -148,12 +172,12 @@ def build_features(
     cutoff = min(as_of, game.start)
     xg_form, xg_missing = _xg_form(conn, game, cutoff)
     gsax, goalie_missing, goalie_used = _goalie_gsax(conn, game, as_of, goalie_mode, catalog)
-    rest = _days_rested(conn, game.home, game.start) - _days_rested(conn, game.away, game.start)
+    rest, rest_missing = _rest(conn, game)
     form_used = len(xg_missing) < 2  # noqa: PLR2004  # two teams, so fewer than two gaps
     return FeatureRow(
         game_id=game.game_id,
         elo_logit=_logit(elo.home_win_chance(game.home, game.away)),
         values={"xg_form": xg_form, "goalie_gsax": gsax, "rest": rest},
-        missing=(*xg_missing, *goalie_missing),
+        missing=(*xg_missing, *goalie_missing, *rest_missing),
         uses_moneypuck=form_used or goalie_used,
     )

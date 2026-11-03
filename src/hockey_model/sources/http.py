@@ -7,6 +7,7 @@ import urllib.request
 from collections.abc import Callable
 from http.client import HTTPException, HTTPMessage
 from importlib.metadata import PackageNotFoundError, version
+from io import BufferedIOBase
 from typing import IO
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -63,16 +64,18 @@ def _default_opener(
 
 
 def _read_bounded(
-    response: IO[bytes], deadline: float, clock: Callable[[], float], policy: HostPolicy
+    response: BufferedIOBase, deadline: float, clock: Callable[[], float], policy: HostPolicy
 ) -> bytes:
     """Read the body in chunks.
 
-    The socket timeout bounds one read, so the deadline bounds the total.
+    The socket timeout bounds one read, so the deadline bounds the total. ``read1`` returns
+    after one socket read, where ``read`` keeps reading until it has a whole chunk, so a
+    host that sends one byte at a time cannot hold the loop past the deadline.
     """
     chunks: list[bytes] = []
     size = 0
     while clock() < deadline:
-        chunk = response.read(_CHUNK_BYTES)
+        chunk = response.read1(_CHUNK_BYTES)
         if not chunk:
             return b"".join(chunks)
         size += len(chunk)

@@ -14,6 +14,7 @@ from hockey_model.sources.nhl import (
     parse_boxscore,
     parse_score_day,
 )
+from hockey_model.sources.payload import get_json_text
 from hockey_model.sources.shape_errors import SourceParseError, SourceShapeError
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "nhl"
@@ -214,3 +215,8 @@ def test_parse_does_not_mutate_payload() -> None:
     before = copy.deepcopy(payload)
     parse_score_day(payload)
     assert payload == before
+
+
+def test_deeply_nested_json_is_a_named_error() -> None:
+    with pytest.raises(SourceParseError, match="not valid JSON"):
+        get_json_text("nhl", "[" * 200_000, "the body")

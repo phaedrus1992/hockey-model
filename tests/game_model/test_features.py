@@ -14,7 +14,7 @@ from seeding import (
     utc,
 )
 
-from hockey_model.game import Game, MissingKind
+from hockey_model.game import Game, GoalieStart, MissingKind, StarterSource, StarterStatus
 from hockey_model.game_model.elo import EloBook
 from hockey_model.game_model.features import (
     FEATURES,
@@ -22,6 +22,7 @@ from hockey_model.game_model.features import (
     GoalieMode,
     build_features,
 )
+from hockey_model.types import Player, Slot
 
 START = utc("2026-01-20T00:00")
 AS_OF = utc("2026-01-19T16:00")
@@ -129,7 +130,9 @@ def test_goalie_gsax_reads_use_a_confirmed_goalie(store: sqlite3.Connection) -> 
     add_game(store, 50, "2026-01-15T00:00", home=HOME, away="MTL")
     add_goalie(store, 50, HOME, 12, "J. Woll")
     add_goalie_form(store, 50, 12, 0.5, 4)
-    add_starter_read(store, 100, HOME, "espn", "Joseph Woll", "confirmed", "2026-01-19T14:00")
+    add_starter_read(
+        store, 100, HOME, "espn", "Joseph Woll", "confirmed", fetched_at="2026-01-19T14:00"
+    )
     row = features(store, GoalieMode.READS)
     assert row.values["goalie_gsax"] == pytest.approx((0.5 - 4) - (2.0 - 3))
 
@@ -209,3 +212,47 @@ def test_a_late_run_ignores_the_game_itself(store: sqlite3.Connection) -> None:
     on_time = features(store, GoalieMode.GUESS, as_of=AS_OF)
     after = features(store, GoalieMode.GUESS, as_of=late)
     assert after.values == on_time.values
+
+
+def test_guess_mode_ignores_the_boxscore_even_after_puck_drop(store: sqlite3.Connection) -> None:
+    history(store)
+    add_game(store, 100, "2026-01-20T00:00")
+    add_goalie(store, 100, HOME, 12, "J. Woll")
+    add_goalie(store, 100, AWAY, 21, "J. Swayman")
+    add_goalie_form(store, 50, 12, 0.5, 4)
+    add_game(store, 50, "2026-01-15T00:00", home=HOME, away="MTL")
+    guess = features(store, GoalieMode.GUESS, as_of=START)
+    actual = features(store, GoalieMode.ACTUAL, as_of=START)
+    assert MissingKind.LATE_RUN not in kinds(guess)
+    assert guess.values["goalie_gsax"] == pytest.approx((3.0 - 1) - (2.0 - 3))
+    assert actual.values["goalie_gsax"] != guess.values["goalie_gsax"]
+
+
+def test_a_team_with_no_earlier_game_reports_rest_unknown(store: sqlite3.Connection) -> None:
+    row = features(store)
+    assert kinds(row).count(MissingKind.REST_UNKNOWN) == 2
+    assert row.values["rest"] == 0.0
+
+
+def test_a_team_with_an_earlier_game_does_not_report_rest_unknown(
+    store: sqlite3.Connection,
+) -> None:
+    add_game(store, 1, "2026-01-18T00:00", home=HOME, away="MTL")
+    add_game(store, 2, "2026-01-17T00:00", home="NYR", away=AWAY)
+    assert MissingKind.REST_UNKNOWN not in kinds(features(store))
+
+
+def test_a_goalie_with_no_nhl_id_reports_goalie_form(store: sqlite3.Connection) -> None:
+    player = Player("x", None, None, "No Id", frozenset({Slot.G}), HOME)
+    given = GoalieStart(player, StarterStatus.CONFIRMED, StarterSource.ESPN, AS_OF)
+    row = build_features(
+        store,
+        Game(100, HOME, AWAY, START, home_goalie=given),
+        AS_OF,
+        EloBook(),
+        goalie_mode=GoalieMode.READS,
+    )
+    assert any(
+        m.kind is MissingKind.GOALIE_FORM and "no NHL id" in m.note and m.team == HOME
+        for m in row.missing
+    )

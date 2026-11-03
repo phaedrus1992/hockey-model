@@ -326,6 +326,7 @@ def _fake_backtest(success: bool) -> object:
         success,
         ("note",),
         (),
+        {"xg_form": 3},
     )
     record = GameRecord(1, datetime(2026, 1, 1, tzinfo=UTC), "TOR", "BOS", "elo", 0.55, True)
     return lambda conn: (report, [record])
@@ -344,6 +345,7 @@ def test_cli_backtest_prints_report_and_exits_zero(
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is success
     assert out["live_features"] == (["xg_form"] if success else [])
+    assert out["missing_inputs"] == {"xg_form": 3}
     empty_bin = out["runs"][0]["calibration"][0]
     assert empty_bin["count"] == 0
     assert empty_bin["mean_prob"] is None
@@ -360,3 +362,15 @@ def test_cli_backtest_writes_games_out(
     lines = target.read_text().splitlines()
     assert lines[0] == "game_id,start,home,away,run,home_win_prob,home_won"
     assert lines[1].startswith("1,2026-01-01T00:00:00.000000+00:00,TOR,BOS,elo,0.55,True")
+
+
+def test_cli_backtest_games_out_to_a_bad_path_names_the_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    monkeypatch.setattr("hockey_model.store_cli.run_backtest", _fake_backtest(True))
+    target = tmp_path / "missing-dir" / "games.csv"
+    assert cli.main(["backtest", "--games-out", str(target)]) == 2
+    err = capsys.readouterr().err
+    assert "FileNotFoundError" in err
+    assert "check the file path" in err

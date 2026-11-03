@@ -3,6 +3,7 @@
 import csv
 import math
 import random
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from hockey_model.backtest.runner import (
     run_backtest,
     write_game_records,
 )
+from hockey_model.game import MissingInput, MissingKind
 from hockey_model.game_model.features import FEATURES, FeatureRow, GoalieMode
 from hockey_model.game_model.seasons import SeasonPlan
 from hockey_model.game_model.training import TrainingRow
@@ -256,3 +258,18 @@ def test_game_records_csv(feed, tmp_path: Path) -> None:
 def test_game_record_fields() -> None:
     record = GameRecord(1, datetime(2026, 1, 1, tzinfo=UTC), "TOR", "BOS", "elo", 0.5, True)
     assert record.run == "elo"
+
+
+def test_the_report_counts_scored_games_with_missing_inputs(feed) -> None:
+    rows = dataset()
+    note = MissingInput(MissingKind.XG_FORM, "TOR", "no MoneyPuck games")
+    scored = [r for r in rows[GoalieMode.ACTUAL] if r.game.season == 6][:10]
+    for row in scored:
+        object.__setattr__(row, "features", replace(row.features, missing=(note, note)))
+    report, _ = run(rows, feed)
+    assert report.missing_inputs == {"xg_form": 10}
+
+
+def test_the_report_has_no_missing_counts_when_nothing_is_missing(feed) -> None:
+    report, _ = run(dataset(), feed)
+    assert report.missing_inputs == {}

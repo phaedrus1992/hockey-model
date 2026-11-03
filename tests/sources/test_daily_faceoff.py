@@ -133,3 +133,20 @@ def test_fetch_starters_reads_the_starters_page() -> None:
 def test_fetch_starters_rejects_non_utf8() -> None:
     with pytest.raises(SourceParseError, match="UTF-8"):
         fetch_starters(FakeClient(b"\xff\xfe"))
+
+
+@pytest.mark.parametrize("key", ["homeGoalieName", "awayGoalieName", "homeNewsStrengthName"])
+def test_parse_starters_rejects_a_renamed_key(key: str) -> None:
+    def edit(data: list[dict]) -> None:
+        data[0][key + "X"] = data[0].pop(key)
+
+    with pytest.raises(SourceParseError, match=key):
+        parse_starters(page_with(edit))
+
+
+def test_parse_starters_rejects_a_missing_team_abbreviation() -> None:
+    def edit(data: list[dict]) -> None:
+        del data[0]["homeTeamAbbreviation"]
+
+    with pytest.raises(SourceParseError, match="homeTeamAbbreviation"):
+        parse_starters(page_with(edit))

@@ -98,7 +98,7 @@ def test_refresh_writes_every_source(conn: sqlite3.Connection) -> None:
     assert report.written["nhl_boxscores"] == 14
     assert report.written["moneypuck"] > 0
     assert report.written["espn_starters"] == 2
-    assert report.written["espn_injuries"] == 130
+    assert report.written["espn_injuries"] == 20
     assert count(conn, "games") == 14
     assert count(conn, "goalie_games") == 56
     assert count(conn, "starter_reads") == 2
@@ -125,7 +125,7 @@ def test_refresh_isolates_source_failure(conn: sqlite3.Connection) -> None:
     assert report.written.get("espn_starters", 0) == 0
     assert count(conn, "starter_reads") == 0
     assert report.written["nhl_scores"] == 14
-    assert report.written["espn_injuries"] == 130
+    assert report.written["espn_injuries"] == 20
     failed = conn.execute(
         "SELECT source, ok FROM source_reads WHERE ok = 0 AND source = 'espn_starters'"
     ).fetchall()
@@ -241,3 +241,63 @@ def test_refresh_uses_clock_for_each_read(conn: sqlite3.Connection) -> None:
 )
 def test_current_season_start(moment: datetime, season: int) -> None:
     assert current_season_start(moment) == season
+
+
+def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
+    conn: sqlite3.Connection,
+) -> None:
+    mid_season = datetime(2026, 4, 10, tzinfo=UTC)
+    record_read(conn, "moneypuck", TEAM_GAMES_URL, mid_season)
+    for season in range(2014, 2026):
+        record_read(conn, "moneypuck", goalie_games_url(season), mid_season)
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=datetime(2026, 7, 2, tzinfo=UTC), backfill_from=date(2026, 7, 1))
+    requested = [url for url in client.urls if "peter-tanner" in url]
+    assert goalie_games_url(2025) in requested
+    assert goalie_games_url(2026) in requested
+    assert goalie_games_url(2024) not in requested
+
+
+def test_a_season_read_after_it_ended_is_not_read_again(conn: sqlite3.Connection) -> None:
+    after_season = datetime(2026, 7, 2, tzinfo=UTC)
+    record_read(conn, "moneypuck", TEAM_GAMES_URL, after_season)
+    for season in range(2014, 2027):
+        record_read(conn, "moneypuck", goalie_games_url(season), after_season)
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=datetime(2026, 12, 1, tzinfo=UTC), backfill_from=date(2026, 12, 1))
+    requested = [url for url in client.urls if "peter-tanner" in url]
+    assert requested == [goalie_games_url(2026)]
+
+
+def test_an_evening_refresh_reads_the_eastern_game_day(conn: sqlite3.Connection) -> None:
+    evening = datetime(2026, 1, 11, 1, 0, tzinfo=UTC)  # 8 pm Eastern on January 10
+    client = FakeClient()
+    refresh(conn, client, now=evening, backfill_from=date(2026, 1, 10))
+    espn_days = sorted(u[-8:] for u in client.urls if "scoreboard?dates=" in u)
+    assert espn_days == ["20260110", "20260111"]
+    assert f"{SCORE_URL}2026-01-12" in client.urls
+    assert f"{SCORE_URL}2026-01-13" not in client.urls
+
+
+def test_a_stopped_source_says_how_much_it_left(conn: sqlite3.Connection) -> None:
+    overrides: dict[str, bytes | Exception] = {
+        f"{SCORE_URL}2026-01-{day:02d}": SourceError("nhl", "u", "HTTP 503") for day in range(1, 12)
+    }
+    report = refresh(conn, FakeClient(overrides), now=NOW, backfill_from=date(2026, 1, 1))
+    assert any("nhl_scores: stopped after 3 failed days; 9 not tried" in n for n in report.notes)
+
+
+def test_skipped_boxscores_are_counted_in_the_notes(conn: sqlite3.Connection) -> None:
+    bad = f"{BOX_URL}2025020697/boxscore"
+    refresh(
+        conn,
+        FakeClient({bad: SourceError("nhl", bad, "HTTP 404")}),
+        now=NOW,
+        backfill_from=date(2026, 1, 10),
+    )
+    report = refresh(
+        conn, FakeClient({bad: SourceError("nhl", bad, "HTTP 404")}), now=NOW + timedelta(hours=2)
+    )
+    assert any("nhl_boxscores: 1 skipped" in n for n in report.notes)

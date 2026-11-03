@@ -29,6 +29,12 @@ def game_input(row: GameRow) -> Game:
     return Game(row.game_id, row.home, row.away, row.start)
 
 
+def _home_won(game: GameRow) -> bool:
+    if game.home_score is None or game.away_score is None:
+        raise ValueError(f"train on game {game.game_id}: a final game has no score; refresh again")
+    return game.home_score > game.away_score
+
+
 def training_rows(
     conn: sqlite3.Connection,
     first_season: int,
@@ -52,8 +58,6 @@ def training_rows(
             features = build_features(
                 conn, game_input(game), game.start, book, goalie_mode=mode, catalog=catalog
             )
-            rows.append(
-                TrainingRow(game, features, (game.home_score or 0) > (game.away_score or 0))
-            )
+            rows.append(TrainingRow(game, features, _home_won(game)))
         book.update(game)
     return rows

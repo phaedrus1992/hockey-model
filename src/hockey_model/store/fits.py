@@ -29,7 +29,9 @@ def save_fit(
                 iso_utc(created_at),
             ),
         )
-    return int(cursor.lastrowid or 0)
+    if cursor.lastrowid is None:
+        raise StoreError("save the model fit: the database gave no row id; check the store")
+    return cursor.lastrowid
 
 
 def newest_fit(conn: sqlite3.Connection) -> LogisticFit:
@@ -39,11 +41,17 @@ def newest_fit(conn: sqlite3.Connection) -> LogisticFit:
     ).fetchone()
     if row is None:
         raise StoreError("load the model fit: none is saved; run `hockey-model fit` first")
-    features = tuple(json.loads(row[0]))
-    stored = json.loads(row[1])
-    return LogisticFit(
-        features,
-        float(stored["intercept"]),
-        float(stored["elo_weight"]),
-        {name: float(value) for name, value in stored["features"].items()},
-    )
+    try:
+        features = tuple(json.loads(row[0]))
+        stored = json.loads(row[1])
+        return LogisticFit(
+            features,
+            float(stored["intercept"]),
+            float(stored["elo_weight"]),
+            {name: float(value) for name, value in stored["features"].items()},
+        )
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise StoreError(
+            f"load the model fit: the saved fit is malformed ({type(exc).__name__}: {exc}); "
+            "run `hockey-model fit` again"
+        ) from exc

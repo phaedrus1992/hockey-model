@@ -173,10 +173,25 @@ def test_fetch_scoreboard_uses_dated_url() -> None:
 def test_fetch_injuries_uses_injuries_url() -> None:
     url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries"
     client = FakeClient({url: (FIXTURES / "injuries.json").read_bytes()})
-    assert len(fetch_injuries(client)) == 130
+    assert len(fetch_injuries(client)) == 20
 
 
 def test_fetch_rejects_invalid_json() -> None:
     url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries"
     with pytest.raises(SourceParseError, match="not valid JSON"):
         fetch_injuries(FakeClient({url: b"oops"}))
+
+
+def test_scoreboard_rejects_a_probable_with_no_name() -> None:
+    payload = load(SCOREBOARD)
+    competitor = payload["events"][0]["competitions"][0]["competitors"][0]
+    del competitor["probables"][0]["name"]
+    with pytest.raises(SourceParseError, match="'name'"):
+        parse_scoreboard_starters(payload)
+
+
+def test_scoreboard_rejects_an_event_with_no_competitions() -> None:
+    payload = load(SCOREBOARD)
+    payload["events"][0]["competitions"] = []
+    with pytest.raises(SourceParseError, match="empty 'competitions'"):
+        parse_scoreboard_starters(payload)

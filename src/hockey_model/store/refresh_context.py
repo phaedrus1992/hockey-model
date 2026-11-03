@@ -5,6 +5,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from hockey_model.sources.errors import SourceError
 from hockey_model.sources.http import HttpClient
@@ -12,6 +13,16 @@ from hockey_model.sources.shape_errors import SourceParseError, SourceShapeError
 from hockey_model.store.db import StoreError
 from hockey_model.store.source_reads import record_read
 from hockey_model.types import HockeyModelError
+
+# NHL and ESPN name a game day by the date in Eastern time, so a refresh at 8 pm Eastern is
+# already on the next UTC day.
+GAME_ZONE = ZoneInfo("America/New_York")
+
+
+def game_day(moment: datetime) -> date:
+    """Return the NHL game day of ``moment``: its date in Eastern time."""
+    return moment.astimezone(GAME_ZONE).date()
+
 
 # Errors that a bad source response or a bad stored schedule cause. Other errors are bugs.
 SOURCE_FAILURES = (SourceError, SourceShapeError, SourceParseError, StoreError)
