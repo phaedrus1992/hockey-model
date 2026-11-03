@@ -83,7 +83,8 @@ def test_parse_team_games_keeps_all_situation_only() -> None:
     keys = [(r.game_id, r.team) for r in rows]
     assert len(keys) == len(set(keys))
     boston = next(r for r in rows if (r.game_id, r.team) == (2025020697, "BOS"))
-    assert (boston.xg_for > 0, boston.goals_for, boston.goals_against) == (True, 10, 2)
+    assert boston.xg_for > 0
+    assert boston.xg_against > 0
     assert boston.game_date == "2026-01-10"
 
 
@@ -130,12 +131,6 @@ BOS_GAME = ("2025020697", "BOS")
 def test_parse_team_games_rejects_bad_number(bad: str) -> None:
     text = edit_row(team_text(), *BOS_GAME, xGoalsFor=bad)
     with pytest.raises(SourceParseError, match=r"line \d+ column 'xGoalsFor'"):
-        parse_team_games(text)
-
-
-def test_parse_team_games_rejects_fractional_goals() -> None:
-    text = edit_row(team_text(), *BOS_GAME, goalsFor="2.5")
-    with pytest.raises(SourceParseError, match="whole number"):
         parse_team_games(text)
 
 

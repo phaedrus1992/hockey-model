@@ -66,8 +66,6 @@ CREATE TABLE mp_team_games (
     game_date TEXT,
     xg_for REAL,
     xg_against REAL,
-    goals_for INTEGER,
-    goals_against INTEGER,
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (game_id, team, fetched_at)
 );

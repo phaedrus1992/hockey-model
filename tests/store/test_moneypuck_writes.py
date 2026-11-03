@@ -27,8 +27,8 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     connection.close()
 
 
-def team_row(goals_for: int = 3) -> TeamGameRow:
-    return TeamGameRow(2025020697, "BOS", "2026-01-10", 2.5, 1.5, goals_for, 1)
+def team_row(xg_for: float = 2.5) -> TeamGameRow:
+    return TeamGameRow(2025020697, "BOS", "2026-01-10", xg_for, 1.5)
 
 
 def test_write_team_games_skips_unchanged_rows(conn: sqlite3.Connection) -> None:
@@ -39,17 +39,17 @@ def test_write_team_games_skips_unchanged_rows(conn: sqlite3.Connection) -> None
 
 
 def test_write_team_games_keeps_both_reads_of_a_changed_row(conn: sqlite3.Connection) -> None:
-    write_team_games(conn, [team_row(3)], T0)
-    assert write_team_games(conn, [team_row(4)], T0 + timedelta(days=7)) == 1
-    goals = conn.execute("SELECT goals_for FROM mp_team_games ORDER BY fetched_at").fetchall()
-    assert goals == [(3,), (4,)]
-    assert write_team_games(conn, [team_row(4)], T0 + timedelta(days=14)) == 0
+    write_team_games(conn, [team_row(2.5)], T0)
+    assert write_team_games(conn, [team_row(3.5)], T0 + timedelta(days=7)) == 1
+    goals = conn.execute("SELECT xg_for FROM mp_team_games ORDER BY fetched_at").fetchall()
+    assert goals == [(2.5,), (3.5,)]
+    assert write_team_games(conn, [team_row(3.5)], T0 + timedelta(days=14)) == 0
 
 
 def test_write_team_games_compares_with_newest_read(conn: sqlite3.Connection) -> None:
-    write_team_games(conn, [team_row(3)], T0)
-    write_team_games(conn, [team_row(4)], T0 + timedelta(days=7))
-    assert write_team_games(conn, [team_row(3)], T0 + timedelta(days=14)) == 1
+    write_team_games(conn, [team_row(2.5)], T0)
+    write_team_games(conn, [team_row(3.5)], T0 + timedelta(days=7))
+    assert write_team_games(conn, [team_row(2.5)], T0 + timedelta(days=14)) == 1
 
 
 def test_write_goalie_games_skips_unchanged_rows(conn: sqlite3.Connection) -> None:

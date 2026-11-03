@@ -39,8 +39,6 @@ TEAM_COLUMNS = (
     "situation",
     "xGoalsFor",
     "xGoalsAgainst",
-    "goalsFor",
-    "goalsAgainst",
 )
 GOALIE_COLUMNS = ("playerId", "season", "gameId", "playerTeam", "situation", "xGoals", "goals")
 _SEASON = re.compile(r"[0-9]{4}")
@@ -52,15 +50,13 @@ _ALLOWED_GOALIE_URL = re.compile(
 
 
 class TeamGameRow(NamedTuple):
-    """One team's side of one game: expected and actual goals."""
+    """One team's side of one game: expected goals for and against."""
 
     game_id: int
     team: str
     game_date: str
     xg_for: float
     xg_against: float
-    goals_for: int
-    goals_against: int
 
 
 class GoalieGameRow(NamedTuple):
@@ -184,8 +180,6 @@ def parse_team_games(text: str) -> list[TeamGameRow]:
                 _game_date(row["gameDate"], line),
                 _number(row, "xGoalsFor", line),
                 _number(row, "xGoalsAgainst", line),
-                _count(row, "goalsFor", line),
-                _count(row, "goalsAgainst", line),
             )
         )
     return rows
