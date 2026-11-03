@@ -111,8 +111,10 @@ def _return_date(entry: Mapping[str, object], where: str) -> date | None:
     text = as_mapping(SOURCE, details, f"{where} details").get("returnDate")
     if text is None:
         return None
+    if not isinstance(text, str):
+        raise SourceParseError(SOURCE, f"{where} returnDate {text!r} is not a date string")
     try:
-        return date.fromisoformat(str(text))
+        return date.fromisoformat(text)
     except ValueError as exc:
         raise SourceParseError(SOURCE, f"{where} returnDate {text!r} is not a date") from exc
 

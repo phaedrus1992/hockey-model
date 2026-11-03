@@ -195,3 +195,11 @@ def test_scoreboard_rejects_an_event_with_no_competitions() -> None:
     payload["events"][0]["competitions"] = []
     with pytest.raises(SourceParseError, match="empty 'competitions'"):
         parse_scoreboard_starters(payload)
+
+
+@pytest.mark.parametrize("value", [20261103, 1.5, True, ["2026-11-03"]])
+def test_injury_rejects_a_return_date_that_is_not_text(value: object) -> None:
+    payload = load("injuries.json")
+    payload["injuries"][0]["injuries"][0]["details"]["returnDate"] = value
+    with pytest.raises(SourceParseError, match="returnDate"):
+        parse_injuries(payload)
