@@ -113,3 +113,23 @@ def test_replay_keeps_the_sum_of_ratings(hs: int, aws: int) -> None:
     assume(hs != aws)
     book = replay([final(1, "TOR", "BOS", hs, aws)])
     assert book.rating("TOR") + book.rating("BOS") == pytest.approx(3000.0, abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("state", "home", "away"),
+    [("LIVE", 3, 2), ("OFF", None, 2), ("OFF", 3, None), ("FUT", None, None)],
+)
+def test_elo_rejects_a_game_that_is_not_a_scored_final(
+    state: str, home: int | None, away: int | None
+) -> None:
+    game = GameRow(
+        1, 20252026, 2, datetime(2026, 1, 1, tzinfo=UTC), "TOR", "BOS", state, home, away, None
+    )
+    with pytest.raises(ValueError, match="not final"):
+        EloBook().update(game)
+
+
+def test_an_away_win_lowers_the_home_rating_by_the_margin() -> None:
+    book = replay([final(1, "TOR", "BOS", 1, 4)])
+    expected = 1 / (1 + 10 ** (-28 / 400))
+    assert book.rating("TOR") == pytest.approx(1500 - 8 * expected * math.log(4))

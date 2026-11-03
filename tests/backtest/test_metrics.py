@@ -179,3 +179,15 @@ def test_each_calibration_mean_lies_inside_its_bin(probs: list[float], data: st.
             assert bin_.win_rate is not None
             assert bin_.low - 1e-12 <= bin_.mean_prob <= bin_.high + 1e-12
             assert 0.0 <= bin_.win_rate <= 1.0
+
+
+def test_brier_counts_a_loss_as_zero() -> None:
+    assert brier([0.2], [False]) == pytest.approx(0.04)
+    assert brier([0.2, 0.9], [False, True]) == pytest.approx((0.04 + 0.01) / 2)
+
+
+def test_every_calibration_bin_states_its_edges() -> None:
+    bins = calibration([0.5], [True])
+    assert [(b.low, b.high) for b in bins][:2] == [(0.0, 0.1), (0.1, 0.2)]
+    assert all(b.low is not None and b.high is not None for b in bins)
+    assert (bins[3].low, bins[3].high) == (0.3, 0.4)

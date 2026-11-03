@@ -402,3 +402,8 @@ def test_a_real_trickling_socket_is_cut_off_at_the_deadline() -> None:
             http_module._read_bounded(response, started + 0.5, time.monotonic, policy)
         assert time.monotonic() - started < 3.0
         connection.close()
+
+
+def test_a_source_error_keeps_its_parts() -> None:
+    error = SourceError("nhl", NHL_URL, "HTTP 404")
+    assert (error.source, error.url, error.reason) == ("nhl", NHL_URL, "HTTP 404")

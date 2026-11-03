@@ -4,8 +4,14 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hockey_model.sources.shape_errors import SourceShapeError
-from hockey_model.sources.teams import NHL_TEAM_CODES, franchise, from_espn
+from hockey_model.sources.shape_errors import SourceParseError, SourceShapeError
+from hockey_model.sources.teams import (
+    NHL_TEAM_CODES,
+    franchise,
+    from_daily_faceoff,
+    from_espn,
+    from_moneypuck,
+)
 
 ESPN_RENAMED = {"LAK", "NJD", "SJS", "TBL", "ARI"}
 
@@ -55,3 +61,27 @@ def test_from_espn_returns_known_code_or_raises_shape_error(code: str) -> None:
     except SourceShapeError:
         return
     assert result in NHL_TEAM_CODES
+
+
+def test_a_shape_error_keeps_its_source_and_value() -> None:
+    error = SourceShapeError("espn", "XXX")
+    assert (error.source, error.value) == ("espn", "XXX")
+    assert str(error) == "map espn team code 'XXX': unknown code; add it to sources/teams.py"
+    parse = SourceParseError("nhl", "field 'id' is missing")
+    assert (parse.source, parse.detail) == ("nhl", "field 'id' is missing")
+    assert str(parse) == "read nhl data: field 'id' is missing"
+
+
+@pytest.mark.parametrize(
+    ("call", "source"),
+    [
+        (franchise, "franchise"),
+        (from_espn, "espn"),
+        (from_moneypuck, "moneypuck"),
+        (from_daily_faceoff, "daily_faceoff"),
+    ],
+)
+def test_each_map_names_its_source_in_the_error(call, source: str) -> None:
+    with pytest.raises(SourceShapeError) as caught:
+        call("QQQ")
+    assert (caught.value.source, caught.value.value) == (source, "QQQ")
