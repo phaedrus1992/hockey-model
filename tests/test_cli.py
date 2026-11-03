@@ -2,12 +2,15 @@
 
 import json
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from seeding import add_game
 
 from hockey_model import cli
+from hockey_model.backtest.metrics import calibration
+from hockey_model.backtest.runner import BacktestReport, GameRecord, ScoredRun
 from hockey_model.cli import CliRuntime
 from hockey_model.identity import Catalog
 from hockey_model.models import FixedStatModel
@@ -301,3 +304,59 @@ def test_cli_game_without_a_fit_says_to_fit(
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
     assert cli.main(["game", "2025020001"]) == 2
     assert "hockey-model fit" in capsys.readouterr().err
+
+
+def test_cli_backtest_without_games_says_to_refresh(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["backtest"]) == 2
+    assert "hockey-model refresh" in capsys.readouterr().err
+
+
+def _fake_backtest(success: bool) -> object:
+    run = ScoredRun("elo", 2, 0.69, 0.25, calibration([0.5, 0.6], [True, False]), None)
+    report = BacktestReport(
+        ("xg_form",),
+        (),
+        ("xg_form",),
+        ("xg_form",) if success else (),
+        {"elo": {"actual": 0.7, "guess": 0.7}},
+        (run,),
+        success,
+        ("note",),
+        (),
+    )
+    record = GameRecord(1, datetime(2026, 1, 1, tzinfo=UTC), "TOR", "BOS", "elo", 0.55, True)
+    return lambda conn: (report, [record])
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_cli_backtest_prints_report_and_exits_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    success: bool,
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    monkeypatch.setattr("hockey_model.store_cli.run_backtest", _fake_backtest(success))
+    assert cli.main(["backtest"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["success"] is success
+    assert out["live_features"] == (["xg_form"] if success else [])
+    empty_bin = out["runs"][0]["calibration"][0]
+    assert empty_bin["count"] == 0
+    assert empty_bin["mean_prob"] is None
+
+
+def test_cli_backtest_writes_games_out(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    monkeypatch.setattr("hockey_model.store_cli.run_backtest", _fake_backtest(True))
+    target = tmp_path / "games.csv"
+    assert cli.main(["backtest", "--games-out", str(target)]) == 0
+    capsys.readouterr()
+    lines = target.read_text().splitlines()
+    assert lines[0] == "game_id,start,home,away,run,home_win_prob,home_won"
+    assert lines[1].startswith("1,2026-01-01T00:00:00.000000+00:00,TOR,BOS,elo,0.55,True")

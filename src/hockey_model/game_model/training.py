@@ -30,14 +30,18 @@ def game_input(row: GameRow) -> Game:
 
 
 def training_rows(
-    conn: sqlite3.Connection, first_season: int, last_season: int, mode: GoalieMode
+    conn: sqlite3.Connection,
+    first_season: int,
+    last_season: int,
+    mode: GoalieMode,
+    burn_in: int = ELO_BURN_IN,
 ) -> list[TrainingRow]:
     """Return a row for each final game from ``first_season`` through ``last_season``.
 
-    The Elo replays from ``ELO_BURN_IN``. Each row uses the ratings before its own game
+    The Elo replays from the ``burn_in`` season. Each row uses the ratings before its own game
     and no data from after its start.
     """
-    games = [g for g in final_games_before(conn, _END_OF_TIME) if g.season >= ELO_BURN_IN]
+    games = [g for g in final_games_before(conn, _END_OF_TIME) if g.season >= burn_in]
     catalog = player_catalog(conn)
     book = EloBook()
     rows: list[TrainingRow] = []
