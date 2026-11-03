@@ -337,4 +337,4 @@ The code is the authority when this section and an earlier section disagree.
 - **Missing inputs in the backtest.** The report counts the scored games that had each kind of missing input, so a fit on imputed zeros is visible.
 - **Expected goals.** The expected goals of a side are the mean of its own MoneyPuck expected goals and the other side's expected goals against, over the last ten games. Without MoneyPuck rows the model uses the actual goals. A side with no games gets three goals and a missing-input note. The interval is the Poisson quantiles at the stated level.
 - **Fit.** The fit scales each feature to unit variance and applies the L2 penalty of 1.0 to the scaled weights. The live model is fitted on the goalie who started.
-
+- **Backtest result.** The first full backtest passed the joint test, and the live features are `xg_form` and `rest`. The guess run vetoed `goalie_gsax`. The report is `docs/backtest/2026-11-nhl-game-model.md`.

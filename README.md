@@ -120,6 +120,17 @@ Read the MoneyPuck terms before any commercial use.
 ESPN does not support its endpoints, so hockey-model fetches them sparingly.
 The HTTP client waits between requests to one host, retries rate limits, and sends the user agent `hockey-model/<version>`.
 
+### Backtest result
+
+The November 2026 backtest scored 2,792 games from the 2024-25 and 2025-26 seasons.
+The joint test passed: the live model beats the results-only Elo on log loss, 0.6763 against 0.6876.
+The 95% interval of the difference is -0.0144 to -0.0083.
+The live features are expected-goals form and rest.
+The guess run vetoed goalie goals saved above expected.
+MoneyPuck's expected-goals model may have trained on the scored games, so the gain may look larger than it was.
+The result says nothing about betting markets.
+The full report is in [docs/backtest/2026-11-nhl-game-model.md](docs/backtest/2026-11-nhl-game-model.md).
+
 ## CLI
 
 The player, team, matchup, and playoff commands wrap the same calls and print
