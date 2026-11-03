@@ -1,6 +1,10 @@
 """Tests for the polite HTTP client. No test touches the network."""
 
+import http.client
 import io
+import socketserver
+import threading
+import time
 import urllib.request
 from collections.abc import Callable
 from email.message import Message
@@ -191,7 +195,7 @@ class _OversizeResponse:
     def __exit__(self, *exc: object) -> None:
         return None
 
-    def read(self, size: int = -1) -> bytes:
+    def read1(self, size: int = -1) -> bytes:
         return b"x" * size
 
 
@@ -226,7 +230,7 @@ class _TricklingResponse:
     def __exit__(self, *exc: object) -> None:
         return None
 
-    def read(self, size: int = -1) -> bytes:
+    def read1(self, size: int = -1) -> bytes:
         del size
         self.reads += 1
         self.clock.now += 1.0
@@ -370,3 +374,31 @@ def test_moneypuck_host_allows_its_large_csv() -> None:
         HOST_POLICIES["moneypuck.com"].total_timeout_s
         > HOST_POLICIES["api-web.nhle.com"].total_timeout_s
     )
+
+
+class _TrickleHandler(socketserver.BaseRequestHandler):
+    """Send a response header that promises a large body, then one byte at a time."""
+
+    def handle(self) -> None:
+        self.request.recv(4096)
+        self.request.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n")
+        try:
+            for _ in range(200):
+                self.request.sendall(b"x")
+                time.sleep(0.05)
+        except OSError:
+            return
+
+
+def test_a_real_trickling_socket_is_cut_off_at_the_deadline() -> None:
+    with socketserver.TCPServer(("127.0.0.1", 0), _TrickleHandler) as server:
+        threading.Thread(target=server.handle_request, daemon=True).start()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        policy = HostPolicy(min_interval_s=0.0, max_retries=0, total_timeout_s=0.5)
+        started = time.monotonic()
+        with pytest.raises(_Refused, match="not finished within"):
+            http_module._read_bounded(response, started + 0.5, time.monotonic, policy)
+        assert time.monotonic() - started < 3.0
+        connection.close()

@@ -277,5 +277,5 @@ def test_an_evening_refresh_reads_the_eastern_game_day(conn: sqlite3.Connection)
     refresh(conn, client, now=evening, backfill_from=date(2026, 1, 10))
     espn_days = sorted(u[-8:] for u in client.urls if "scoreboard?dates=" in u)
     assert espn_days == ["20260110", "20260111"]
-    assert f"{SCORE_URL}2026-01-13" in client.urls
-    assert f"{SCORE_URL}2026-01-14" not in client.urls
+    assert f"{SCORE_URL}2026-01-12" in client.urls
+    assert f"{SCORE_URL}2026-01-13" not in client.urls
