@@ -1,11 +1,13 @@
 """Save and load fitted models."""
 
 import json
+import math
 import sqlite3
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
+from hockey_model.game_model.features import FEATURES
 from hockey_model.game_model.logistic import FitDiagnostics, LogisticFit
 from hockey_model.store.db import StoreError
 from hockey_model.store.timestamps import iso_utc
@@ -48,18 +50,32 @@ def newest_fit(conn: sqlite3.Connection) -> LogisticFit:
     try:
         features = tuple(json.loads(row[0]))
         stored = json.loads(row[1])
-        return LogisticFit(
+        fit = LogisticFit(
             features,
             float(stored["intercept"]),
             float(stored["elo_weight"]),
             {name: float(value) for name, value in stored["features"].items()},
             _diagnostics(stored.get("diagnostics")),
         )
+        _check_fit(fit)
+        return fit
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise StoreError(
             f"load the model fit: the saved fit is malformed ({type(exc).__name__}: {exc}); "
             "run `hockey-model fit` again"
         ) from exc
+
+
+def _check_fit(fit: LogisticFit) -> None:
+    """Raise ``ValueError`` for a fit that the model cannot predict with."""
+    unknown = [name for name in fit.features if name not in FEATURES]
+    if unknown:
+        raise ValueError(f"unknown feature {unknown[0]!r}")
+    if set(fit.weights) != set(fit.features):
+        raise ValueError("the features and the weights name different features")
+    numbers = [fit.intercept, fit.elo_weight, *fit.weights.values()]
+    if not all(math.isfinite(number) for number in numbers):
+        raise ValueError("a weight is not a finite number")
 
 
 def _diagnostics(stored: dict[str, Any] | None) -> FitDiagnostics | None:

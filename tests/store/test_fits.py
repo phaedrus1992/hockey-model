@@ -116,3 +116,43 @@ def test_any_diagnostics_round_trip_through_the_store(
     fit = LogisticFit((), 0.0, 1.0, {}, diagnostics)
     save_fit(store, fit, 20252026, T0)
     assert newest_fit(store) == fit
+
+
+@pytest.mark.parametrize(
+    "weights",
+    [
+        '{"intercept": NaN, "elo_weight": 1, "features": {}}',
+        '{"intercept": 0, "elo_weight": Infinity, "features": {}}',
+        '{"intercept": 0, "elo_weight": 1, "features": {"rest": NaN}}',
+    ],
+)
+def test_a_saved_fit_with_a_value_that_is_not_finite_says_to_fit_again(
+    store: sqlite3.Connection, weights: str
+) -> None:
+    store.execute(
+        "INSERT INTO model_fits (fit_through_season, features, weights, created_at)"
+        " VALUES (1, '[\"rest\"]', ?, '2026-01-01T00:00:00.000000+00:00')",
+        (weights,),
+    )
+    with pytest.raises(StoreError, match="malformed.*run `hockey-model fit` again"):
+        newest_fit(store)
+
+
+@pytest.mark.parametrize(
+    ("features", "weights"),
+    [
+        ('["luck"]', '{"intercept": 0, "elo_weight": 1, "features": {"luck": 1.0}}'),
+        ('["rest"]', '{"intercept": 0, "elo_weight": 1, "features": {}}'),
+        ("[]", '{"intercept": 0, "elo_weight": 1, "features": {"rest": 1.0}}'),
+    ],
+)
+def test_a_saved_fit_whose_features_and_weights_disagree_says_to_fit_again(
+    store: sqlite3.Connection, features: str, weights: str
+) -> None:
+    store.execute(
+        "INSERT INTO model_fits (fit_through_season, features, weights, created_at)"
+        " VALUES (1, ?, ?, '2026-01-01T00:00:00.000000+00:00')",
+        (features, weights),
+    )
+    with pytest.raises(StoreError, match="malformed.*run `hockey-model fit` again"):
+        newest_fit(store)
