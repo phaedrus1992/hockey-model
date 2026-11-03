@@ -2,6 +2,7 @@
 
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -156,3 +157,22 @@ def test_a_saved_fit_whose_features_and_weights_disagree_says_to_fit_again(
     )
     with pytest.raises(StoreError, match="malformed.*run `hockey-model fit` again"):
         newest_fit(store)
+
+
+_WEIGHT = st.floats(min_value=-1e3, max_value=1e3, allow_nan=False)
+
+
+@settings(max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    features=st.lists(st.sampled_from(["xg_form", "goalie_gsax", "rest"]), unique=True, max_size=3),
+    intercept=_WEIGHT,
+    elo_weight=_WEIGHT,
+    data=st.data(),
+)
+def test_any_fit_round_trips_through_the_store(
+    store: sqlite3.Connection, features: list[str], intercept: float, elo_weight: float, data: Any
+) -> None:
+    weights = {name: data.draw(_WEIGHT) for name in features}
+    fit = LogisticFit(tuple(features), intercept, elo_weight, weights)
+    save_fit(store, fit, 20252026, T0)
+    assert newest_fit(store) == fit
