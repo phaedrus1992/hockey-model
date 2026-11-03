@@ -1,10 +1,14 @@
 """Model boundaries and deterministic in-memory model fakes."""
 
 from collections.abc import Mapping, Sequence
-from datetime import date
-from typing import Protocol, runtime_checkable
+from datetime import date, datetime
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from hockey_model.types import MissingProjectionError, Player, Projection, Roster, Standing
+
+if TYPE_CHECKING:
+    # game.py imports this module, so a runtime import here would form a cycle.
+    from hockey_model.game import Game, GamePrediction
 
 
 @runtime_checkable
@@ -48,6 +52,15 @@ class MatchupModel(Protocol):
 
     def expected_goals(self, team: Roster, level: float) -> Projection:
         """Return the team's expected goals projection."""
+        ...
+
+
+@runtime_checkable
+class GameModel(Protocol):
+    """Predict one NHL game from the data known at ``as_of``."""
+
+    def predict(self, game: Game, as_of: datetime, level: float) -> GamePrediction:
+        """Return the game prediction. The model MUST NOT make a network request."""
         ...
 
 

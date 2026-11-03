@@ -26,22 +26,27 @@ def matchup(home: Roster, away: Roster, model: MatchupModel, level: float = 0.8)
     validate_roster(home)
     validate_roster(away)
     home_win, away_win = model.win_probabilities(home, away)
-    values = (home_win, away_win)
-    if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in values):
-        raise ProbabilityError(
-            f"predict matchup: invalid win probabilities {values!r}; return finite values in [0, 1]"
-        )
-    if not math.isclose(home_win + away_win, 1.0, abs_tol=1e-9):
-        raise ProbabilityError(
-            f"predict matchup: win probabilities {values!r} do not sum to 1.0; "
-            "include overtime and shootout wins in one side"
-        )
+    check_win_pair((home_win, away_win), "predict matchup")
     return MatchupResult(
         home_win,
         away_win,
         model.expected_goals(home, level),
         model.expected_goals(away, level),
     )
+
+
+def check_win_pair(values: tuple[float, float], operation: str) -> None:
+    """Raise ``ProbabilityError`` unless the pair is two finite values summing to 1.0."""
+    home_win, away_win = values
+    if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in values):
+        raise ProbabilityError(
+            f"{operation}: invalid win probabilities {values!r}; return finite values in [0, 1]"
+        )
+    if not math.isclose(home_win + away_win, 1.0, abs_tol=1e-9):
+        raise ProbabilityError(
+            f"{operation}: win probabilities {values!r} do not sum to 1.0; "
+            "include overtime and shootout wins in one side"
+        )
 
 
 def playoff_probability(
