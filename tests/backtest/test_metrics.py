@@ -165,3 +165,17 @@ def test_scores_are_non_negative(probs: list[float], data: st.DataObject) -> Non
     assert log_loss(probs, wins) >= 0
     assert 0 <= brier(probs, wins) <= 1
     assert sum(b.count for b in calibration(probs, wins)) == len(probs)
+
+
+@given(
+    st.lists(st.floats(min_value=0, max_value=1), min_size=1, max_size=50),
+    st.data(),
+)
+def test_each_calibration_mean_lies_inside_its_bin(probs: list[float], data: st.DataObject) -> None:
+    wins = data.draw(st.lists(st.booleans(), min_size=len(probs), max_size=len(probs)))
+    for bin_ in calibration(probs, wins):
+        if bin_.count:
+            assert bin_.mean_prob is not None
+            assert bin_.win_rate is not None
+            assert bin_.low - 1e-12 <= bin_.mean_prob <= bin_.high + 1e-12
+            assert 0.0 <= bin_.win_rate <= 1.0

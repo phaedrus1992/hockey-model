@@ -4,7 +4,7 @@ import math
 import random
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from hockey_model.game_model.features import FeatureRow
@@ -111,3 +111,17 @@ def test_predict_logistic_ignores_features_that_were_not_fitted() -> None:
 def test_predict_logistic_is_a_probability(elo: float, xg: float) -> None:
     fit = LogisticFit(("xg_form",), 1.0, 2.0, {"xg_form": 3.0})
     assert 0.0 <= predict_logistic(fit, row(elo, xg_form=xg)) <= 1.0
+
+
+@settings(max_examples=25, deadline=None)
+@given(st.integers(min_value=0, max_value=10_000))
+def test_fit_is_finite_and_ignores_row_order(seed: int) -> None:
+    rows, wins = sample(300, seed)
+    fit = fit_logistic(rows, wins, ["xg_form"])
+    order = list(range(len(rows)))
+    random.Random(seed).shuffle(order)
+    shuffled = fit_logistic([rows[i] for i in order], [wins[i] for i in order], ["xg_form"])
+    assert math.isfinite(fit.intercept) and math.isfinite(fit.elo_weight)
+    assert shuffled.intercept == pytest.approx(fit.intercept, abs=1e-6)
+    assert shuffled.weights["xg_form"] == pytest.approx(fit.weights["xg_form"], abs=1e-6)
+    assert all(0.0 < predict_logistic(fit, r) < 1.0 for r in rows)

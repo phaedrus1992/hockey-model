@@ -112,7 +112,10 @@ def _count(row: Mapping[str, str], column: str, line: int) -> int:
 
 
 def _check_columns(reader: csv.DictReader[str], required: tuple[str, ...]) -> None:
-    names = set(reader.fieldnames or ())
+    try:
+        names = set(reader.fieldnames or ())
+    except csv.Error as exc:
+        raise SourceParseError(SOURCE, f"the file is not valid CSV: {exc}") from exc
     missing = [column for column in required if column not in names]
     if missing:
         raise SourceParseError(
