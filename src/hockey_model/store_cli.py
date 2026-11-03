@@ -1,11 +1,14 @@
 """CLI commands that work on the SQLite store: refresh, and the model commands."""
 
 import argparse
+import math
 import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, date, datetime
+from pathlib import Path
 
+from hockey_model.backtest.runner import run_backtest, write_game_records
 from hockey_model.game import game_win_probability
 from hockey_model.game_model.features import FEATURES, GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
@@ -19,7 +22,7 @@ from hockey_model.store.reads import game_row
 from hockey_model.store.refresh import RefreshReport, refresh
 from hockey_model.types import HockeyModelError
 
-STORE_COMMANDS = frozenset({"refresh", "fit", "game"})
+STORE_COMMANDS = frozenset({"refresh", "fit", "game", "backtest"})
 
 
 def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
@@ -37,6 +40,10 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         "--features",
         default=",".join(FEATURES),
         help='comma-separated features; "" fits the Elo alone',
+    )
+    backtest = add_parser("backtest", help="score the model on the stored games")
+    backtest.add_argument(
+        "--games-out", type=Path, metavar="PATH", help="write one CSV row per predicted game"
     )
     game = add_parser("game", help="predict one stored game with the newest fit")
     game.add_argument("game_id", type=int)
@@ -118,7 +125,29 @@ def _game(args: argparse.Namespace) -> tuple[object, int]:
         conn.close()
 
 
-_HANDLERS = {"refresh": _refresh, "fit": _fit, "game": _game}
+def _clean(value: object) -> object:
+    """Replace a non-finite float with ``None``, because JSON has no NaN."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _clean(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_clean(item) for item in value]
+    return value
+
+
+def _backtest(args: argparse.Namespace) -> tuple[object, int]:
+    conn = connect(db_path_from_env(os.environ))
+    try:
+        report, records = run_backtest(conn)
+    finally:
+        conn.close()
+    if args.games_out is not None:
+        write_game_records(args.games_out, records)
+    return _clean(asdict(report)), 0
+
+
+_HANDLERS = {"refresh": _refresh, "fit": _fit, "game": _game, "backtest": _backtest}
 
 
 def run_store_command(args: argparse.Namespace) -> tuple[object, int]:

@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add the NHL Elo (K 8, home advantage 28, log-margin scaling, same as sportsbettr without the market shrink) and the game features: expected-goals form, goalie goals saved above expected, and rest. [feat:model]
 - Add the logistic game model: `hockey-model fit` fits and saves the weights, and `hockey-model game GAME_ID` prints the win chances, expected goals with a Poisson interval, and the missing inputs. [feat:model]
 - Add backtest scores: log loss, Brier score, a ten-bin calibration table, and a block bootstrap interval for a mean. [feat:backtest]
+- Add `hockey-model backtest`, a walk-forward backtest that refits before each scored season, tests all features together against the results-only Elo, and writes per-game predictions with `--games-out`. [feat:backtest]
 - Python project skeleton: uv, ruff, ty, pytest with coverage and a per-module floor, editorconfig, prek hooks, and CI validation, test, and editorconfig jobs.
 
 [Unreleased]: https://github.com/slackworks/hockey-model/commits/main
