@@ -13,7 +13,7 @@ from hockey_model.game import (
     StarterSource,
     StarterStatus,
 )
-from hockey_model.game_model.names import matching_players
+from hockey_model.game_model.names import matching_players, name_key
 from hockey_model.identity import Catalog
 from hockey_model.store.reads import (
     StarterReadRow,
@@ -53,6 +53,8 @@ class _Goalies:
         that matches nobody on the team is looked up in the whole league. Two matches
         are never resolved by a guess.
         """
+        if name_key(name) is None:
+            return None, f"goalie name {name!r} has no first name or initial and a surname"
         for pool in (self.team, self.league):
             found = matching_players(name, pool)
             if len(found) == 1:
@@ -122,7 +124,7 @@ def _guess(
     out = {
         p.nhl_id
         for injury in injury_reads_before(conn, as_of)
-        if injury.is_out
+        if injury.is_out and injury.team in franchise_codes(team)
         for p in [goalies.find(injury.player_name)[0]]
         if p is not None
     }

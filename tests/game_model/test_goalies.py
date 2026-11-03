@@ -201,3 +201,16 @@ def test_resolve_skips_a_read_with_unknown_status(season: sqlite3.Connection) ->
     start, _ = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
     assert start is not None
     assert start.source is StarterSource.MODEL_GUESS
+
+
+def test_an_injury_on_another_team_does_not_remove_the_goalie(season: sqlite3.Connection) -> None:
+    add_injury(season, "MTL", "Connor Ingram", "Out", "2026-01-19T10:00")
+    start, _ = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
+    assert start is not None
+    assert names(start) == "C. Ingram"
+
+
+def test_a_one_word_name_says_why_it_does_not_match(season: sqlite3.Connection) -> None:
+    add_starter_read(season, 100, "TOR", "espn", "Ingram", "confirmed", "2026-01-19T14:00")
+    _, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=True)
+    assert "no first name or initial" in missing[0].note
