@@ -108,3 +108,11 @@ CREATE TABLE model_fits (
     weights TEXT,
     created_at TEXT NOT NULL
 );
+
+-- Indexes for the as-of reads, which filter by time, team, and player.
+CREATE INDEX IF NOT EXISTS games_start ON games (start_utc);
+CREATE INDEX IF NOT EXISTS goalie_games_team ON goalie_games (team, started);
+CREATE INDEX IF NOT EXISTS mp_team_games_team ON mp_team_games (team);
+CREATE INDEX IF NOT EXISTS mp_goalie_games_player ON mp_goalie_games (nhl_id);
+CREATE INDEX IF NOT EXISTS starter_reads_game ON starter_reads (game_id, team);
+CREATE INDEX IF NOT EXISTS injury_reads_time ON injury_reads (fetched_at);
