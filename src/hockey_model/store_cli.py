@@ -9,7 +9,7 @@ from pathlib import Path
 
 from hockey_model.backtest.runner import run_backtest, write_game_records
 from hockey_model.game import game_win_probability
-from hockey_model.game_model.features import FEATURES, GoalieMode
+from hockey_model.game_model.features import ATTEMPT_FEATURES, FEATURES, GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
 from hockey_model.game_model.seasons import FIT_FIRST
@@ -22,6 +22,7 @@ from hockey_model.store.refresh import RefreshReport, refresh
 from hockey_model.types import HockeyModelError
 
 STORE_COMMANDS = frozenset({"refresh", "fit", "game", "backtest"})
+_CANDIDATE_SETS = {"xg": FEATURES, "attempt": ATTEMPT_FEATURES}
 
 
 def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
@@ -43,6 +44,12 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     backtest = add_parser("backtest", help="score the model on the stored games")
     backtest.add_argument(
         "--games-out", type=Path, metavar="PATH", help="write one CSV row per predicted game"
+    )
+    backtest.add_argument(
+        "--candidates",
+        choices=sorted(_CANDIDATE_SETS),
+        default="xg",
+        help="xg: the production candidates; attempt: xg_form replaced by attempt_form (#77)",
     )
     game = add_parser("game", help="predict one stored game with the newest fit")
     game.add_argument("game_id", type=int)
@@ -127,7 +134,7 @@ def _game(args: argparse.Namespace) -> tuple[object, int]:
 def _backtest(args: argparse.Namespace) -> tuple[object, int]:
     conn = connect(db_path_from_env(os.environ))
     try:
-        report, records = run_backtest(conn)
+        report, records = run_backtest(conn, candidates=_CANDIDATE_SETS[args.candidates])
     finally:
         conn.close()
     if args.games_out is not None:

@@ -43,7 +43,10 @@ INJURY_HISTORY_NOTE = (
     "The store has no ESPN injury history before it began to keep injury reads, so the goalie "
     "guess run never leaves out an injured goalie. The live model does."
 )
-MONEYPUCK_FEATURES = frozenset({"xg_form", "goalie_gsax"})
+# Every feature here reads MoneyPuck data, so the run carries its credit.
+MONEYPUCK_FEATURES = frozenset({"xg_form", "attempt_form", "goalie_gsax"})
+# The MoneyPuck expected-goals model is the source of the leak worry, so only these count.
+XG_MODEL_FEATURES = frozenset({"xg_form", "goalie_gsax"})
 ELO = "elo"
 HOME_RATE = "home_rate"
 MODEL_ACTUAL = "model_actual"
@@ -120,7 +123,10 @@ def _loss(fit: LogisticFit, rows: Sequence[TrainingRow]) -> float:
 
 
 def _validate(
-    actual: Sequence[TrainingRow], guess: Sequence[TrainingRow], plan: SeasonPlan
+    actual: Sequence[TrainingRow],
+    guess: Sequence[TrainingRow],
+    plan: SeasonPlan,
+    candidates: Sequence[str],
 ) -> tuple[dict[str, dict[str, float]], tuple[str, ...]]:
     """Score the Elo alone and the Elo plus each feature on the validation seasons.
 
@@ -137,7 +143,7 @@ def _validate(
             f"{plan.select_validate}; run `hockey-model refresh --backfill-from 2014-10-01`"
         )
     validation: dict[str, dict[str, float]] = {}
-    for name, features in [(ELO, ()), *[(f"{ELO}+{f}", (f,)) for f in FEATURES]]:
+    for name, features in [(ELO, ()), *[(f"{ELO}+{f}", (f,)) for f in candidates]]:
         fit = _fit(train, features)
         validation[name] = {
             "actual": _loss(fit, validate_actual),
@@ -145,7 +151,7 @@ def _validate(
         }
     baseline = validation[ELO]["guess"]
     vetoed = tuple(
-        f for f in FEATURES if validation[f"{ELO}+{f}"]["guess"] > baseline + VETO_TOLERANCE
+        f for f in candidates if validation[f"{ELO}+{f}"]["guess"] > baseline + VETO_TOLERANCE
     )
     return validation, vetoed
 
@@ -219,13 +225,15 @@ def _missing_counts(games: Sequence[_Scored]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple[str, ...]:
-    notes = [f"{len(FEATURES)} candidate features were tested together as one joint test."]
+def _notes(
+    tested: Sequence[str], vetoed: Sequence[str], success: bool, candidates: Sequence[str]
+) -> tuple[str, ...]:
+    notes = [f"{len(candidates)} candidate features were tested together as one joint test."]
     if vetoed:
         notes.append(f"The guess run vetoed: {', '.join(vetoed)}.")
     if not success:
         notes.append("The joint test failed, so the Elo alone ships.")
-    if MONEYPUCK_FEATURES & set(tested):
+    if XG_MODEL_FEATURES & set(tested):
         notes.append(MONEYPUCK_LEAK_NOTE)
     if GOALIE_FEATURE not in tested:
         notes.append(GUESS_EQUALS_ACTUAL_NOTE)
@@ -234,7 +242,9 @@ def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple
 
 
 def run_backtest(
-    conn: sqlite3.Connection, plan: SeasonPlan = DEFAULT_PLAN
+    conn: sqlite3.Connection,
+    plan: SeasonPlan = DEFAULT_PLAN,
+    candidates: Sequence[str] = FEATURES,
 ) -> tuple[BacktestReport, list[GameRecord]]:
     """Run the walk-forward backtest on the stored games.
 
@@ -245,8 +255,8 @@ def run_backtest(
     first, last = plan.fit_first, plan.scored[1]
     actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in)
     guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in)
-    validation, vetoed = _validate(actual, guess, plan)
-    tested = tuple(f for f in FEATURES if f not in vetoed)
+    validation, vetoed = _validate(actual, guess, plan, candidates)
+    tested = tuple(f for f in candidates if f not in vetoed)
     games = _score_seasons(actual, guess, tested, plan)
     if not games:
         raise HockeyModelError(
@@ -262,14 +272,14 @@ def run_backtest(
     success = model.diff_vs_elo_ci is not None and model.diff_vs_elo_ci[1] < 0.0
     uses_moneypuck = bool(MONEYPUCK_FEATURES & set(tested))
     report = BacktestReport(
-        candidate_features=FEATURES,
+        candidate_features=tuple(candidates),
         vetoed=vetoed,
         tested_features=tested,
         live_features=tested if success else (),
         validation=validation,
         runs=runs,
         success=success,
-        notes=_notes(tested, vetoed, success),
+        notes=_notes(tested, vetoed, success, candidates),
         credits=(MONEYPUCK_CREDIT,) if uses_moneypuck else (),
         missing_inputs=_missing_counts(games),
     )

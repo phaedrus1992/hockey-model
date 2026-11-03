@@ -6,6 +6,7 @@ import pytest
 from seeding import add_game
 
 from hockey_model.backtest.runner import run_backtest
+from hockey_model.game_model.features import ATTEMPT_FEATURES
 from hockey_model.game_model.seasons import SeasonPlan
 from hockey_model.types import HockeyModelError
 
@@ -51,3 +52,11 @@ def test_the_backtest_needs_games_in_the_scored_seasons(store: sqlite3.Connectio
 def test_the_backtest_needs_games_in_the_selection_seasons(store: sqlite3.Connection) -> None:
     with pytest.raises(HockeyModelError, match="selection seasons"):
         run_backtest(store, PLAN)
+
+
+def test_the_attempt_candidates_replace_xg_form(store: sqlite3.Connection) -> None:
+    seed(store, range(1, 8))
+    report, _ = run_backtest(store, PLAN, candidates=ATTEMPT_FEATURES)
+    assert report.candidate_features == ("attempt_form", "goalie_gsax", "rest")
+    assert set(report.validation) == {"elo", "elo+attempt_form", "elo+goalie_gsax", "elo+rest"}
+    assert "xg_form" not in report.tested_features

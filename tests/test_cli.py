@@ -332,7 +332,7 @@ def _fake_backtest(success: bool) -> object:
         {"xg_form": 3},
     )
     record = GameRecord(1, datetime(2026, 1, 1, tzinfo=UTC), "TOR", "BOS", "elo", 0.55, True)
-    return lambda conn: (report, [record])
+    return lambda conn, **_: (report, [record])
 
 
 @pytest.mark.parametrize("success", [True, False])
