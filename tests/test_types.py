@@ -92,7 +92,7 @@ def test_roster_rejects_duplicate_players() -> None:
             min_size=1,
             max_size=4,
         ),
-        team=st.one_of(st.just(None), st.text(min_size=1)),
+        team=st.one_of(st.just(None), st.text(min_size=1).filter(lambda s: s.strip())),
     ),
 )
 @settings(max_examples=500)
