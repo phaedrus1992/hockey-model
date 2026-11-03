@@ -1,5 +1,7 @@
 """Tests for goalie name matching."""
 
+import unicodedata
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -70,3 +72,14 @@ def test_name_key_ignores_case_suffix_and_an_initial_dot(first: str, last: str) 
     assert name_key(f"{first} {last}".upper()) == key
     assert name_key(f"{first} {last} Jr.") == key
     assert name_key(f"{first[0]}. {last}") == key
+
+
+@given(
+    first=st.text(alphabet="abcdéüöñçABCDÉÜÖ", min_size=1, max_size=8),
+    last=st.text(alphabet="abcdéüöñçABCDÉÜÖ", min_size=1, max_size=10),
+)
+def test_name_key_is_the_same_for_composed_and_decomposed_text(first: str, last: str) -> None:
+    name = f"{first} {last}"
+    composed = unicodedata.normalize("NFC", name)
+    decomposed = unicodedata.normalize("NFD", name)
+    assert name_key(composed) == name_key(decomposed)
