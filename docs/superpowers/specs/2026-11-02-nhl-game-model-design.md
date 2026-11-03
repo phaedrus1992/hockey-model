@@ -174,9 +174,15 @@ It compares the model with two baselines:
 That is the Elo that sportsbettr runs today, so a win against it is a win against the current tool.
 The model's own Elo core is the same code with the same constants, so a feature cannot pass on Elo tuning alone.
 
-**My call:** feature choices and fitted weights come only from seasons before the scored seasons, from 2015-16 to 2023-24.
-The fit is then frozen, and the scored seasons are scored once.
+**Decided:** the features are chosen only on 2015-16 to 2023-24, before any scored season.
 Choosing features on the scored games would make the result look better than it is.
+
+**Decided:** the weights are refit for each scored season, from all seasons before it:
+
+1. Fit through 2023-24, then score 2024-25.
+2. Fit through 2024-25, then score 2025-26.
+
+Each scored game uses only data from before it, and each scored season is scored once.
 
 **Decided:** the model succeeds when its log loss beats the results-only Elo over the last two seasons.
 **My call:** "beats" means the bootstrap confidence interval on the per-game log-loss difference is fully below zero, the same bar that sportsbettr uses to keep a strategy (`harness/bootstrap_ci.py`).
@@ -235,8 +241,8 @@ It has no model to port.
 
 These are separate projects, each with its own issue:
 
-1. sportsbettr: replace its NHL Elo strategy with a call to hockey-model, then delete the old NHL code that hockey-model replaces.
-2. leaguecheatr: read NHL data and goalie starters through hockey-model, then delete its copies.
+1. sportsbettr: replace its NHL Elo strategy with a call to hockey-model, then delete the old NHL code that hockey-model replaces (phaedrus1992/sportsbettr#1419).
+2. leaguecheatr: read NHL data and goalie starters through hockey-model, then delete its copies (phaedrus1992/leaguecheatr#692).
 
 ## Calls made here
 
@@ -251,7 +257,7 @@ These are separate projects, each with its own issue:
 - "Beats" means the bootstrap interval on the per-game difference is fully below zero.
 - The two scored seasons are 2024-25 and 2025-26, with playoffs. Preseason is excluded.
 - The baseline Elo is sportsbettr's NHL Elo without the market shrink, and the model uses the same Elo core.
-- Features and weights are fit on 2015-16 to 2023-24, then frozen before the scored seasons.
+- Features are chosen on 2015-16 to 2023-24. The weights are refit before each scored season, from all earlier seasons. (Owner decision.)
 - ESPN injuries feed only the starter estimate.
 - One shared SQLite database at a caller-set path. An unset path is an error.
 - The prediction call makes no network request. A refresh fills the database.
