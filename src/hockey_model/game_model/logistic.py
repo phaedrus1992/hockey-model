@@ -60,7 +60,7 @@ def _sigmoid(z: float) -> float:
     return exp / (1.0 + exp)
 
 
-def _solve(matrix: list[list[float]], vector: list[float]) -> tuple[list[float], float]:
+def solve_linear(matrix: list[list[float]], vector: list[float]) -> tuple[list[float], float]:
     """Solve ``matrix @ x = vector`` by Gaussian elimination with partial pivoting.
 
     Also return the largest over the smallest pivot, a cheap measure of conditioning.
@@ -145,7 +145,7 @@ def _newton(data: list[list[float]], wins: Sequence[bool]) -> _Solution:
     while True:
         gradient, hessian, objective = _system(data, wins, beta)
         norm = max(abs(g) for g in gradient)
-        step, condition = _solve(hessian, gradient)
+        step, condition = solve_linear(hessian, gradient)
         if norm < GRADIENT_TOLERANCE:
             return _Solution(beta, iteration, objective, norm, condition)
         if iteration == MAX_ITERATIONS:

@@ -13,6 +13,7 @@ from hockey_model.game_model.logistic import (
     LogisticFit,
     fit_logistic,
     predict_logistic,
+    solve_linear,
 )
 
 
@@ -200,3 +201,14 @@ def test_too_few_iterations_name_the_gradient(monkeypatch: pytest.MonkeyPatch) -
     rows, wins = sample(500)
     with pytest.raises(ValueError, match="no convergence in 1 iterations"):
         fit_logistic(rows, wins, ["xg_form"])
+
+
+def test_solve_reports_the_pivot_ratio_as_the_condition() -> None:
+    solution, condition = solve_linear([[4.0, 0.0], [0.0, 1.0]], [8.0, 3.0])
+    assert solution == pytest.approx([2.0, 3.0])
+    assert condition == pytest.approx(4.0)
+
+
+def test_solve_rejects_a_singular_system() -> None:
+    with pytest.raises(ValueError, match="singular"):
+        solve_linear([[1.0, 1.0], [1.0, 1.0]], [1.0, 2.0])
