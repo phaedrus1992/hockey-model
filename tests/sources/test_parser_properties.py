@@ -4,9 +4,12 @@ import copy
 import csv
 import io
 import json
+import re
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -14,6 +17,7 @@ from hockey_model.sources.daily_faceoff import parse_starters
 from hockey_model.sources.espn import parse_injuries, parse_scoreboard_starters
 from hockey_model.sources.moneypuck import parse_goalie_games, parse_team_games
 from hockey_model.sources.nhl import parse_boxscore, parse_score_day
+from hockey_model.sources.payload import utc_field
 from hockey_model.sources.shape_errors import SourceParseError, SourceShapeError
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -128,3 +132,72 @@ def test_moneypuck_team_rows_do_not_depend_on_column_order(data: st.DataObject) 
 
 def test_the_property_helpers_find_paths_in_a_fixture() -> None:
     assert len(containers(load("espn/scoreboard_20261103.json"))) > 100
+
+
+def _box_with_toi(toi: str) -> dict[str, Any]:
+    payload: dict[str, Any] = json.loads(
+        (FIXTURES / "nhl" / "boxscore_2025020709.json").read_text()
+    )
+    payload["playerByGameStats"]["homeTeam"]["forwards"][0]["toi"] = toi
+    return payload
+
+
+@given(minutes=st.integers(0, 999), seconds=st.integers(0, 59))
+def test_time_on_ice_is_minutes_times_sixty_plus_seconds(minutes: int, seconds: int) -> None:
+    rows = parse_boxscore(_box_with_toi(f"{minutes}:{seconds:02d}"))
+    assert rows.skaters[0].toi_seconds == 60 * minutes + seconds
+
+
+@given(minutes=st.integers(0, 999), seconds=st.integers(60, 99))
+def test_time_on_ice_with_sixty_or_more_seconds_is_rejected(minutes: int, seconds: int) -> None:
+    with pytest.raises(SourceParseError, match="MM:SS"):
+        parse_boxscore(_box_with_toi(f"{minutes}:{seconds}"))
+
+
+_MOMENTS = st.datetimes(
+    min_value=datetime(1990, 1, 1), max_value=datetime(2100, 1, 1), timezones=st.just(UTC)
+)
+_OFFSETS = st.integers(-14 * 60, 14 * 60).map(lambda m: timezone(timedelta(minutes=m)))
+
+
+@given(moment=_MOMENTS, offset=_OFFSETS)
+def test_utc_field_returns_the_same_instant_in_utc(moment: datetime, offset: timezone) -> None:
+    local = moment.astimezone(offset)
+    found = utc_field("nhl", {"d": local.isoformat()}, "d", "a game")
+    assert found == moment
+    assert found.utcoffset() == timedelta(0)
+
+
+@given(moment=st.datetimes(min_value=datetime(1990, 1, 1), max_value=datetime(2100, 1, 1)))
+def test_utc_field_rejects_a_time_with_no_zone(moment: datetime) -> None:
+    with pytest.raises(SourceParseError, match="no timezone"):
+        utc_field("nhl", {"d": moment.isoformat()}, "d", "a game")
+
+
+def _team_text_with(**changes: str) -> str:
+    text = (FIXTURES / "moneypuck" / "all_teams_sample.csv").read_text()
+    lines = text.splitlines()
+    header = lines[0].split(",")
+    for index, line in enumerate(lines[1:], start=1):
+        cells = line.split(",")
+        if cells[header.index("situation")] != "all":
+            continue
+        for column, value in changes.items():
+            cells[header.index(column)] = value
+        lines[index] = ",".join(cells)
+        break
+    return "\n".join(lines) + "\n"
+
+
+@given(value=st.floats(min_value=0.0, max_value=1e6, allow_nan=False, allow_infinity=False))
+def test_a_moneypuck_number_written_with_repr_reads_back_exactly(value: float) -> None:
+    rows = parse_team_games(_team_text_with(xGoalsFor=repr(value)))
+    assert rows[0].xg_for == value
+
+
+@given(text=st.text(max_size=12).filter(lambda t: not re.fullmatch(r"[0-9.eE+-]+", t)))
+def test_a_moneypuck_number_with_other_characters_is_rejected(text: str) -> None:
+    if "," in text or "\n" in text or "\r" in text or '"' in text:
+        return
+    with pytest.raises(NAMED_ERRORS):
+        parse_team_games(_team_text_with(xGoalsFor=text))
