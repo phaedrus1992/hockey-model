@@ -2,6 +2,7 @@
 
 import io
 import urllib.request
+from collections.abc import Callable
 from email.message import Message
 from http.client import HTTPMessage, IncompleteRead
 from urllib.error import HTTPError, URLError
@@ -53,7 +54,7 @@ def _http_error(code: int, retry_after: str | None = None) -> HTTPError:
     headers = Message()
     if retry_after is not None:
         headers["Retry-After"] = retry_after
-    return HTTPError(NHL_URL, code, f"status {code}", headers, None)
+    return HTTPError(NHL_URL, code, f"status {code}", headers, io.BytesIO())
 
 
 def _client(opener: ScriptedOpener, clock: FakeClock) -> HttpClient:
@@ -302,25 +303,25 @@ def test_property_requests_to_one_host_start_min_interval_apart(
         assert all(b - a >= interval - 1e-9 for a, b in zip(times, times[1:], strict=False))
 
 
-_OUTCOMES = {
-    "ok": b"ok",
-    "503": _http_error(503),
-    "429": _http_error(429),
-    "404": _http_error(404),
-    "net": URLError("down"),
+_OUTCOMES: dict[str, Callable[[], bytes | BaseException]] = {
+    "ok": lambda: b"ok",
+    "503": lambda: _http_error(503),
+    "429": lambda: _http_error(429),
+    "404": lambda: _http_error(404),
+    "net": lambda: URLError("down"),
 }
 
 
 @given(st.lists(st.sampled_from(sorted(_OUTCOMES)), min_size=_MAX_TRIES, max_size=8))
 def test_property_retries_stop_at_first_final_outcome_or_the_limit(names: list[str]) -> None:
     clock = FakeClock()
-    opener = ScriptedOpener([_OUTCOMES[name] for name in names])
     expected_calls = _MAX_TRIES
     expect_body = False
     for index, name in enumerate(names[:_MAX_TRIES]):
         if name in {"ok", "404"}:
             expected_calls, expect_body = index + 1, name == "ok"
             break
+    opener = ScriptedOpener([_OUTCOMES[name]() for name in names[:expected_calls]])
     client = _client(opener, clock)
     if expect_body:
         assert client.get("nhl", NHL_URL) == b"ok"
