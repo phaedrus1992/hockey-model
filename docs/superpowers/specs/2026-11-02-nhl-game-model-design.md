@@ -224,6 +224,17 @@ The backtest report must state this limit in plain words next to every result th
 The backtest has no price data, so it does not say whether the model beats the market.
 sportsbettr answers that question in its own backtest, after it moves to hockey-model.
 
+**Decided:** a win against the Elo is necessary, but it does not show that the model makes money.
+A model can beat a naive baseline and still be worse than the market line.
+A results-only Elo is already close to a sportsbook line on NHL games, and several older models beat a naive baseline but lost to the line.
+So the success bar here only lets the model go to sportsbettr. It does not let sportsbettr bet on it.
+
+**Decided:** sportsbettr must not place an NHL bet from this model until its own backtest shows a positive blend weight for the model against the market.
+The blend is a logistic fit of the game result on the no-vig market log-odds and the model log-odds, on walk-forward games that the fit did not see.
+The model weight must be above zero, with its bootstrap confidence interval fully above zero.
+A fixed shrink toward the price, such as sportsbettr's current `ALPHA`, does not satisfy this gate, because it does not measure what the model adds.
+This gate belongs to sportsbettr, and phaedrus1992/sportsbettr#1419 holds it as an acceptance condition.
+
 ## Code to reuse
 
 The builder decides what to copy and what to rewrite.
@@ -259,7 +270,7 @@ It has no model to port.
 
 These are separate projects, each with its own issue:
 
-1. sportsbettr: replace its NHL Elo strategy with a call to hockey-model, then delete the old NHL code that hockey-model replaces (phaedrus1992/sportsbettr#1419).
+1. sportsbettr: replace its NHL Elo strategy with a call to hockey-model, then delete the old NHL code that hockey-model replaces (phaedrus1992/sportsbettr#1419). No NHL bet goes out until the blend-weight gate in "The backtest" passes.
 2. leaguecheatr: read NHL data and goalie starters through hockey-model, then delete its copies (phaedrus1992/leaguecheatr#692).
 
 ## Calls made here
@@ -270,6 +281,7 @@ These are separate projects, each with its own issue:
 - Daily Faceoff and the unofficial ESPN API are allowed. (Owner decision.)
 - The first confirmed goalie, from ESPN or Daily Faceoff, wins. (Owner decision.)
 - Success is a lower log loss than a results-only Elo over the last two seasons. (Owner decision.)
+- Success here is necessary, not sufficient: sportsbettr must show a positive model weight in a blend with the market before it bets. (Owner decision, from review.)
 - The actual-starter run decides success and the features. The guess run is reported only. (Owner decision.)
 - The backtest uses today's MoneyPuck files for past games, and the report states the leak. (Owner decision.)
 - "Beats" means the bootstrap interval on the per-game difference is fully below zero.
