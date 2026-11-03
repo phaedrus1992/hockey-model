@@ -46,16 +46,16 @@ class _Goalies:
         codes = franchise_codes(self._team_code)
         return [p for p in self.league if p.team_code in codes]
 
-    def find(self, name: str) -> tuple[Player | None, str, bool]:
+    def find(self, name: str, *, league: bool = True) -> tuple[Player | None, str, bool]:
         """Return the goalie that ``name`` means, or ``None``, the reason, and ambiguity.
 
         A goalie that was traded may not have played for the new team yet, so a name
-        that matches nobody on the team is looked up in the whole league. Two matches
-        are never resolved by a guess.
+        that matches nobody on the team is looked up in the whole league, unless
+        ``league`` is false. Two matches are never resolved by a guess.
         """
         if name_key(name) is None:
             return None, f"goalie name {name!r} has no first name or initial and a surname", False
-        for pool in (self.team, self.league):
+        for pool in (self.team, self.league) if league else (self.team,):
             found = matching_players(name, pool)
             if len(found) == 1:
                 return found[0], "", False
@@ -125,7 +125,9 @@ def _injured_goalies(
     for injury in injury_reads_before(conn, as_of):
         if not injury.is_out or injury.team not in franchise_codes(team):
             continue
-        player, why, ambiguous = goalies.find(injury.player_name)
+        # Only the team's own goalies can be the guessed starter, so an injury name is not
+        # looked up in the league: a skater could match goalies of other teams.
+        player, why, ambiguous = goalies.find(injury.player_name, league=False)
         if player is not None:
             out.add(player.nhl_id)
         elif ambiguous:
