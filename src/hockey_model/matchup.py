@@ -63,4 +63,11 @@ def playoff_probability(
             f"project playoff probability for {team_code!r}: team is absent from standings; "
             "supply its current standing"
         )
-    return model.playoff_odds(team_code, standings, level)
+    projection = model.playoff_odds(team_code, standings, level)
+    values = (projection.point, projection.low, projection.high)
+    if any(not 0.0 <= value <= 1.0 for value in values):
+        raise ProbabilityError(
+            f"project playoff probability for {team_code!r}: invalid probability projection "
+            f"{projection!r}; return point and interval bounds in [0, 1]"
+        )
+    return projection

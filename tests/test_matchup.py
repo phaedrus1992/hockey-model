@@ -116,3 +116,32 @@ def test_probability_entry_points_reject_invalid_level(
             matchup(*rosters, FixedMatchupModel(0.5), level=1.0)
         else:
             playoff_probability("TOR", [Standing("TOR", 0, 0, 0, 1)], FixedStandingsModel(), 0.0)
+
+
+@pytest.mark.parametrize(
+    ("point", "low", "high"),
+    [(-0.1, 0.0, 1.0), (1.1, 0.0, 1.0), (0.5, -0.1, 0.9), (0.5, 0.1, 1.1)],
+)
+def test_playoff_probability_rejects_out_of_range_model_values(
+    point: float, low: float, high: float
+) -> None:
+    class InvalidStandingsModel:
+        def playoff_odds(
+            self, team_code: str, standings: Sequence[Standing], level: float
+        ) -> Projection:
+            return Projection(point, low, high, level)
+
+    with pytest.raises(ProbabilityError, match=r"playoff.*TOR.*\[0, 1\]"):
+        playoff_probability("TOR", [Standing("TOR", 10, 12, 5, 8)], InvalidStandingsModel())
+
+
+@pytest.mark.parametrize("point", [0.0, 1.0])
+def test_playoff_probability_accepts_closed_interval_boundaries(point: float) -> None:
+    class BoundaryStandingsModel:
+        def playoff_odds(
+            self, team_code: str, standings: Sequence[Standing], level: float
+        ) -> Projection:
+            return Projection(point, 0.0, 1.0, level)
+
+    result = playoff_probability("TOR", [Standing("TOR", 10, 12, 5, 8)], BoundaryStandingsModel())
+    assert result == Projection(point, 0.0, 1.0, 0.8)
