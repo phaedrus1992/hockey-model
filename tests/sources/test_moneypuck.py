@@ -127,7 +127,9 @@ def test_parse_team_games_rejects_missing_column() -> None:
 BOS_GAME = ("2025020697", "BOS")
 
 
-@pytest.mark.parametrize("bad", ["abc", "nan", "inf", "-1", ""])
+@pytest.mark.parametrize(
+    "bad", ["abc", "nan", "inf", "-1", "", "1_0", " 3 ", "\u0663", "+1", "1e", "."]
+)
 def test_parse_team_games_rejects_bad_number(bad: str) -> None:
     text = edit_row(team_text(), *BOS_GAME, xGoalsFor=bad)
     with pytest.raises(SourceParseError, match=r"line \d+ column 'xGoalsFor'"):
@@ -284,3 +286,10 @@ def test_a_csv_field_over_the_size_limit_is_a_named_error() -> None:
 def test_a_unicode_digit_season_is_not_a_season() -> None:
     text = edit_row(team_text(), *BOS_GAME, season="٢٠٢٥")
     assert all(r.team != "BOS" or r.game_id != 2025020697 for r in parse_team_games(text))
+
+
+@pytest.mark.parametrize("good", ["0", "2", "1.5", ".5", "5.", "1e-05", "3.0E2"])
+def test_parse_team_games_accepts_plain_decimal_numbers(good: str) -> None:
+    text = edit_row(team_text(), *BOS_GAME, xGoalsFor=good)
+    rows = parse_team_games(text)
+    assert any(row.xg_for == float(good) for row in rows)

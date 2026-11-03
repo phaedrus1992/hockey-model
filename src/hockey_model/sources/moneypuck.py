@@ -43,6 +43,8 @@ TEAM_COLUMNS = (
 GOALIE_COLUMNS = ("playerId", "season", "gameId", "playerTeam", "situation", "xGoals", "goals")
 _SEASON = re.compile(r"[0-9]{4}")
 _GAME_ID = re.compile(r"[0-9]{10}")
+# ASCII digits only: float() also takes "1_0", padded text, and non-ASCII digits.
+_DECIMAL = re.compile(r"(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _GAME_DATE = re.compile(r"[0-9]{8}")
 _ALLOWED_GOALIE_URL = re.compile(
     r"https://peter-tanner\.com/moneypuck/downloads/seasonPlayersSummary/goalies/[0-9]{4}\.zip"
@@ -87,10 +89,7 @@ def check_allowed(url: str) -> None:
 
 def _number(row: Mapping[str, str], column: str, line: int) -> float:
     text = row[column]
-    try:
-        value = float(text)
-    except ValueError:
-        value = math.nan
+    value = float(text) if _DECIMAL.fullmatch(text) else math.nan
     if not math.isfinite(value) or value < 0.0:
         raise SourceParseError(
             SOURCE, f"line {line} column {column!r} must be a non-negative number, got {text!r}"
