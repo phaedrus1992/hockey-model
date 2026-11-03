@@ -5,6 +5,7 @@ The model with expected-goals form and rest beats the results-only Elo on log lo
 The model does not use goalie goals saved above expected.
 The guess run vetoed that feature.
 The result has one caveat: MoneyPuck data may leak (see "What the result does not show").
+The model does not beat the DraftKings line (see "Market comparison").
 
 ## Setup
 
@@ -77,6 +78,32 @@ The Elo is too confident at both ends.
 The model is closer to the win rate in most bins.
 Both models still underrate the home side in the 0.3 to 0.5 range.
 
+## Market comparison
+
+A reviewer scored the game CSV against the last pre-game DraftKings line, with the vig removed.
+He used regular season games only, and the same games for every run in a season.
+The log loss of each run is below.
+
+| Run | 2024-25 (1,228 games) | 2025-26 (1,286 games) |
+| --- | --- | --- |
+| DraftKings line | 0.6604 | 0.6826 |
+| Model (actual starters) | 0.6633 | 0.6911 |
+| Results-only Elo | 0.6741 | 0.7035 |
+
+1. The model minus the line is +0.0029 in 2024-25, with a 95% block-bootstrap interval of -0.0032 to +0.0091.
+   The model is level with the line.
+2. The model minus the line is +0.0085 in 2025-26, with an interval of +0.0035 to +0.0140.
+   The model is significantly worse than the line.
+3. The blend gate fails in both seasons.
+   A logistic regression of the result on the market log-odds and the model log-odds gives the model a weight of +0.15 in 2024-25 (interval -0.51 to +0.85) and -0.43 in 2025-26 (interval -1.01 to +0.13).
+   The gate needs a weight above zero with an interval fully above zero.
+4. The model beats the Elo by about 0.011 to 0.012 in both seasons.
+   This gain depends on the leak test of #77.
+5. The two-season headline of 0.6763 is low because 2024-25 was easier to forecast for every run.
+   The DraftKings line scored 0.6604 in that season.
+6. The model is not cleared for staking.
+   The sportsbettr follow-up (phaedrus1992/sportsbettr#1419) stays blocked.
+
 ## What the result does not show
 
 1. MoneyPuck trained its expected-goals model on games that may include the scored seasons.
@@ -88,21 +115,22 @@ Both models still underrate the home side in the 0.3 to 0.5 range.
    The model gain over the Elo is five times larger.
    Most of that gain comes from the `xg_form` feature.
    The leak in point 1 therefore matters for most of the result.
-3. The result says nothing about betting markets.
-   The backtest reads no price data.
+3. The backtest reads no price data.
    The game CSV (`--games-out`) lets a caller score the model against a closing line.
+   A reviewer did this: see "Market comparison".
 4. The store holds no ESPN injury history before 2026-11-03.
    The goalie guess run therefore never leaves out an injured goalie, and the live model does.
    The veto of `goalie_gsax` rests on a guess run without that rule.
-5. Treat the headline as unconfirmed until the leak test of #77 is done.
-   A reviewer scored a DraftKings no-vig morning line at 0.6829 log loss on 1,280 regular season games of 2025-26.
-   The game set differs from ours (no playoffs, one season), so the figure is rough.
-   On its face, 0.6763 would beat that line by about 0.007, and no earlier work came close.
+5. Treat the Elo gain as unconfirmed until the leak test of #77 is done.
+   A leak can only shrink the gain.
+   The 0.6763 headline spans two seasons with playoffs, and the DraftKings figure of 0.6829 spans one regular season.
+   The two numbers are not comparable.
+   Use the matched-game table in "Market comparison".
 6. The Elo beats the home rate by little, so the baseline of the joint test is weak.
    The market comparison is the stronger bar, and the gate in the spec for the sportsbettr follow-up applies it.
-7. The test beat the Elo, which is level with the market in earlier work.
+7. The test beat the Elo, and the Elo is worse than the market.
    Beating the Elo is necessary and not sufficient for a bet.
-   The gate in the spec for the sportsbettr follow-up still applies.
+   The gate in the spec for the sportsbettr follow-up applies, and the model fails it.
 
 ## Missing inputs
 

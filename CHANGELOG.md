@@ -26,6 +26,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Certify each logistic fit by the gradient of the penalized loss and save its diagnostics (iterations, objective, gradient, conditioning, penalty, scaling, stop reason) with the fit. A clipped step no longer counts as convergence. [feat:model]
 - Add the November 2026 backtest report. The joint test passed with expected-goals form and rest, and the guess run vetoed goalie goals saved above expected. [docs:backtest]
 
+### Changed
+
+- Record the DraftKings comparison in the README, the backtest report, and the run report. The model is level with the line in 2024-25 and worse in 2025-26, and it fails the blend gate. [docs:backtest]
+
 ### Fixed
 
 - Read a failed NHL score day again on the next refresh, for 30 days. A day that failed and was followed by a good day was never read again, so its games were missing from the Elo and the fit. [fix:store]
