@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import datetime
 
-from hockey_model.sources.nhl import BoxscoreRows, GameRow
+from hockey_model.sources.nhl import FINAL_STATES, BoxscoreRows, GameRow
 from hockey_model.store.timestamps import iso_utc
 
 
@@ -69,10 +69,12 @@ def write_boxscore(
 
 def games_missing_boxscore(conn: sqlite3.Connection) -> list[int]:
     """Return the ids of final games that have no goalie rows yet, oldest first."""
+    marks = ",".join("?" for _ in FINAL_STATES)
     cursor = conn.execute(
         "SELECT DISTINCT g.game_id FROM games g"
-        " WHERE g.state IN ('FINAL', 'OFF')"
+        f" WHERE g.state IN ({marks})"
         " AND NOT EXISTS (SELECT 1 FROM goalie_games w WHERE w.game_id = g.game_id)"
-        " ORDER BY g.start_utc, g.game_id"
+        " ORDER BY g.start_utc, g.game_id",
+        sorted(FINAL_STATES),
     )
     return [row[0] for row in cursor]
