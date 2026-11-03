@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 from hockey_model.game_model.features import FeatureRow
 from hockey_model.game_model.logistic import (
     ELO_ONLY,
+    GRADIENT_TOLERANCE,
     LogisticFit,
     fit_logistic,
     predict_logistic,
@@ -123,6 +124,8 @@ def test_fit_is_finite_and_ignores_row_order(seed: int) -> None:
     random.Random(seed).shuffle(order)
     shuffled = fit_logistic([rows[i] for i in order], [wins[i] for i in order], ["xg_form"])
     assert math.isfinite(fit.intercept) and math.isfinite(fit.elo_weight)
+    assert fit.diagnostics is not None
+    assert fit.diagnostics.gradient_norm < GRADIENT_TOLERANCE
     assert shuffled.intercept == pytest.approx(fit.intercept, abs=1e-6)
     assert shuffled.weights["xg_form"] == pytest.approx(fit.weights["xg_form"], abs=1e-6)
     assert all(0.0 < predict_logistic(fit, r) < 1.0 for r in rows)

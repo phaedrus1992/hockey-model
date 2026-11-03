@@ -4,6 +4,8 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from hockey_model.game_model.logistic import FitDiagnostics, LogisticFit
 from hockey_model.store.db import StoreError
@@ -93,3 +95,24 @@ def test_malformed_diagnostics_say_to_fit_again(store: sqlite3.Connection) -> No
     store.execute(_INSERT, (_BAD_DIAGNOSTICS,))
     with pytest.raises(StoreError, match="malformed.*run `hockey-model fit` again"):
         newest_fit(store)
+
+
+_FINITE = st.floats(allow_nan=False, allow_infinity=False)
+
+
+@settings(max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    iterations=st.integers(min_value=0, max_value=50),
+    numbers=st.lists(_FINITE, min_size=4, max_size=4),
+    scaling=st.dictionaries(st.text(min_size=1, max_size=8), _FINITE, max_size=3),
+)
+def test_any_diagnostics_round_trip_through_the_store(
+    store: sqlite3.Connection, iterations: int, numbers: list[float], scaling: dict[str, float]
+) -> None:
+    objective, gradient_norm, condition, l2 = numbers
+    diagnostics = FitDiagnostics(
+        iterations, objective, gradient_norm, condition, l2, scaling, dict(scaling), "stop"
+    )
+    fit = LogisticFit((), 0.0, 1.0, {}, diagnostics)
+    save_fit(store, fit, 20252026, T0)
+    assert newest_fit(store) == fit
