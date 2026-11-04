@@ -120,13 +120,22 @@ def mp_team_form_before(
     return _mp_pairs_before(conn, ("xg_for", "xg_against"), team, before, limit)
 
 
+_MP_PAIR_COLUMNS = frozenset({"xg_for", "xg_against", "shot_attempts_for", "shot_attempts_against"})
+
+
 def _mp_pairs_before(
     conn: sqlite3.Connection, columns: tuple[str, str], team: str, before: datetime, limit: int
 ) -> list[tuple[float, float]]:
     """Return two named MoneyPuck team-game columns of the newest games of the franchise.
 
-    ``columns`` comes from code, never from input, so it is safe to place in the SQL.
+    The names are placed in the SQL, so only the known columns are accepted.
     """
+    unknown = [name for name in columns if name not in _MP_PAIR_COLUMNS]
+    if unknown:
+        raise ValueError(
+            f"read MoneyPuck form: unknown column {unknown[0]!r}; "
+            f"use one of {sorted(_MP_PAIR_COLUMNS)}"
+        )
     codes = franchise_codes(team)
     cursor = conn.execute(
         f"SELECT m.{columns[0]}, m.{columns[1]} FROM latest_mp_team_games m"

@@ -3,6 +3,7 @@
 import sqlite3
 from datetime import timedelta
 
+import pytest
 from seeding import (
     add_game,
     add_goalie,
@@ -14,6 +15,7 @@ from seeding import (
     utc,
 )
 
+from hockey_model.store import reads
 from hockey_model.store.reads import (
     RESULT_DELAY,
     final_games_before,
@@ -191,3 +193,10 @@ def test_mp_attempt_form_is_newest_first_and_hides_recent(store: sqlite3.Connect
     rows = mp_attempt_form_before(store, "TOR", utc("2026-01-03T00:00"), 10)
     assert rows == [(2, 9), (1, 9)]
     assert mp_attempt_form_before(store, "TOR", utc("2026-02-01T00:00"), 1) == [(3, 9)]
+
+
+def test_the_form_reader_refuses_a_column_that_is_not_known(store: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="unknown column 'game_id; DROP TABLE games'"):
+        reads._mp_pairs_before(
+            store, ("xg_for", "game_id; DROP TABLE games"), "TOR", utc("2026-01-01T00:00"), 5
+        )
