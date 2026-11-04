@@ -9,7 +9,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hockey_model.report_trigger import is_due
+from hockey_model.report_trigger import TRIGGER_MINUTE_UTC, is_due
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "trigger_hours.py"
@@ -63,9 +63,11 @@ def test_summary_names_each_trigger_hour_once() -> None:
         "2026-11-05": datetime(2026, 11, 6, 0, 30, tzinfo=UTC),
         "2026-11-06": datetime(2026, 11, 7, 0, 0, tzinfo=UTC),
     }
-    summary = HOURS.summarize(firsts)
+    summary = HOURS.summarize(firsts, 0)
+    assert summary["minute"] == 0
     assert summary["hours"] == [0, 23]
     assert summary["days_per_hour"] == {"0": 1, "23": 2}
+    assert HOURS.summarize(firsts, 37)["hours"] == [23]
     assert summary["first_puck_drops_et"] == {"19:00 EST": 2, "19:30 EST": 1}
 
 
@@ -74,11 +76,13 @@ _UTC_TIMES = st.datetimes(
 )
 
 
-@given(_UTC_TIMES)
-def test_the_derived_trigger_is_within_the_hour_before_the_puck_drop(first: datetime) -> None:
-    hour = HOURS.last_hour_before(first)
+@given(_UTC_TIMES, st.integers(min_value=0, max_value=59))
+def test_the_derived_trigger_is_within_the_hour_before_the_puck_drop(
+    first: datetime, minute: int
+) -> None:
+    hour = HOURS.last_hour_before(first, minute)
     candidates = [
-        (first - timedelta(hours=back)).replace(minute=0, second=0, microsecond=0)
+        (first - timedelta(hours=back)).replace(minute=minute, second=0, microsecond=0)
         for back in (0, 1)
     ]
     trigger = max(c for c in candidates if c < first)
@@ -88,8 +92,15 @@ def test_the_derived_trigger_is_within_the_hour_before_the_puck_drop(first: date
 
 def test_derived_hours_match_the_runtime_rule() -> None:
     first = datetime(2026, 11, 5, 0, 30, tzinfo=UTC)
-    assert HOURS.last_hour_before(first) == 0
-    assert is_due(datetime(2026, 11, 5, 0, 0, tzinfo=UTC), first)
+    hour = HOURS.last_hour_before(first, TRIGGER_MINUTE_UTC)
+    assert hour == 23
+    assert is_due(datetime(2026, 11, 4, hour, TRIGGER_MINUTE_UTC, tzinfo=UTC), first)
+
+
+def test_minute_out_of_range_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        HOURS.main(["--from", "2026-11-04", "--to", "2026-11-05", "--minute", "60"])
+    assert "--minute must be 0 to 59" in capsys.readouterr().err
 
 
 def test_to_before_from_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:

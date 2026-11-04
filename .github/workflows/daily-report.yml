@@ -2,12 +2,13 @@
 #
 # The schedule fires at each trigger slot. The gate job publishes only at the last slot
 # before the day's first puck drop, and skips every later slot once the release exists.
-# The cron hours MUST match TRIGGER_HOURS_UTC in report_trigger.py.
+# The cron minute and hours MUST match TRIGGER_MINUTE_UTC and TRIGGER_HOURS_UTC in
+# report_trigger.py.
 name: daily-report
 
 on:
   schedule:
-    - cron: "0 0,1,12,16-23 * * *"
+    - cron: "37 0,1,12,15-23 * * *"
   workflow_dispatch:
     inputs:
       force:

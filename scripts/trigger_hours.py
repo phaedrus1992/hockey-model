@@ -1,12 +1,13 @@
 """Derive the report trigger hours from the NHL schedule of a season.
 
 Usage:
-    uv run python3 scripts/trigger_hours.py --from YYYY-MM-DD --to YYYY-MM-DD [--game-types 2,3]
+    uv run python3 scripts/trigger_hours.py --from YYYY-MM-DD --to YYYY-MM-DD
+        [--game-types 2,3] [--minute M]
 
 For each Eastern game day, the script finds the first puck drop. It then finds the last
-top-of-hour UTC trigger strictly before that puck drop. Prints one JSON object:
+UTC trigger at the trigger minute strictly before that puck drop. Prints one JSON object:
 
-    {"hours": [0, 1, 12, 16, ...], "game_days": 183,
+    {"minute": 37, "hours": [0, 1, 12, 15, ...], "game_days": 183,
     "days_per_hour": {"23": 62, ...}, "first_puck_drops_et": {"19:00 EST": 52, ...}}
 
 Compare "hours" with TRIGGER_HOURS_UTC in src/hockey_model/report_trigger.py, and copy a new
@@ -23,15 +24,18 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from hockey_model.game_day import GAME_TIME_ZONE
+from hockey_model.report_trigger import TRIGGER_MINUTE_UTC
 from hockey_model.sources.http import HttpClient
 from hockey_model.sources.nhl import NHL_BASE, SOURCE
 from hockey_model.sources.payload import get_json
 
 
-def last_hour_before(first: datetime) -> int:
-    """Return the UTC hour of the last top-of-hour trigger strictly before ``first``."""
-    moment = first.astimezone(UTC) - timedelta(microseconds=1)
-    return moment.hour
+def last_hour_before(first: datetime, minute: int) -> int:
+    """Return the UTC hour of the last trigger at ``minute`` strictly before ``first``."""
+    trigger = first.astimezone(UTC).replace(minute=minute, second=0, microsecond=0)
+    if trigger >= first:
+        trigger -= timedelta(hours=1)
+    return trigger.hour
 
 
 def first_starts(weeks: Iterable[Mapping[str, Any]], game_types: set[int]) -> dict[str, datetime]:
@@ -48,13 +52,14 @@ def first_starts(weeks: Iterable[Mapping[str, Any]], game_types: set[int]) -> di
     return firsts
 
 
-def summarize(firsts: Mapping[str, datetime]) -> dict[str, Any]:
+def summarize(firsts: Mapping[str, datetime], minute: int) -> dict[str, Any]:
     """Return the trigger hours that the first puck drops need, with their counts."""
-    per_hour = Counter(last_hour_before(first) for first in firsts.values())
+    per_hour = Counter(last_hour_before(first, minute) for first in firsts.values())
     local = Counter(
         first.astimezone(GAME_TIME_ZONE).strftime("%H:%M %Z") for first in firsts.values()
     )
     return {
+        "minute": minute,
         "hours": sorted(per_hour),
         "game_days": len(firsts),
         "days_per_hour": {str(hour): per_hour[hour] for hour in sorted(per_hour)},
@@ -78,12 +83,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="first", type=date.fromisoformat, required=True)
     parser.add_argument("--to", dest="last", type=date.fromisoformat, required=True)
     parser.add_argument("--game-types", default="2", help="comma-separated: 2 regular, 3 playoff")
+    parser.add_argument(
+        "--minute",
+        type=int,
+        default=TRIGGER_MINUTE_UTC,
+        help="trigger minute of each hour; default is TRIGGER_MINUTE_UTC",
+    )
     args = parser.parse_args(argv)
+    if not 0 <= args.minute <= 59:
+        parser.error(f"--minute must be 0 to 59, got {args.minute}")
     if args.last < args.first:
         parser.error(f"--to {args.last} is before --from {args.first}")
     game_types = {int(part) for part in args.game_types.split(",")}
     firsts = first_starts(_weeks(HttpClient(), args.first, args.last), game_types)
-    json.dump(summarize(firsts), sys.stdout, indent=2)
+    json.dump(summarize(firsts, args.minute), sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
