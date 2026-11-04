@@ -8,7 +8,7 @@ from hypothesis import strategies as st
 
 from hockey_model.game_day import game_day_window
 from hockey_model.report_trigger import (
-    TRIGGER_INTERVAL_HOURS,
+    TRIGGER_HOURS_UTC,
     first_puck_drop,
     is_due,
     next_trigger,
@@ -30,49 +30,59 @@ def at(text: str) -> datetime:
 
 DAY = date(2026, 11, 4)
 CLOSES = game_day_window(DAY)[1]
-FIRST_PUCK_DROP_2PM = at("2026-11-04T14:00")
 
 
 @pytest.mark.parametrize(
-    ("now", "runs"),
+    ("first", "runs_at", "skips_at"),
     [
-        ("2026-11-04T00:05", False),
-        ("2026-11-04T10:30", False),
-        ("2026-11-04T11:59", False),
-        ("2026-11-04T12:00", True),
-        ("2026-11-04T12:20", True),
-        # Later triggers still pass the due check. The release check stops them.
-        ("2026-11-04T14:05", True),
-        ("2026-11-04T22:00", True),
+        # 7 pm EST slate: 00:00 UTC. The 23:00 trigger runs it.
+        ("2026-11-05T00:00", "2026-11-04T23:00", "2026-11-04T22:00"),
+        # 7:30 pm EST slate: 00:30 UTC. The 00:00 trigger runs it.
+        ("2026-11-05T00:30", "2026-11-05T00:00", "2026-11-04T23:00"),
+        # 2 pm EST matinee: 19:00 UTC. The 18:00 trigger runs it.
+        ("2026-11-04T19:00", "2026-11-04T18:00", "2026-11-04T17:00"),
+        # 12:30 pm EST matinee: 17:30 UTC. The 17:00 trigger runs it.
+        ("2026-11-04T17:30", "2026-11-04T17:00", "2026-11-04T16:00"),
+        # 8 am EST international game: 13:00 UTC. The 12:00 trigger runs it.
+        ("2026-11-04T13:00", "2026-11-04T12:00", "2026-11-04T01:00"),
     ],
 )
-def test_first_puck_drop_at_two_pm_runs_at_noon_trigger(now: str, runs: bool) -> None:
-    assert is_due(at(now), FIRST_PUCK_DROP_2PM) is runs
+def test_the_last_trigger_before_the_first_puck_drop_runs(
+    first: str, runs_at: str, skips_at: str
+) -> None:
+    assert is_due(at(runs_at), at(first)) is True
+    assert is_due(at(skips_at), at(first)) is False
 
 
-def test_trigger_exactly_at_first_puck_drop_runs_the_trigger_before() -> None:
-    assert is_due(at("2026-11-04T12:00"), at("2026-11-04T14:00")) is True
-    assert is_due(at("2026-11-04T13:59"), at("2026-11-04T14:00")) is True
+def test_a_late_cron_run_keeps_its_own_slot() -> None:
+    assert next_trigger(at("2026-11-04T23:40")) == at("2026-11-05T00:00")
+    assert is_due(at("2026-11-04T23:40"), at("2026-11-05T00:00")) is True
 
 
-def test_slot_for_a_late_trigger_is_its_own_slot() -> None:
-    assert next_trigger(at("2026-11-04T12:50")) == at("2026-11-04T14:00")
+def test_the_gap_after_the_evening_triggers_reaches_the_next_morning() -> None:
+    assert next_trigger(at("2026-11-05T01:00")) == at("2026-11-05T12:00")
+    assert next_trigger(at("2026-11-05T12:00")) == at("2026-11-05T16:00")
 
 
 def test_no_games_waits_for_the_last_trigger_of_the_game_day() -> None:
     first = first_puck_drop(CLOSES, [])
     assert first == at("2026-11-05T05:00")
-    assert is_due(at("2026-11-05T02:00"), first) is False
-    assert is_due(at("2026-11-05T04:00"), first) is True
+    assert is_due(at("2026-11-05T00:00"), first) is False
+    assert is_due(at("2026-11-05T01:00"), first) is True
 
 
 def test_first_puck_drop_is_the_earliest_start() -> None:
-    starts = [at("2026-11-04T23:00"), at("2026-11-04T14:00"), at("2026-11-04T19:00")]
-    assert first_puck_drop(CLOSES, starts) == FIRST_PUCK_DROP_2PM
+    starts = [at("2026-11-05T03:00"), at("2026-11-05T00:00"), at("2026-11-05T00:30")]
+    assert first_puck_drop(CLOSES, starts) == at("2026-11-05T00:00")
 
 
 def test_puck_drop_already_passed_makes_the_trigger_due() -> None:
-    assert is_due(at("2026-11-04T18:00"), FIRST_PUCK_DROP_2PM) is True
+    assert is_due(at("2026-11-05T01:00"), at("2026-11-05T00:00")) is True
+
+
+def test_trigger_hours_are_sorted_unique_hours() -> None:
+    assert list(TRIGGER_HOURS_UTC) == sorted(set(TRIGGER_HOURS_UTC))
+    assert all(0 <= hour <= 23 for hour in TRIGGER_HOURS_UTC)
 
 
 def test_non_utc_time_is_an_error() -> None:
@@ -87,12 +97,15 @@ def test_non_utc_offset_is_an_error() -> None:
 
 
 @given(_UTC_TIMES)
-def test_next_trigger_is_the_next_slot_boundary(now: datetime) -> None:
+def test_next_trigger_is_the_first_trigger_hour_after_now(now: datetime) -> None:
     trigger = next_trigger(now)
     assert trigger > now
     assert trigger.minute == trigger.second == trigger.microsecond == 0
-    assert trigger.hour % TRIGGER_INTERVAL_HOURS == 0
-    assert trigger - now <= timedelta(hours=TRIGGER_INTERVAL_HOURS)
+    assert trigger.hour in TRIGGER_HOURS_UTC
+    hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    while hour < trigger:
+        assert hour.hour not in TRIGGER_HOURS_UTC
+        hour += timedelta(hours=1)
 
 
 @given(_DAYS, st.lists(_UTC_TIMES, max_size=8))

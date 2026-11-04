@@ -5,16 +5,25 @@ from pathlib import Path
 
 import pytest
 
-from hockey_model.report_trigger import TRIGGER_INTERVAL_HOURS
+from hockey_model.report_trigger import TRIGGER_HOURS_UTC
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "daily-report.yml"
-_CRON_HOURS = re.compile(r'cron: "0 \*/([0-9]+) \* \* \*"')
+_CRON = re.compile(r'cron: "0 ([0-9,-]+) \* \* \*"')
 
 
-def test_cron_spacing_matches_the_trigger_interval() -> None:
+def _hours(field: str) -> list[int]:
+    """Expand a cron hour field such as ``0,1,16-23``."""
+    hours: list[int] = []
+    for part in field.split(","):
+        low, _, high = part.partition("-")
+        hours.extend(range(int(low), int(high or low) + 1))
+    return hours
+
+
+def test_cron_hours_match_the_trigger_hours() -> None:
     # The mutation run copies src and tests only, so it has no workflow file to read.
     if "mutants" in Path(__file__).resolve().parts:
         pytest.skip("the mutation copy has no .github directory")
-    match = _CRON_HOURS.search(WORKFLOW.read_text(encoding="utf-8"))
-    assert match is not None, "the schedule must be an hourly step cron such as '0 */N * * *'"
-    assert int(match.group(1)) == TRIGGER_INTERVAL_HOURS
+    match = _CRON.search(WORKFLOW.read_text(encoding="utf-8"))
+    assert match is not None, "the schedule must be a top-of-hour cron such as '0 0,1,16-23 * * *'"
+    assert _hours(match.group(1)) == list(TRIGGER_HOURS_UTC)
