@@ -56,5 +56,5 @@ def find_record_by_id(record_id: str) -> ExperimentRecord | None:
     """Load a record by ID, or return None when not found."""
     try:
         return load_record(record_id)
-    except FileNotFoundError:
+    except FileNotFoundError, HockeyModelError:
         return None

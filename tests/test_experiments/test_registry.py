@@ -91,7 +91,7 @@ class TestGetRecord:
             import hockey_model.experiments.registry as reg
 
             reg.REGISTRY_DIR = reg_dir
-            with pytest.raises(HockeyModelError, match="not found"):
+            with pytest.raises(HockeyModelError, match="cannot read"):
                 get_record("0001-missing")
         finally:
             import hockey_model.experiments.registry as reg2

@@ -240,7 +240,7 @@ def _check_array(
     path: str,
 ) -> None:
     """Check that a value is an array and validate its items."""
-    if not isinstance(value, list):
+    if not isinstance(value, (list, tuple)):
         raise HockeyModelError(f"{path}: expected an array, got {type(value).__name__}")
     items_schema = schema.get("items")
     if items_schema:
