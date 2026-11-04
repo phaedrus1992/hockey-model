@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+# The mutation run copies src and tests only, so the scripts are not there to test.
+if "mutants" in Path(__file__).resolve().parts:
+    pytest.skip("the mutation copy has no scripts directory", allow_module_level=True)
+
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 DAY = "2026-11-04"
 TAG = f"reports-{DAY}"
