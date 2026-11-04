@@ -2,12 +2,12 @@
 #
 # The schedule fires at each trigger slot. The gate job publishes only at the last slot
 # before the day's first puck drop, and skips every later slot once the release exists.
-# The cron spacing MUST match TRIGGER_INTERVAL_HOURS in report_trigger.py.
+# The cron hours MUST match TRIGGER_HOURS_UTC in report_trigger.py.
 name: daily-report
 
 on:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "0 0,1,12,16-23 * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -18,8 +18,9 @@ on:
 permissions:
   contents: read
 
+# The same group as daily-prepare, so only one run writes the cached store at a time.
 concurrency:
-  group: daily-report
+  group: hockey-model-store
   cancel-in-progress: false
 
 jobs:

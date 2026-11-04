@@ -51,6 +51,9 @@ def fakes(tmp_path: Path) -> Path:
     uv.write_text(
         '#!/usr/bin/env bash\necho "uv $*" >> "$FAKE_CALLS"\n'
         'if [[ "$*" == "run hockey-model report-due"* ]]; then printf "%s" "$FAKE_DUE_JSON"; fi\n'
+        'if [[ "$*" == "run hockey-model backtest --games-out "* ]]; then\n'
+        '  echo "game_id,elo" > "$5"; echo "{}"\n'
+        "fi\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -255,7 +258,68 @@ def test_publish_help_names_the_delete_first_step(fakes: Path, tmp_path: Path) -
     assert "--report-dir" in result.stdout
 
 
-# --- daily run ----------------------------------------------------------------
+# --- prepare and daily run ----------------------------------------------------
+
+
+def _store(tmp_path: Path) -> Path:
+    return tmp_path / "store" / "store.db"
+
+
+def test_prepare_needs_the_store_path(fakes: Path, tmp_path: Path) -> None:
+    result = _run("daily-prepare.sh", _env(fakes, tmp_path), "--date", DAY)
+    assert result.returncode == 2
+    assert "HOCKEY_MODEL_DB" in result.stderr
+
+
+def test_prepare_backfills_until_the_marker_exists(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    first = _run("daily-prepare.sh", env, "--date", DAY)
+    assert first.returncode == 0, first.stderr
+    assert "backfilling from 2014-10-01" in first.stderr
+    assert (tmp_path / "store" / "store.db.backfilled").exists()
+
+    _run("daily-prepare.sh", env, "--date", DAY)
+    refreshes = [line for line in _calls(tmp_path) if "refresh" in line]
+    assert refreshes == [
+        "uv run hockey-model refresh --backfill-from 2014-10-01",
+        "uv run hockey-model refresh",
+    ]
+
+
+def test_prepare_writes_the_backtest_and_the_marker_and_drops_old_days(
+    fakes: Path, tmp_path: Path
+) -> None:
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    (store_dir / "store.db.backfilled").touch()
+    (store_dir / "prepared-2026-11-03").touch()
+    (store_dir / "backtest-2026-11-03.json").write_text("{}", encoding="utf-8")
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    result = _run("daily-prepare.sh", env, "--date", DAY)
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in store_dir.iterdir()) == [
+        f"backtest-{DAY}.json",
+        f"backtest-games-{DAY}.csv",
+        f"prepared-{DAY}",
+        "store.db.backfilled",
+    ]
+    assert "uv run hockey-model fit" in _calls(tmp_path)
+
+
+def test_prepare_stops_at_a_failed_refresh(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    failing = fakes / "uv"
+    failing.write_text(
+        '#!/usr/bin/env bash\necho "uv $*" >> "$FAKE_CALLS"\n'
+        'if [[ "$*" == *refresh* ]]; then exit 1; fi\nexit 0\n',
+        encoding="utf-8",
+    )
+    failing.chmod(0o755)
+    result = _run("daily-prepare.sh", env, "--date", DAY)
+    assert result.returncode == 1
+    assert not any("fit" in line for line in _calls(tmp_path))
+    assert not (tmp_path / "store" / "store.db.backfilled").exists()
+    assert not (tmp_path / "store" / f"prepared-{DAY}").exists()
 
 
 def test_daily_run_needs_the_store_path(fakes: Path, tmp_path: Path) -> None:
@@ -265,56 +329,43 @@ def test_daily_run_needs_the_store_path(fakes: Path, tmp_path: Path) -> None:
 
 
 def test_daily_run_needs_a_date(fakes: Path, tmp_path: Path) -> None:
-    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(tmp_path / "s.db"))
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
     result = _run("daily-report.sh", env, "--out-dir", "x")
     assert result.returncode == 2
     assert "--date and --out-dir are required" in result.stderr
 
 
-def test_daily_run_backfills_until_the_marker_exists(fakes: Path, tmp_path: Path) -> None:
-    db = tmp_path / "store" / "store.db"
-    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(db))
-    args = ("--date", DAY, "--out-dir", str(tmp_path / "out"))
-    first = _run("daily-report.sh", env, *args)
-    assert first.returncode == 0, first.stderr
-    assert "backfilling from 2014-10-01" in first.stderr
-    assert (tmp_path / "store" / "store.db.backfilled").exists()
-
-    _run("daily-report.sh", env, *args)
-    refreshes = [line for line in _calls(tmp_path) if "refresh" in line]
-    assert refreshes == [
-        "uv run hockey-model refresh --backfill-from 2014-10-01",
-        "uv run hockey-model refresh",
-    ]
-
-
-def test_daily_run_resumes_a_partial_backfill(fakes: Path, tmp_path: Path) -> None:
-    db = tmp_path / "store" / "store.db"
-    db.parent.mkdir()
-    db.write_text("partial", encoding="utf-8")
-    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(db))
-    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+def test_daily_run_after_the_morning_refreshes_only_the_starters(
+    fakes: Path, tmp_path: Path
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    (tmp_path / "calls.log").unlink()
+    out = tmp_path / "out"
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out))
     assert result.returncode == 0, result.stderr
-    assert "uv run hockey-model refresh --backfill-from 2014-10-01" in _calls(tmp_path)
+    calls = _calls(tmp_path)
+    assert calls[0] == "uv run hockey-model refresh --starters-only"
+    assert not any(line.endswith(" fit") or " backtest " in line for line in calls)
+    assert (out / f"backtest-{DAY}.json").exists()
+    assert (out / f"backtest-games-{DAY}.csv").exists()
 
 
-def test_daily_run_stops_at_a_failed_refresh(fakes: Path, tmp_path: Path) -> None:
-    db = tmp_path / "store" / "store.db"
-    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(db))
-    failing = fakes / "uv"
-    failing.write_text(
-        '#!/usr/bin/env bash\necho "uv $*" >> "$FAKE_CALLS"\n'
-        'if [[ "$*" == *refresh* ]]; then exit 1; fi\nexit 0\n',
-        encoding="utf-8",
-    )
-    failing.chmod(0o755)
-    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
-    assert result.returncode == 1
-    assert not any("daily --date" in line for line in _calls(tmp_path))
-    assert not (tmp_path / "store" / "store.db.backfilled").exists()
+def test_daily_run_without_the_morning_prepares_first(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    out = tmp_path / "out"
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out))
+    assert result.returncode == 0, result.stderr
+    assert f"no morning preparation for {DAY}" in result.stderr
+    calls = _calls(tmp_path)
+    assert "uv run hockey-model fit" in calls
+    assert "uv run hockey-model refresh --starters-only" not in calls
+    assert (out / f"backtest-{DAY}.json").exists()
 
 
-def test_daily_help_documents_the_marker(fakes: Path, tmp_path: Path) -> None:
-    result = _run("daily-report.sh", _env(fakes, tmp_path), "--help")
-    assert result.returncode == 0
-    assert "resumes on the next run" in result.stdout
+def test_prepare_and_daily_help_document_the_split(fakes: Path, tmp_path: Path) -> None:
+    prepare = _run("daily-prepare.sh", _env(fakes, tmp_path), "--help")
+    daily = _run("daily-report.sh", _env(fakes, tmp_path), "--help")
+    assert prepare.returncode == daily.returncode == 0
+    assert "resumes on the next run" in prepare.stdout
+    assert "late or failed morning run" in daily.stdout

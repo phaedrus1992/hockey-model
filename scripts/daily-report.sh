@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Refresh the store, fit the model, and write the daily report and backtest for one UTC day.
+# Write the daily report for one game day: refresh the starters, then predict.
 #
 # Usage: daily-report.sh --date YYYY-MM-DD --out-dir DIR [--help]
-#   --date     UTC day to predict.
+#   --date     Eastern game day to predict.
 #   --out-dir  Directory for the report and backtest files. Created when missing.
 #
-# Reads the store path from HOCKEY_MODEL_DB. The first backfill runs until a marker file
-# next to the store says it finished. An interrupted backfill resumes on the next run,
-# because refresh skips what it already read. Any failed step stops the script with its
-# exit code, so a failed run writes no report.
+# Reads the store path from HOCKEY_MODEL_DB. The morning run of daily-prepare.sh does the
+# slow work. When its prepared-DATE marker is missing, this script runs it first, so a
+# late or failed morning run still gives a report. Any failed step stops the script with
+# its exit code, so a failed run writes no report.
 set -euo pipefail
 
 day=""
@@ -48,19 +48,13 @@ if [[ -z "${HOCKEY_MODEL_DB:-}" ]]; then
   exit 2
 fi
 
-mkdir -p "$(dirname "$HOCKEY_MODEL_DB")" "$out_dir"
-
-# The marker is written only after a backfill finishes. A store file without it is partial.
-marker="$HOCKEY_MODEL_DB.backfilled"
-if [[ ! -f "$marker" ]]; then
-  echo "daily-report: the store has no finished backfill; backfilling from 2014-10-01." >&2
-  echo "daily-report: a full backfill takes hours and can outlast the job time limit." >&2
-  uv run hockey-model refresh --backfill-from 2014-10-01
-  touch "$marker"
+store_dir="$(dirname "$HOCKEY_MODEL_DB")"
+mkdir -p "$out_dir"
+if [[ ! -f "$store_dir/prepared-$day" ]]; then
+  echo "daily-report: no morning preparation for $day; preparing now." >&2
+  bash "$(dirname "$0")/daily-prepare.sh" --date "$day"
 else
-  uv run hockey-model refresh
+  uv run hockey-model refresh --starters-only
 fi
-uv run hockey-model fit
 uv run hockey-model daily --date "$day" --out-dir "$out_dir"
-backtest_games="$out_dir/backtest-games-$day.csv"
-uv run hockey-model backtest --games-out "$backtest_games" >"$out_dir/backtest-$day.json"
+cp "$store_dir/backtest-$day.json" "$store_dir/backtest-games-$day.csv" "$out_dir/"
