@@ -93,3 +93,12 @@ def test_daily_refuses_a_day_with_no_model_fit(
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
     assert main(["daily", "--date", "2026-11-04", "--out-dir", str(tmp_path)]) == 2
     assert "error:" in capsys.readouterr().err
+
+
+def test_refresh_refuses_starters_only_with_a_backfill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    code = main(["refresh", "--starters-only", "--backfill-from", "2014-10-01"])
+    assert code == 2
+    assert "drop --starters-only" in capsys.readouterr().err

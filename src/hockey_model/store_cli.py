@@ -22,7 +22,7 @@ from hockey_model.sources.nhl import GameRow, fetch_score_day
 from hockey_model.store.db import connect, db_path_from_env
 from hockey_model.store.fits import newest_fit, save_fit
 from hockey_model.store.reads import game_row
-from hockey_model.store.refresh import RefreshReport, refresh
+from hockey_model.store.refresh import RefreshReport, refresh, refresh_starters
 from hockey_model.store.refresh_other import current_season_start
 from hockey_model.store.timestamps import iso_utc
 from hockey_model.types import HockeyModelError
@@ -39,6 +39,11 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         type=date.fromisoformat,
         metavar="YYYY-MM-DD",
         help="read score days from this date; days already read after they ended are skipped",
+    )
+    parser.add_argument(
+        "--starters-only",
+        action="store_true",
+        help="read only the schedule, the goalie sources, and the injuries",
     )
     fit = add_parser("fit", help="fit the game model on the stored games and save the fit")
     fit.add_argument(
@@ -97,15 +102,22 @@ def _report_json(report: RefreshReport) -> dict[str, object]:
 
 
 def _refresh(args: argparse.Namespace) -> tuple[object, int]:
+    if args.starters_only and args.backfill_from is not None:
+        raise HockeyModelError("refresh: a backfill reads every source; drop --starters-only")
     conn = connect(db_path_from_env(os.environ))
     try:
-        report = refresh(
-            conn,
-            HttpClient(),
-            now=datetime.now(UTC),
-            backfill_from=args.backfill_from,
-            clock=lambda: datetime.now(UTC),
-        )
+        if args.starters_only:
+            report = refresh_starters(
+                conn, HttpClient(), now=datetime.now(UTC), clock=lambda: datetime.now(UTC)
+            )
+        else:
+            report = refresh(
+                conn,
+                HttpClient(),
+                now=datetime.now(UTC),
+                backfill_from=args.backfill_from,
+                clock=lambda: datetime.now(UTC),
+            )
     finally:
         conn.close()
     return _report_json(report), 1 if report.errors else 0

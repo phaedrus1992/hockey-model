@@ -13,7 +13,7 @@ from hockey_model.sources.errors import SourceError
 from hockey_model.sources.http import HttpClient
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT, TEAM_GAMES_URL, goalie_games_url
 from hockey_model.store.db import connect
-from hockey_model.store.refresh import refresh
+from hockey_model.store.refresh import refresh, refresh_starters
 from hockey_model.store.refresh_other import current_season_start
 from hockey_model.store.source_reads import record_read
 
@@ -102,6 +102,26 @@ def test_refresh_writes_every_source(conn: sqlite3.Connection) -> None:
     assert count(conn, "games") == 14
     assert count(conn, "goalie_games") == 56
     assert count(conn, "starter_reads") == 2
+
+
+def test_refresh_starters_reads_only_the_schedule_goalies_and_injuries(
+    conn: sqlite3.Connection,
+) -> None:
+    refresh(conn, FakeClient(), now=NOW, backfill_from=date(2026, 1, 10))
+    boxscore_rows = count(conn, "goalie_games")
+    moneypuck_rows = count(conn, "mp_team_games")
+    report = refresh_starters(conn, FakeClient(), now=NOW)
+    assert report.errors == ()
+    assert "nhl_boxscores" not in report.written
+    assert "moneypuck" not in report.written
+    assert "espn_injuries" in report.written
+    assert count(conn, "goalie_games") == boxscore_rows
+    assert count(conn, "mp_team_games") == moneypuck_rows
+
+
+def test_refresh_starters_needs_a_timezone(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="has no timezone"):
+        refresh_starters(conn, FakeClient(), now=datetime(2026, 1, 11, 12, 0))
 
 
 def test_refresh_reports_unmatched_goalie_reads(conn: sqlite3.Connection) -> None:
