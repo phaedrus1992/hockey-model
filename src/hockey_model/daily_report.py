@@ -1,7 +1,8 @@
 """Daily prediction report: every game that starts on one UTC day, as Markdown and JSON.
 
 A game that started before the run is still predicted. Its inputs are taken as of the game
-start, and the report marks it as a late run. A game that is over gets no prediction.
+start, and the report marks it as a late run. A game that is over or postponed gets no
+prediction.
 """
 
 import json
@@ -17,14 +18,15 @@ from hockey_model.models import GameModel
 from hockey_model.sources.nhl import FINAL_STATES, GameRow
 from hockey_model.store.reads import games_on_day
 from hockey_model.store.timestamps import iso_utc
-from hockey_model.types import HockeyModelError
+from hockey_model.utc import require_utc
 
-REPORT_TAG_PREFIX = "reports-"
+# A postponed game has no result and no puck drop yet, so it gets no prediction.
+NO_PREDICTION_STATES = FINAL_STATES | {"PPD"}
 
 
 @dataclass(frozen=True, slots=True)
 class DailyLine:
-    """One game in the daily report. Probabilities are None when no prediction was made."""
+    """One game in the daily report. ``prediction`` is None when no prediction was made."""
 
     row: GameRow
     prediction: GamePrediction | None
@@ -43,17 +45,12 @@ class DailyReport:
 
 def report_tag(day: date) -> str:
     """Return the release tag for the report of ``day``, such as ``reports-2026-11-04``."""
-    return f"{REPORT_TAG_PREFIX}{day.isoformat()}"
-
-
-def report_stem(day: date) -> str:
-    """Return the file name without extension for the report of ``day``."""
-    return f"report-{day.isoformat()}"
+    return f"reports-{day.isoformat()}"
 
 
 def _predict_line(row: GameRow, model: GameModel, now: datetime, level: float) -> DailyLine:
-    if row.state in FINAL_STATES:
-        return DailyLine(row, None, "game is over; no prediction")
+    if row.state in NO_PREDICTION_STATES:
+        return DailyLine(row, None, f"game is over or postponed (state {row.state}); no prediction")
     # A late run uses the inputs known at puck drop, so the note in the report is true.
     as_of = min(now, row.start)
     prediction = game_win_probability(game_input(row), model, as_of=as_of, level=level)
@@ -69,10 +66,13 @@ def build_report(
     level: float = 0.8,
 ) -> DailyReport:
     """Predict every game that starts on ``day``. Raise on the first game that fails."""
-    if now.utcoffset() is None:
-        raise HockeyModelError(f"daily report: now {now!r} has no timezone; pass a UTC datetime")
+    require_utc(now, "daily report now")
     lines = tuple(_predict_line(row, model, now, level) for row in games_on_day(conn, day))
     return DailyReport(day, now.astimezone(UTC), level, lines)
+
+
+def _credits(report: DailyReport) -> list[str]:
+    return sorted({c for line in report.lines if line.prediction for c in line.prediction.credits})
 
 
 def _missing_json(missing: tuple[MissingInput, ...]) -> list[dict[str, Any]]:
@@ -97,7 +97,6 @@ def _line_json(line: DailyLine) -> dict[str, Any]:
             "away_win": None,
             "made_after_start": False,
             "missing": [],
-            "credits": [],
         }
     return {
         **base,
@@ -105,21 +104,17 @@ def _line_json(line: DailyLine) -> dict[str, Any]:
         "away_win": prediction.away_win,
         "made_after_start": prediction.made_after_start,
         "missing": _missing_json(prediction.missing),
-        "credits": list(prediction.credits),
     }
 
 
 def report_json(report: DailyReport) -> dict[str, Any]:
     """Return the JSON copy of the report. Every game has the same keys."""
-    credits = sorted(
-        {c for line in report.lines if line.prediction for c in line.prediction.credits}
-    )
     return {
         "date": report.day.isoformat(),
         "generated_at": iso_utc(report.generated_at),
         "level": report.level,
         "games": [_line_json(line) for line in report.lines],
-        "credits": credits,
+        "credits": _credits(report),
     }
 
 
@@ -127,14 +122,19 @@ def _percent(value: float | None) -> str:
     return "-" if value is None else f"{value:.1%}"
 
 
+def _cell(text: str) -> str:
+    """Make one value safe inside a Markdown table cell. The value comes from a remote feed."""
+    return " ".join(text.replace("|", "\\|").split())
+
+
 def _notes(line: DailyLine) -> str:
     if line.skipped:
-        return line.skipped
+        return _cell(line.skipped)
     prediction = line.prediction
     if prediction is None:
         return ""
     notes = [f"{m.kind.value}: {m.note}" for m in prediction.missing]
-    return "; ".join(notes) or "none"
+    return _cell("; ".join(notes) or "none")
 
 
 def report_markdown(report: DailyReport) -> str:
@@ -154,12 +154,13 @@ def report_markdown(report: DailyReport) -> str:
             row = line.row
             p = line.prediction
             out.append(
-                f"| {row.away} at {row.home} ({row.game_id}) | {iso_utc(row.start)} | {row.state}"
+                f"| {_cell(f'{row.away} at {row.home}')} ({row.game_id}) | {iso_utc(row.start)}"
+                f" | {_cell(row.state)}"
                 f" | {_percent(p.home_win if p else None)}"
                 f" | {_percent(p.away_win if p else None)} | {_notes(line)} |"
             )
     out.append("")
-    credits = report_json(report)["credits"]
+    credits = _credits(report)
     if credits:
         out.append("Sources: " + " ".join(credits))
         out.append("")
@@ -173,7 +174,7 @@ def write_report(report: DailyReport, out_dir: Path) -> tuple[Path, Path]:
     """
     markdown = report_markdown(report)
     payload = json.dumps(report_json(report), indent=2, sort_keys=True) + "\n"
-    stem = report_stem(report.day)
+    stem = f"report-{report.day.isoformat()}"
     md_path = out_dir / f"{stem}.md"
     json_path = out_dir / f"{stem}.json"
     md_path.write_text(markdown, encoding="utf-8")

@@ -4,7 +4,7 @@ import argparse
 import os
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from hockey_model.backtest.runner import run_backtest, write_game_records
@@ -13,15 +13,16 @@ from hockey_model.game import game_win_probability
 from hockey_model.game_model.features import ATTEMPT_FEATURES, FEATURES, GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
-from hockey_model.game_model.seasons import FIT_FIRST, season_of
+from hockey_model.game_model.seasons import FIT_FIRST
 from hockey_model.game_model.training import game_input, training_rows
-from hockey_model.report_trigger import first_puck_drop, is_due, next_trigger
+from hockey_model.report_trigger import day_end, first_puck_drop, is_due
 from hockey_model.sources.http import HttpClient
-from hockey_model.sources.nhl import fetch_score_day
+from hockey_model.sources.nhl import GameRow, fetch_score_day
 from hockey_model.store.db import connect, db_path_from_env
 from hockey_model.store.fits import newest_fit, save_fit
 from hockey_model.store.reads import game_row
 from hockey_model.store.refresh import RefreshReport, refresh
+from hockey_model.store.refresh_other import current_season_start
 from hockey_model.store.timestamps import iso_utc
 from hockey_model.types import HockeyModelError
 
@@ -72,7 +73,7 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         metavar="YYYY-MM-DD",
         help="UTC day to predict; default is today in UTC",
     )
-    daily.add_argument("--out-dir", type=Path, default=Path("."), metavar="DIR")
+    daily.add_argument("--out-dir", type=Path, required=True, metavar="DIR")
     daily.add_argument("--level", type=float, default=0.8)
     due = add_parser("report-due", help="say whether this trigger publishes the daily report")
     due.add_argument("--date", type=date.fromisoformat, default=None, metavar="YYYY-MM-DD")
@@ -117,7 +118,7 @@ def _fit(args: argparse.Namespace) -> tuple[object, int]:
     features = _feature_names(args.features)
     through = args.through_season
     if through is None:
-        through = season_of(datetime.now(UTC).date())
+        through = _season_code(datetime.now(UTC))
     conn = connect(db_path_from_env(os.environ))
     try:
         if features:
@@ -174,19 +175,38 @@ def _daily(args: argparse.Namespace) -> tuple[object, int]:
     }, 0
 
 
+def _utc_day_games(day: date) -> list[GameRow]:
+    """Return the games that start on the UTC ``day``.
+
+    The score feed groups games by Eastern day, so the feed of the day before can list
+    games that start on ``day`` in UTC. Both feed days are read, and the UTC window keeps
+    only the games of ``day``.
+    """
+    client = HttpClient()
+    window_start = day_end(day - timedelta(days=1))
+    window_end = day_end(day)
+    feed = fetch_score_day(client, day - timedelta(days=1)) + fetch_score_day(client, day)
+    return [game for game in feed if window_start <= game.start < window_end]
+
+
 def _report_due(args: argparse.Namespace) -> tuple[object, int]:
     now = datetime.now(UTC)
     day = args.date if args.date is not None else now.date()
-    games = fetch_score_day(HttpClient(), day)
+    games = _utc_day_games(day)
     first = first_puck_drop(day, [game.start for game in games])
     return {
         "date": day.isoformat(),
         "tag": report_tag(day),
-        "due": bool(args.force or is_due(now, first)),
-        "forced": bool(args.force),
+        "games": len(games),
         "first_puck_drop_utc": iso_utc(first),
-        "next_trigger_utc": iso_utc(next_trigger(now)),
+        "due": args.force or is_due(now, first),
     }, 0
+
+
+def _season_code(now: datetime) -> int:
+    """Return the season code, such as 20262027, of the season that holds ``now``."""
+    start = current_season_start(now)
+    return start * 10000 + start + 1
 
 
 def _backtest(args: argparse.Namespace) -> tuple[object, int]:

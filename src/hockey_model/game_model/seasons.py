@@ -1,7 +1,6 @@
 """The seasons that the fit and the backtest use. A season is written as the NHL writes it."""
 
 from dataclasses import dataclass
-from datetime import date
 
 # The Elo replays from this season. Its games set the ratings and are never in a fit.
 ELO_BURN_IN = 20142015
@@ -27,13 +26,3 @@ class SeasonPlan:
 
 
 DEFAULT_PLAN = SeasonPlan()
-
-
-def season_of(day: date) -> int:
-    """Return the NHL season that holds ``day``, such as 20262027 for November 2026.
-
-    The season starts in July here. Preseason games in September belong to the season
-    that starts that year, and no regular season game is played in July.
-    """
-    start = day.year if day.month >= 7 else day.year - 1
-    return start * 10000 + start + 1

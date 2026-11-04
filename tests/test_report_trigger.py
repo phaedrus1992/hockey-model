@@ -1,10 +1,26 @@
 """Tests for the trigger that decides when the daily report runs."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
-from hockey_model.report_trigger import first_puck_drop, is_due, next_trigger
+from hockey_model.report_trigger import (
+    TRIGGER_INTERVAL_HOURS,
+    day_end,
+    first_puck_drop,
+    is_due,
+    next_trigger,
+)
+from hockey_model.types import HockeyModelError
+
+_UTC_TIMES = st.datetimes(
+    min_value=datetime(2000, 1, 1),
+    max_value=datetime(2099, 12, 31, 23, 59),
+    timezones=st.just(UTC),
+)
+_DAYS = st.dates(min_value=date(2000, 1, 1), max_value=date(2099, 12, 30))
 
 
 def at(text: str) -> datetime:
@@ -59,5 +75,46 @@ def test_puck_drop_already_passed_makes_the_trigger_due() -> None:
 
 
 def test_non_utc_time_is_an_error() -> None:
-    with pytest.raises(ValueError, match="must be a UTC datetime"):
+    with pytest.raises(HockeyModelError, match="must be a timezone-aware UTC datetime"):
         next_trigger(datetime(2026, 11, 4, 12, 0))
+
+
+def test_non_utc_offset_is_an_error() -> None:
+    eastern = datetime(2026, 11, 4, 12, 0, tzinfo=timezone(timedelta(hours=-5)))
+    with pytest.raises(HockeyModelError, match="offset"):
+        next_trigger(eastern)
+
+
+@given(_UTC_TIMES)
+def test_next_trigger_is_the_next_slot_boundary(now: datetime) -> None:
+    trigger = next_trigger(now)
+    assert trigger > now
+    assert trigger.minute == trigger.second == trigger.microsecond == 0
+    assert trigger.hour % TRIGGER_INTERVAL_HOURS == 0
+    assert trigger - now <= timedelta(hours=TRIGGER_INTERVAL_HOURS)
+
+
+@given(_DAYS)
+def test_day_end_is_the_next_utc_midnight(day: date) -> None:
+    end = day_end(day)
+    assert end.tzinfo is UTC
+    assert end.date() == day + timedelta(days=1)
+    assert end.hour == end.minute == 0
+    assert end - datetime(day.year, day.month, day.day, tzinfo=UTC) == timedelta(days=1)
+
+
+@given(_DAYS, st.lists(_UTC_TIMES, max_size=8))
+def test_first_puck_drop_is_the_minimum_or_the_day_end(day: date, starts: list[datetime]) -> None:
+    result = first_puck_drop(day, starts)
+    if starts:
+        assert result in starts
+        assert all(result <= start for start in starts)
+    else:
+        assert result == day_end(day)
+
+
+@given(_UTC_TIMES, _UTC_TIMES)
+def test_is_due_matches_the_slot_comparison_and_is_monotone(now: datetime, start: datetime) -> None:
+    assert is_due(now, start) is (next_trigger(now) >= start)
+    if is_due(now, start + timedelta(hours=1)):
+        assert is_due(now, start)

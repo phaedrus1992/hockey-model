@@ -2,24 +2,29 @@
 
 import json
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from seeding import add_game, add_team_form, utc
 
 from hockey_model.daily_report import (
+    DailyLine,
+    DailyReport,
     build_report,
     report_json,
     report_markdown,
     report_tag,
     write_report,
 )
-from hockey_model.game import MissingKind
+from hockey_model.game import GamePrediction, MissingKind
 from hockey_model.game_model.features import GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY
 from hockey_model.game_model.nhl_model import NhlGameModel
-from hockey_model.types import HockeyModelError
+from hockey_model.sources.nhl import GameRow
+from hockey_model.types import HockeyModelError, Projection
 
 DAY = date(2026, 1, 20)
 NOW = utc("2026-01-20T12:00")
@@ -62,7 +67,16 @@ def test_game_over_gets_no_prediction(store: sqlite3.Connection) -> None:
     assert line.prediction is None
     game = report_json(report)["games"][0]
     assert game["home_win"] is None
-    assert game["skipped"] == "game is over; no prediction"
+    assert game["skipped"] == "game is over or postponed (state FINAL); no prediction"
+
+
+def test_postponed_game_gets_no_prediction(store: sqlite3.Connection) -> None:
+    _seed_form(store)
+    add_game(store, 14, "2026-01-20T23:00", "TOR", "BOS", state="PPD")
+    report = build_report(store, _model(store), DAY, now=NOW)
+    (line,) = report.lines
+    assert line.prediction is None
+    assert "postponed (state PPD)" in report_markdown(report)
 
 
 def test_in_progress_game_is_not_treated_as_final(store: sqlite3.Connection) -> None:
@@ -86,8 +100,14 @@ def test_started_game_is_a_late_run_with_inputs_as_of_start(store: sqlite3.Conne
 
 
 def test_naive_now_is_an_error(store: sqlite3.Connection) -> None:
-    with pytest.raises(HockeyModelError, match="has no timezone"):
+    with pytest.raises(HockeyModelError, match="must be a timezone-aware UTC datetime"):
         build_report(store, _model(store), DAY, now=datetime(2026, 1, 20, 12, 0))
+
+
+def test_non_utc_offset_now_is_an_error_even_with_no_games(store: sqlite3.Connection) -> None:
+    eastern = NOW.astimezone(timezone(timedelta(hours=5)))
+    with pytest.raises(HockeyModelError, match="offset"):
+        build_report(store, _model(store), DAY, now=eastern)
 
 
 def test_write_report_writes_markdown_and_json(store: sqlite3.Connection, tmp_path: Path) -> None:
@@ -98,3 +118,41 @@ def test_write_report_writes_markdown_and_json(store: sqlite3.Connection, tmp_pa
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload["date"] == "2026-01-20"
     assert md_path.read_text(encoding="utf-8").startswith("# NHL predictions for 2026-01-20")
+
+
+def test_remote_state_cannot_break_the_markdown_table(tmp_path: Path) -> None:
+    hostile = GameRow(
+        99, 20252026, 2, utc("2026-01-20T23:00"), "TOR", "BOS", "A|B\nC", None, None, None
+    )
+    report = DailyReport(DAY, NOW, 0.8, (DailyLine(hostile, None, "weird | state"),))
+    table = [line for line in report_markdown(report).splitlines() if line.startswith("| BOS at")]
+    assert len(table) == 1
+    assert table[0].count("\\|") == 2
+    assert "A\\|B C" in table[0]
+    assert "weird \\| state" in table[0]
+
+
+@given(st.lists(st.booleans(), max_size=6), st.integers(min_value=0, max_value=3))
+def test_json_games_share_keys_and_credits_are_the_unique_union(
+    predicted: list[bool], credit_count: int
+) -> None:
+    lines = [
+        DailyLine(_row(index + 1), _prediction(credit_count) if has else None, "")
+        for index, has in enumerate(predicted)
+    ]
+    payload = report_json(DailyReport(DAY, NOW, 0.8, tuple(lines)))
+    assert len(payload["games"]) == len(predicted)
+    assert len({frozenset(game) for game in payload["games"]}) <= 1
+    expected = [f"src{n}" for n in range(credit_count)] if any(predicted) else []
+    assert payload["credits"] == expected
+
+
+def _row(game_id: int) -> GameRow:
+    when = utc("2026-01-20T23:00")
+    return GameRow(game_id, 20252026, 2, when, "TOR", "BOS", "FUT", None, None, None)
+
+
+def _prediction(credit_count: int) -> GamePrediction:
+    point = Projection(3.0, 2.0, 4.0, 0.8)
+    credits = tuple(f"src{n}" for n in range(credit_count))
+    return GamePrediction(0.5, 0.5, point, point, (), credits)

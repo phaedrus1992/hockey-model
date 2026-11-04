@@ -8,7 +8,6 @@ import pytest
 
 from hockey_model import store_cli
 from hockey_model.cli import main
-from hockey_model.game_model.seasons import season_of
 from hockey_model.sources.nhl import GameRow
 
 
@@ -17,41 +16,71 @@ def _row(game_id: int, start: str) -> GameRow:
     return GameRow(game_id, 20262027, 2, when, "TOR", "BOS", "FUT", None, None, None)
 
 
-def test_report_due_prints_the_schedule_and_the_tag(
+def _feed(monkeypatch: pytest.MonkeyPatch, by_day: dict[date, list[GameRow]]) -> list[date]:
+    """Serve one fake score feed per day and return the list of days that were read."""
+    requested: list[date] = []
+
+    def fake_fetch(client: object, day: date) -> list[GameRow]:
+        requested.append(day)
+        return by_day.get(day, [])
+
+    monkeypatch.setattr(store_cli, "fetch_score_day", fake_fetch)
+    return requested
+
+
+def test_report_due_reads_the_day_before_and_keeps_the_utc_window(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rows = [_row(1, "2026-11-04T19:00"), _row(2, "2026-11-04T14:00")]
-    monkeypatch.setattr(store_cli, "fetch_score_day", lambda client, day: rows)
+    # The Eastern feed of Nov 3 lists a 00:30 UTC game that starts on Nov 4 in UTC.
+    feed = {
+        date(2026, 11, 3): [_row(1, "2026-11-04T00:30"), _row(2, "2026-11-03T23:00")],
+        date(2026, 11, 4): [_row(3, "2026-11-04T19:00")],
+    }
+    requested = _feed(monkeypatch, feed)
     assert main(["report-due", "--date", "2026-11-04", "--force"]) == 0
     payload = json.loads(capsys.readouterr().out)
+    assert requested == [date(2026, 11, 3), date(2026, 11, 4)]
+    assert payload["games"] == 2
+    assert payload["first_puck_drop_utc"] == "2026-11-04T00:30:00.000000+00:00"
     assert payload["tag"] == "reports-2026-11-04"
-    assert payload["first_puck_drop_utc"] == "2026-11-04T14:00:00.000000+00:00"
-    assert payload["forced"] is True
     assert payload["due"] is True
+
+
+def test_report_due_prints_only_the_gate_fields(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _feed(monkeypatch, {})
+    assert main(["report-due", "--date", "2026-11-04"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {"date", "tag", "games", "first_puck_drop_utc", "due"}
 
 
 def test_report_due_without_games_uses_the_end_of_the_day(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(store_cli, "fetch_score_day", lambda client, day: [])
+    _feed(monkeypatch, {})
     assert main(["report-due", "--date", "2026-11-04"]) == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload["games"] == 0
     assert payload["first_puck_drop_utc"] == "2026-11-05T00:00:00.000000+00:00"
-    assert payload["forced"] is False
 
 
 @pytest.mark.parametrize(
-    ("day", "season"),
+    ("now", "code"),
     [
-        (date(2026, 11, 4), 20262027),
-        (date(2027, 1, 9), 20262027),
-        (date(2026, 7, 1), 20262027),
-        (date(2026, 6, 30), 20252026),
-        (date(2026, 9, 25), 20262027),
+        (datetime(2026, 11, 4, 12, 0, tzinfo=UTC), 20262027),
+        (datetime(2027, 1, 9, 12, 0, tzinfo=UTC), 20262027),
+        (datetime(2026, 7, 1, 12, 0, tzinfo=UTC), 20262027),
+        (datetime(2026, 6, 30, 12, 0, tzinfo=UTC), 20252026),
     ],
 )
-def test_season_of_names_the_season_that_holds_the_day(day: date, season: int) -> None:
-    assert season_of(day) == season
+def test_season_code_is_the_season_that_holds_the_moment(now: datetime, code: int) -> None:
+    assert store_cli._season_code(now) == code
+
+
+def test_daily_requires_an_out_dir(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["daily", "--date", "2026-11-04"]) == 2
+    assert "--out-dir" in capsys.readouterr().err
 
 
 def test_daily_refuses_a_day_with_no_model_fit(

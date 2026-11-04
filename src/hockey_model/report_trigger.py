@@ -7,13 +7,10 @@ UTC midnight, so its report runs at the last trigger of the day.
 
 from datetime import UTC, date, datetime, timedelta
 
+from hockey_model.utc import require_utc
+
 # The trigger spacing. The workflow cron MUST use the same spacing.
 TRIGGER_INTERVAL_HOURS = 2
-
-
-def _require_utc(now: datetime) -> None:
-    if now.utcoffset() != timedelta(0):
-        raise ValueError(f"report trigger: now {now!r} must be a UTC datetime (offset +00:00)")
 
 
 def next_trigger(now: datetime) -> datetime:
@@ -21,7 +18,7 @@ def next_trigger(now: datetime) -> datetime:
 
     A trigger that fires a little late still belongs to its own trigger slot.
     """
-    _require_utc(now)
+    require_utc(now, "report trigger now")
     slot = now.replace(minute=0, second=0, microsecond=0)
     slot -= timedelta(hours=slot.hour % TRIGGER_INTERVAL_HOURS)
     return slot + timedelta(hours=TRIGGER_INTERVAL_HOURS)
@@ -35,7 +32,7 @@ def day_end(day: date) -> datetime:
 def first_puck_drop(day: date, starts: list[datetime]) -> datetime:
     """Return the earliest start of the day, or the end of the day when no game starts."""
     for start in starts:
-        _require_utc(start)
+        require_utc(start, "game start")
     return min(starts) if starts else day_end(day)
 
 
