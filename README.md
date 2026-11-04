@@ -103,6 +103,11 @@ HOCKEY_MODEL_DB=~/.cache/hockey-model/store.db hockey-model backtest --games-out
 - `fit --through-season YYYYYYYY [--features a,b]` fits the weights on every game from the 2015-16 season through that season and saves the fit. `--features ""` saves the Elo alone.
 - `game GAME_ID [--level L]` prints the prediction of one stored game with the newest fit.
 - `backtest [--games-out PATH] [--candidates {xg,attempt}]` runs the walk-forward backtest and prints a JSON report. `--games-out` writes one CSV row for each scored game and run. `--candidates attempt` replaces `xg_form` with the shot-attempt form, the leak test in #77.
+- `daily [--date YYYY-MM-DD] [--out-dir DIR] [--level L]` predicts every game that starts on one UTC day, and writes `report-DATE.md` and `report-DATE.json`. The day defaults to today in UTC. A game that already started is still predicted, with its inputs taken as of the puck drop and a `late_run` note. A game that is over gets no prediction.
+- `report-due [--date YYYY-MM-DD] [--force]` prints whether the current trigger publishes the day's report. The report runs at the last trigger before the first puck drop. A day with no games runs at its last trigger. The trigger spacing is `TRIGGER_INTERVAL_HOURS` in `report_trigger.py`, and the cron in `.github/workflows/daily-report.yml` MUST match it.
+- `fit` without `--through-season` fits through the season that holds today, in UTC.
+
+The `daily-report` workflow runs `scripts/report-gate.sh` at each trigger. When the gate is due, it runs `scripts/daily-report.sh` and then `scripts/publish-daily-report.sh`, which creates a release tagged `reports-DATE`. A day that already has that release is skipped. A second publish for the same day fails. Delete the release first to publish the day again.
 
 ### Data sources
 

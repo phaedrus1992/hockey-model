@@ -26,3 +26,4 @@ MUST use `uv run python3`, not bare `python3`.
 - GitHub Actions are pinned to a commit SHA with a version comment.
 - Keep line length at 100, functions at 8 complexity or less, and functions at 5 arguments or less.
 - Issues track planned work. Use the `v0.1.0` milestone for the first release.
+- The daily report output MUST be updated when anything new becomes available, such as a new input source, a new model, or a new feature. Regenerate the report path and its tests in the same change.
