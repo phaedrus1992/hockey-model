@@ -21,7 +21,7 @@ from hockey_model.store.reads import game_row
 from hockey_model.store.refresh import RefreshReport, refresh
 from hockey_model.types import HockeyModelError
 
-STORE_COMMANDS = frozenset({"refresh", "fit", "game", "backtest"})
+STORE_COMMANDS = frozenset({"refresh", "fit", "game", "backtest", "experiments"})
 _CANDIDATE_SETS = {"xg": FEATURES, "attempt": ATTEMPT_FEATURES}
 
 
@@ -54,6 +54,14 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     game = add_parser("game", help="predict one stored game with the newest fit")
     game.add_argument("game_id", type=int)
     game.add_argument("--level", type=float, default=0.8)
+    experiments = add_parser("experiments", help="manage the experiment registry")
+    exp_sub = experiments.add_subparsers(dest="experiment_command")
+    exp_sub.add_parser("check", help="validate all experiment records")
+    exp_run = exp_sub.add_parser(
+        "run",
+        help="run a backtest for one experiment record",
+    )
+    exp_run.add_argument("record_id", type=str)
 
 
 def _report_json(report: RefreshReport) -> dict[str, object]:
@@ -142,7 +150,39 @@ def _backtest(args: argparse.Namespace) -> tuple[object, int]:
     return asdict(report), 0
 
 
-_HANDLERS = {"refresh": _refresh, "fit": _fit, "game": _game, "backtest": _backtest}
+def _experiments(args: argparse.Namespace) -> tuple[object, int]:
+    """Handle the experiments subcommands."""
+    command = getattr(args, "experiment_command", None)
+    if command == "check":
+        from hockey_model.experiments.check import check_all
+
+        result = check_all()
+        return result, 0 if result["ok"] else 1
+    if command == "run":
+        conn = connect(db_path_from_env(os.environ))
+        try:
+            from hockey_model.experiments.check import run_experiment
+
+            result, _ = run_experiment(
+                args.record_id,
+                conn,
+                FIT_FIRST,
+                args.through_season if hasattr(args, "through_season") else 20252026,
+                _CANDIDATE_SETS[args.candidates if hasattr(args, "candidates") else "xg"],
+            )
+            return result, 0 if result.get("ok") else 1
+        finally:
+            conn.close()
+    raise HockeyModelError("experiments: specify check or run")
+
+
+_HANDLERS = {
+    "refresh": _refresh,
+    "fit": _fit,
+    "game": _game,
+    "backtest": _backtest,
+    "experiments": _experiments,
+}
 
 
 def run_store_command(args: argparse.Namespace) -> tuple[object, int]:
