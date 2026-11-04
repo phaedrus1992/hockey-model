@@ -108,6 +108,8 @@ def run_experiment(
         _check_confirmation_can_run(record)
 
     # Import the backtest runner here to avoid circular imports.
+    from dataclasses import replace
+
     from hockey_model.backtest.runner import run_backtest, write_game_records
     from hockey_model.game_model.seasons import _confirmation_plan
     from hockey_model.store.timestamps import iso_utc
@@ -150,8 +152,6 @@ def run_experiment(
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         write_game_records(csv_path, game_records)
         csv_hash = _file_hash(csv_path)
-
-        from dataclasses import replace
 
         from hockey_model.experiments.models import _Result
 
