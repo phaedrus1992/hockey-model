@@ -44,11 +44,10 @@ jobs:
           if [[ "$DISPATCH_FORCE" == "true" ]]; then
             args+=(--force)
           fi
-          day="$(date -u +%F)"
-          bash scripts/report-gate.sh --date "$day" "${args[@]}" > gate.json
+          bash scripts/report-gate.sh "${args[@]}" > gate.json
           cat gate.json
           echo "due=$(jq -r '.due' gate.json)" >> "$GITHUB_OUTPUT"
-          echo "day=$day" >> "$GITHUB_OUTPUT"
+          echo "day=$(jq -r '.date' gate.json)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: gate

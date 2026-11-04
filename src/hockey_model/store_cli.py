@@ -4,18 +4,19 @@ import argparse
 import os
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from hockey_model.backtest.runner import run_backtest, write_game_records
 from hockey_model.daily_report import build_report, report_tag, write_report
 from hockey_model.game import game_win_probability
+from hockey_model.game_day import game_day_of, game_day_window
 from hockey_model.game_model.features import ATTEMPT_FEATURES, FEATURES, GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
 from hockey_model.game_model.seasons import FIT_FIRST
 from hockey_model.game_model.training import game_input, training_rows
-from hockey_model.report_trigger import day_end, first_puck_drop, is_due
+from hockey_model.report_trigger import first_puck_drop, is_due
 from hockey_model.sources.http import HttpClient
 from hockey_model.sources.nhl import GameRow, fetch_score_day
 from hockey_model.store.db import connect, db_path_from_env
@@ -71,12 +72,18 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         type=date.fromisoformat,
         default=None,
         metavar="YYYY-MM-DD",
-        help="UTC day to predict; default is today in UTC",
+        help="Eastern game day to predict; default is the game day that holds now",
     )
     daily.add_argument("--out-dir", type=Path, required=True, metavar="DIR")
     daily.add_argument("--level", type=float, default=0.8)
     due = add_parser("report-due", help="say whether this trigger publishes the daily report")
-    due.add_argument("--date", type=date.fromisoformat, default=None, metavar="YYYY-MM-DD")
+    due.add_argument(
+        "--date",
+        type=date.fromisoformat,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Eastern game day to check; default is the game day that holds now",
+    )
     due.add_argument("--force", action="store_true", help="publish even outside the trigger")
 
 
@@ -160,7 +167,7 @@ def _game(args: argparse.Namespace) -> tuple[object, int]:
 
 def _daily(args: argparse.Namespace) -> tuple[object, int]:
     now = datetime.now(UTC)
-    day = args.date if args.date is not None else now.date()
+    day = args.date if args.date is not None else game_day_of(now)
     conn = connect(db_path_from_env(os.environ))
     try:
         model = NhlGameModel(conn, newest_fit(conn))
@@ -175,25 +182,22 @@ def _daily(args: argparse.Namespace) -> tuple[object, int]:
     }, 0
 
 
-def _utc_day_games(day: date) -> list[GameRow]:
-    """Return the games that start on the UTC ``day``.
+def _game_day_games(day: date, closes: datetime) -> list[GameRow]:
+    """Return the games of the Eastern game ``day`` from its score feed.
 
-    The score feed groups games by Eastern day, so the feed of the day before can list
-    games that start on ``day`` in UTC. Both feed days are read, and the UTC window keeps
-    only the games of ``day``.
+    The feed already groups games by Eastern date. The window check keeps a game whose
+    start the feed lists under the wrong date out of the report.
     """
-    client = HttpClient()
-    window_start = day_end(day - timedelta(days=1))
-    window_end = day_end(day)
-    feed = fetch_score_day(client, day - timedelta(days=1)) + fetch_score_day(client, day)
-    return [game for game in feed if window_start <= game.start < window_end]
+    opens = game_day_window(day)[0]
+    return [game for game in fetch_score_day(HttpClient(), day) if opens <= game.start < closes]
 
 
 def _report_due(args: argparse.Namespace) -> tuple[object, int]:
     now = datetime.now(UTC)
-    day = args.date if args.date is not None else now.date()
-    games = _utc_day_games(day)
-    first = first_puck_drop(day, [game.start for game in games])
+    day = args.date if args.date is not None else game_day_of(now)
+    closes = game_day_window(day)[1]
+    games = _game_day_games(day, closes)
+    first = first_puck_drop(closes, [game.start for game in games])
     return {
         "date": day.isoformat(),
         "tag": report_tag(day),

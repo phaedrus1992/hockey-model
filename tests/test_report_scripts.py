@@ -64,7 +64,7 @@ def _env(fakes: Path, tmp_path: Path, **extra: str) -> dict[str, str]:
         "PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}",
         "FAKE_CALLS": str(tmp_path / "calls.log"),
         "FAKE_RELEASES": "",
-        "FAKE_DUE_JSON": json.dumps({"due": True, "tag": TAG, "games": 3}),
+        "FAKE_DUE_JSON": json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 3}),
         "GITHUB_SHA": SHA,
     }
     env.update(extra)
@@ -92,21 +92,33 @@ def _run(script: str, env: dict[str, str], *args: str) -> subprocess.CompletedPr
 def test_gate_due_and_not_published_publishes(fakes: Path, tmp_path: Path) -> None:
     result = _run("report-gate.sh", _env(fakes, tmp_path), "--date", DAY)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"due": True, "tag": TAG, "reason": "due"}
+    assert json.loads(result.stdout) == {"due": True, "tag": TAG, "reason": "due", "date": DAY}
 
 
 def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path) -> None:
     env = _env(fakes, tmp_path, FAKE_RELEASES=f"reports-2026-11-03\n{TAG}\n")
     result = _run("report-gate.sh", env, "--date", DAY)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"due": False, "tag": TAG, "reason": "already-published"}
+    assert json.loads(result.stdout) == {
+        "due": False,
+        "tag": TAG,
+        "reason": "already-published",
+        "date": DAY,
+    }
 
 
 def test_gate_not_due_skips_the_release_lookup(fakes: Path, tmp_path: Path) -> None:
-    due = json.dumps({"due": False, "tag": TAG, "games": 3})
+    due = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 3})
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=due), "--date", DAY)
-    assert json.loads(result.stdout) == {"due": False, "tag": TAG, "reason": "not-due"}
+    assert json.loads(result.stdout) == {"due": False, "tag": TAG, "reason": "not-due", "date": DAY}
     assert not any(line.startswith("gh ") for line in _calls(tmp_path))
+
+
+def test_gate_without_a_date_lets_report_due_pick_the_game_day(fakes: Path, tmp_path: Path) -> None:
+    result = _run("report-gate.sh", _env(fakes, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "uv run hockey-model report-due" in _calls(tmp_path)
+    assert json.loads(result.stdout)["date"] == DAY
 
 
 def test_gate_forwards_force(fakes: Path, tmp_path: Path) -> None:
@@ -124,14 +136,14 @@ def test_gate_fails_when_the_release_lookup_fails_for_another_reason(
 
 
 def test_gate_fails_on_a_payload_without_the_gate_fields(fakes: Path, tmp_path: Path) -> None:
-    bad = json.dumps({"due": "yes", "tag": TAG, "games": 3})
+    bad = json.dumps({"due": "yes", "tag": TAG, "date": DAY, "games": 3})
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=bad), "--date", DAY)
     assert result.returncode == 1
-    assert "without due, tag, and games" in result.stderr
+    assert "lacks due, tag, games, or date" in result.stderr
 
 
 def test_gate_warns_when_the_schedule_is_empty(fakes: Path, tmp_path: Path) -> None:
-    empty = json.dumps({"due": False, "tag": TAG, "games": 0})
+    empty = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 0})
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=empty), "--date", DAY)
     assert result.returncode == 0
     assert "::warning::" in result.stderr

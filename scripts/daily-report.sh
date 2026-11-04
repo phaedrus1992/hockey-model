@@ -62,4 +62,5 @@ else
 fi
 uv run hockey-model fit
 uv run hockey-model daily --date "$day" --out-dir "$out_dir"
-uv run hockey-model backtest --games-out "$out_dir/backtest-games-$day.csv" >"$out_dir/backtest-$day.json"
+backtest_games="$out_dir/backtest-games-$day.csv"
+uv run hockey-model backtest --games-out "$backtest_games" >"$out_dir/backtest-$day.json"

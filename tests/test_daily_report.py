@@ -61,7 +61,7 @@ def test_upcoming_game_is_predicted_with_no_late_run(store: sqlite3.Connection) 
 
 
 def test_game_over_gets_no_prediction(store: sqlite3.Connection) -> None:
-    add_game(store, 11, "2026-01-20T01:00", "TOR", "BOS", state="FINAL")
+    add_game(store, 11, "2026-01-20T17:00", "TOR", "BOS", state="FINAL")
     report = build_report(store, _model(store), DAY, now=NOW)
     (line,) = report.lines
     assert line.prediction is None

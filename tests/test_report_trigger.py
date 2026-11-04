@@ -6,9 +6,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from hockey_model.game_day import game_day_window
 from hockey_model.report_trigger import (
     TRIGGER_INTERVAL_HOURS,
-    day_end,
     first_puck_drop,
     is_due,
     next_trigger,
@@ -29,6 +29,7 @@ def at(text: str) -> datetime:
 
 
 DAY = date(2026, 11, 4)
+CLOSES = game_day_window(DAY)[1]
 FIRST_PUCK_DROP_2PM = at("2026-11-04T14:00")
 
 
@@ -58,16 +59,16 @@ def test_slot_for_a_late_trigger_is_its_own_slot() -> None:
     assert next_trigger(at("2026-11-04T12:50")) == at("2026-11-04T14:00")
 
 
-def test_no_games_waits_for_the_last_trigger_of_the_day() -> None:
-    first = first_puck_drop(DAY, [])
-    assert first == at("2026-11-05T00:00")
-    assert is_due(at("2026-11-04T20:00"), first) is False
-    assert is_due(at("2026-11-04T22:00"), first) is True
+def test_no_games_waits_for_the_last_trigger_of_the_game_day() -> None:
+    first = first_puck_drop(CLOSES, [])
+    assert first == at("2026-11-05T05:00")
+    assert is_due(at("2026-11-05T02:00"), first) is False
+    assert is_due(at("2026-11-05T04:00"), first) is True
 
 
 def test_first_puck_drop_is_the_earliest_start() -> None:
     starts = [at("2026-11-04T23:00"), at("2026-11-04T14:00"), at("2026-11-04T19:00")]
-    assert first_puck_drop(DAY, starts) == FIRST_PUCK_DROP_2PM
+    assert first_puck_drop(CLOSES, starts) == FIRST_PUCK_DROP_2PM
 
 
 def test_puck_drop_already_passed_makes_the_trigger_due() -> None:
@@ -94,23 +95,15 @@ def test_next_trigger_is_the_next_slot_boundary(now: datetime) -> None:
     assert trigger - now <= timedelta(hours=TRIGGER_INTERVAL_HOURS)
 
 
-@given(_DAYS)
-def test_day_end_is_the_next_utc_midnight(day: date) -> None:
-    end = day_end(day)
-    assert end.tzinfo is UTC
-    assert end.date() == day + timedelta(days=1)
-    assert end.hour == end.minute == 0
-    assert end - datetime(day.year, day.month, day.day, tzinfo=UTC) == timedelta(days=1)
-
-
 @given(_DAYS, st.lists(_UTC_TIMES, max_size=8))
-def test_first_puck_drop_is_the_minimum_or_the_day_end(day: date, starts: list[datetime]) -> None:
-    result = first_puck_drop(day, starts)
+def test_first_puck_drop_is_the_minimum_or_the_day_close(day: date, starts: list[datetime]) -> None:
+    closes = game_day_window(day)[1]
+    result = first_puck_drop(closes, starts)
     if starts:
         assert result in starts
         assert all(result <= start for start in starts)
     else:
-        assert result == day_end(day)
+        assert result == closes
 
 
 @given(_UTC_TIMES, _UTC_TIMES)

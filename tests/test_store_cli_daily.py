@@ -28,20 +28,24 @@ def _feed(monkeypatch: pytest.MonkeyPatch, by_day: dict[date, list[GameRow]]) ->
     return requested
 
 
-def test_report_due_reads_the_day_before_and_keeps_the_utc_window(
+def test_report_due_keys_the_slate_to_its_eastern_game_day(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # The Eastern feed of Nov 3 lists a 00:30 UTC game that starts on Nov 4 in UTC.
+    # The Nov 4 Eastern slate: a 7 pm EST game and a 10 pm EST game, both on Nov 5 in UTC.
+    # The third row has a start outside the Eastern day, so the window drops it.
     feed = {
-        date(2026, 11, 3): [_row(1, "2026-11-04T00:30"), _row(2, "2026-11-03T23:00")],
-        date(2026, 11, 4): [_row(3, "2026-11-04T19:00")],
+        date(2026, 11, 4): [
+            _row(1, "2026-11-05T00:00"),
+            _row(2, "2026-11-05T03:00"),
+            _row(3, "2026-11-05T06:00"),
+        ],
     }
     requested = _feed(monkeypatch, feed)
     assert main(["report-due", "--date", "2026-11-04", "--force"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert requested == [date(2026, 11, 3), date(2026, 11, 4)]
+    assert requested == [date(2026, 11, 4)]
     assert payload["games"] == 2
-    assert payload["first_puck_drop_utc"] == "2026-11-04T00:30:00.000000+00:00"
+    assert payload["first_puck_drop_utc"] == "2026-11-05T00:00:00.000000+00:00"
     assert payload["tag"] == "reports-2026-11-04"
     assert payload["due"] is True
 
@@ -62,7 +66,7 @@ def test_report_due_without_games_uses_the_end_of_the_day(
     assert main(["report-due", "--date", "2026-11-04"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["games"] == 0
-    assert payload["first_puck_drop_utc"] == "2026-11-05T00:00:00.000000+00:00"
+    assert payload["first_puck_drop_utc"] == "2026-11-05T05:00:00.000000+00:00"
 
 
 @pytest.mark.parametrize(
