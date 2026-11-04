@@ -27,3 +27,13 @@ def test_cron_hours_match_the_trigger_hours() -> None:
     match = _CRON.search(WORKFLOW.read_text(encoding="utf-8"))
     assert match is not None, "the schedule must be a top-of-hour cron such as '0 0,1,16-23 * * *'"
     assert _hours(match.group(1)) == list(TRIGGER_HOURS_UTC)
+
+
+def test_prepare_runs_at_an_hour_with_no_trigger() -> None:
+    prepare = WORKFLOW.with_name("daily-prepare.yml")
+    if not prepare.exists():
+        pytest.skip("the mutation copy has no .github directory")
+    match = _CRON.search(prepare.read_text(encoding="utf-8"))
+    assert match is not None
+    (hour,) = _hours(match.group(1))
+    assert hour not in TRIGGER_HOURS_UTC

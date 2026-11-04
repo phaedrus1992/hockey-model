@@ -1,12 +1,13 @@
 # Prepares the game day before the report triggers: a full refresh, the fit, and the backtest.
 #
 # The daily-report workflow then refreshes only the starters before it predicts. The
-# prepare run MUST finish before the first hour in TRIGGER_HOURS_UTC in report_trigger.py.
+# prepare run MUST finish before the next hour in TRIGGER_HOURS_UTC in report_trigger.py.
+# It starts after the last late game of the night ends, so its refresh has every result.
 name: daily-prepare
 
 on:
   schedule:
-    - cron: "0 10 * * *"
+    - cron: "0 8 * * *"
   workflow_dispatch:
 
 permissions:
