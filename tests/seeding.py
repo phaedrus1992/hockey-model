@@ -69,10 +69,16 @@ def add_goalie(
 
 
 def add_team_form(
-    conn: sqlite3.Connection, game_id: int, team: str, xg_for: float, xg_against: float
+    conn: sqlite3.Connection,
+    game_id: int,
+    team: str,
+    xg_for: float,
+    xg_against: float,
+    *,
+    attempts: tuple[int, int] = (50, 50),
 ) -> None:
-    """Store one MoneyPuck team-game row."""
-    row = TeamGameRow(game_id, team, "2026-01-01", xg_for, xg_against)
+    """Store one MoneyPuck team-game row. The unblocked counts are fixed at 40 and 40."""
+    row = TeamGameRow(game_id, team, "2026-01-01", xg_for, xg_against, *attempts, 40, 40)
     write_team_games(conn, [row], FETCHED)
 
 

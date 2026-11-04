@@ -33,6 +33,7 @@ class MissingKind(StrEnum):
     GOALIE_UNCONFIRMED = "goalie_unconfirmed"
     GOALIE_UNKNOWN = "goalie_unknown"
     XG_FORM = "xg_form"
+    ATTEMPT_FORM = "attempt_form"
     GOALIE_FORM = "goalie_form"
     STALE_SOURCE = "stale_source"
     LATE_RUN = "late_run"

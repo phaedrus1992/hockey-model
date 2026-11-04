@@ -80,8 +80,8 @@ def feed(monkeypatch: pytest.MonkeyPatch):
     """Return a function that makes the runner read the given dataset."""
 
     def use(rows: dict[GoalieMode, list[TrainingRow]]) -> None:
-        def fake(conn, first, last, mode, burn_in=0):
-            del conn, burn_in
+        def fake(conn, first, last, mode, burn_in=0, names=FEATURES):
+            del conn, burn_in, names
             return [r for r in rows[mode] if first <= r.game.season <= last]
 
         monkeypatch.setattr(runner, "training_rows", fake)

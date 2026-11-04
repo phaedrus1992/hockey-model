@@ -25,10 +25,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Python project skeleton: uv, ruff, ty, pytest with coverage and a per-module floor, editorconfig, prek hooks, and CI validation, test, and editorconfig jobs.
 - Certify each logistic fit by the gradient of the penalized loss and save its diagnostics (iterations, objective, gradient, conditioning, penalty, scaling, stop reason) with the fit. A clipped step no longer counts as convergence. [feat:model]
 - Add the November 2026 backtest report. The joint test passed with expected-goals form and rest, and the guess run vetoed goalie goals saved above expected. [docs:backtest]
+- Add `hockey-model backtest --candidates attempt`, which replaces the expected-goals form with a shot-attempt form for the leak test. [feat:backtest]
 
 ### Changed
 
 - Record the DraftKings comparison in the README, the backtest report, and the run report. The model is level with the line in 2024-25 and worse in 2025-26, and it fails the blend gate. [docs:backtest]
+- Move the store to schema version 2, which adds MoneyPuck shot-attempt counts. A version 1 store is refused, so rebuild it on a new path with `hockey-model refresh --backfill-from 2014-10-01`. [feat:store]
 
 ### Fixed
 
@@ -39,5 +41,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Match an injury name to the goalies of its own team only. [fix:model]
 - Print the type and message of an unexpected failure in the store commands. [fix:cli]
 - Note in the backtest report that the goalie guess run has no injury history. [fix:backtest]
+- Allow an hour for the MoneyPuck team file, which is about 130 MB, instead of 15 minutes. [fix:sources]
 
 [Unreleased]: https://github.com/slackworks/hockey-model/commits/main

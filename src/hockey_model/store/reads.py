@@ -117,9 +117,28 @@ def mp_team_form_before(
     conn: sqlite3.Connection, team: str, before: datetime, limit: int
 ) -> list[tuple[float, float]]:
     """Return ``(xg_for, xg_against)`` of the newest MoneyPuck games of the franchise."""
+    return _mp_pairs_before(conn, ("xg_for", "xg_against"), team, before, limit)
+
+
+_MP_PAIR_COLUMNS = frozenset({"xg_for", "xg_against", "shot_attempts_for", "shot_attempts_against"})
+
+
+def _mp_pairs_before(
+    conn: sqlite3.Connection, columns: tuple[str, str], team: str, before: datetime, limit: int
+) -> list[tuple[float, float]]:
+    """Return two named MoneyPuck team-game columns of the newest games of the franchise.
+
+    The names are placed in the SQL, so only the known columns are accepted.
+    """
+    unknown = [name for name in columns if name not in _MP_PAIR_COLUMNS]
+    if unknown:
+        raise ValueError(
+            f"read MoneyPuck form: unknown column {unknown[0]!r}; "
+            f"use one of {sorted(_MP_PAIR_COLUMNS)}"
+        )
     codes = franchise_codes(team)
     cursor = conn.execute(
-        "SELECT m.xg_for, m.xg_against FROM latest_mp_team_games m"
+        f"SELECT m.{columns[0]}, m.{columns[1]} FROM latest_mp_team_games m"
         " JOIN latest_final_games g ON g.game_id = m.game_id"
         f" WHERE m.team IN ({_marks(codes)}) AND g.start_utc <= ?"
         " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
@@ -208,3 +227,12 @@ def game_row(conn: sqlite3.Connection, game_id: int) -> GameRow | None:
         (game_id,),
     ).fetchone()
     return None if row is None else _game_row(row)
+
+
+def mp_attempt_form_before(
+    conn: sqlite3.Connection, team: str, before: datetime, limit: int
+) -> list[tuple[float, float]]:
+    """Return ``(shot attempts for, against)`` of the newest MoneyPuck games of the franchise."""
+    return _mp_pairs_before(
+        conn, ("shot_attempts_for", "shot_attempts_against"), team, before, limit
+    )

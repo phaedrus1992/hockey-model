@@ -102,7 +102,7 @@ HOCKEY_MODEL_DB=~/.cache/hockey-model/store.db hockey-model backtest --games-out
 - `refresh` reads every source and appends each read with its fetch time. It exits 1 when a source failed, and it prints what each source wrote, the errors, and the credits. The first backfill makes about 16,000 NHL requests at two a second, so it takes hours. Run it again after an error: it skips what it already has.
 - `fit --through-season YYYYYYYY [--features a,b]` fits the weights on every game from the 2015-16 season through that season and saves the fit. `--features ""` saves the Elo alone.
 - `game GAME_ID [--level L]` prints the prediction of one stored game with the newest fit.
-- `backtest [--games-out PATH]` runs the walk-forward backtest and prints a JSON report. `--games-out` writes one CSV row for each scored game and run.
+- `backtest [--games-out PATH] [--candidates {xg,attempt}]` runs the walk-forward backtest and prints a JSON report. `--games-out` writes one CSV row for each scored game and run. `--candidates attempt` replaces `xg_form` with the shot-attempt form, the leak test in #77.
 
 ### Data sources
 

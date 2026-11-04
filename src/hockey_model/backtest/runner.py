@@ -43,7 +43,8 @@ INJURY_HISTORY_NOTE = (
     "The store has no ESPN injury history before it began to keep injury reads, so the goalie "
     "guess run never leaves out an injured goalie. The live model does."
 )
-MONEYPUCK_FEATURES = frozenset({"xg_form", "goalie_gsax"})
+# Every feature here reads MoneyPuck data, so a run that uses one carries the credit and the note.
+MONEYPUCK_FEATURES = frozenset({"xg_form", "attempt_form", "goalie_gsax"})
 ELO = "elo"
 HOME_RATE = "home_rate"
 MODEL_ACTUAL = "model_actual"
@@ -120,7 +121,10 @@ def _loss(fit: LogisticFit, rows: Sequence[TrainingRow]) -> float:
 
 
 def _validate(
-    actual: Sequence[TrainingRow], guess: Sequence[TrainingRow], plan: SeasonPlan
+    actual: Sequence[TrainingRow],
+    guess: Sequence[TrainingRow],
+    plan: SeasonPlan,
+    candidates: Sequence[str],
 ) -> tuple[dict[str, dict[str, float]], tuple[str, ...]]:
     """Score the Elo alone and the Elo plus each feature on the validation seasons.
 
@@ -137,7 +141,7 @@ def _validate(
             f"{plan.select_validate}; run `hockey-model refresh --backfill-from 2014-10-01`"
         )
     validation: dict[str, dict[str, float]] = {}
-    for name, features in [(ELO, ()), *[(f"{ELO}+{f}", (f,)) for f in FEATURES]]:
+    for name, features in [(ELO, ()), *[(f"{ELO}+{f}", (f,)) for f in candidates]]:
         fit = _fit(train, features)
         validation[name] = {
             "actual": _loss(fit, validate_actual),
@@ -145,7 +149,7 @@ def _validate(
         }
     baseline = validation[ELO]["guess"]
     vetoed = tuple(
-        f for f in FEATURES if validation[f"{ELO}+{f}"]["guess"] > baseline + VETO_TOLERANCE
+        f for f in candidates if validation[f"{ELO}+{f}"]["guess"] > baseline + VETO_TOLERANCE
     )
     return validation, vetoed
 
@@ -220,7 +224,8 @@ def _missing_counts(games: Sequence[_Scored]) -> dict[str, int]:
 
 
 def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple[str, ...]:
-    notes = [f"{len(FEATURES)} candidate features were tested together as one joint test."]
+    count = len(tested) + len(vetoed)
+    notes = [f"{count} candidate features were tested together as one joint test."]
     if vetoed:
         notes.append(f"The guess run vetoed: {', '.join(vetoed)}.")
     if not success:
@@ -233,8 +238,24 @@ def _notes(tested: Sequence[str], vetoed: Sequence[str], success: bool) -> tuple
     return tuple(notes)
 
 
+def _is_production(candidates: Sequence[str]) -> bool:
+    return tuple(candidates) == FEATURES
+
+
+def _candidate_notes(candidates: Sequence[str]) -> tuple[str, ...]:
+    """Say so when a run tests a set other than the production set, so no result reads as live."""
+    if _is_production(candidates):
+        return ()
+    return (
+        "This candidate set is a test. Nothing ships from it, and the live model reads only the "
+        "production features.",
+    )
+
+
 def run_backtest(
-    conn: sqlite3.Connection, plan: SeasonPlan = DEFAULT_PLAN
+    conn: sqlite3.Connection,
+    plan: SeasonPlan = DEFAULT_PLAN,
+    candidates: Sequence[str] = FEATURES,
 ) -> tuple[BacktestReport, list[GameRecord]]:
     """Run the walk-forward backtest on the stored games.
 
@@ -243,10 +264,10 @@ def run_backtest(
     is below zero. The guess run never changes success.
     """
     first, last = plan.fit_first, plan.scored[1]
-    actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in)
-    guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in)
-    validation, vetoed = _validate(actual, guess, plan)
-    tested = tuple(f for f in FEATURES if f not in vetoed)
+    actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in, candidates)
+    guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in, candidates)
+    validation, vetoed = _validate(actual, guess, plan, candidates)
+    tested = tuple(f for f in candidates if f not in vetoed)
     games = _score_seasons(actual, guess, tested, plan)
     if not games:
         raise HockeyModelError(
@@ -262,14 +283,14 @@ def run_backtest(
     success = model.diff_vs_elo_ci is not None and model.diff_vs_elo_ci[1] < 0.0
     uses_moneypuck = bool(MONEYPUCK_FEATURES & set(tested))
     report = BacktestReport(
-        candidate_features=FEATURES,
+        candidate_features=tuple(candidates),
         vetoed=vetoed,
         tested_features=tested,
-        live_features=tested if success else (),
+        live_features=tested if success and _is_production(candidates) else (),
         validation=validation,
         runs=runs,
         success=success,
-        notes=_notes(tested, vetoed, success),
+        notes=_notes(tested, vetoed, success) + _candidate_notes(candidates),
         credits=(MONEYPUCK_CREDIT,) if uses_moneypuck else (),
         missing_inputs=_missing_counts(games),
     )

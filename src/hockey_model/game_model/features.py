@@ -7,7 +7,7 @@ All history is read as of the earlier of ``as_of`` and the game start.
 
 import math
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -17,13 +17,22 @@ from hockey_model.game_model.elo import EloBook
 from hockey_model.game_model.goalies import boxscore_starter, resolve_goalie
 from hockey_model.identity import Catalog
 from hockey_model.store.reads import (
+    mp_attempt_form_before,
     mp_goalie_form_before,
     mp_team_form_before,
     player_catalog,
     team_games_before,
 )
 
+# The production candidates. The attempt set replaces only xg_form, for the leak test (#77).
 FEATURES = ("xg_form", "goalie_gsax", "rest")
+ATTEMPT_FEATURES = ("attempt_form", "goalie_gsax", "rest")
+TeamFormReader = Callable[[sqlite3.Connection, str, datetime, int], Sequence[tuple[float, float]]]
+_FORM_READERS: dict[str, tuple[TeamFormReader, MissingKind]] = {
+    "xg_form": (mp_team_form_before, MissingKind.XG_FORM),
+    "attempt_form": (mp_attempt_form_before, MissingKind.ATTEMPT_FORM),
+}
+ALL_FEATURE_NAMES = ("xg_form", "attempt_form", "goalie_gsax", "rest")
 FORM_WINDOW = 10
 GOALIE_WINDOW = 20
 REST_CAP_DAYS = 4.0
@@ -53,19 +62,24 @@ def _logit(probability: float) -> float:
     return math.log(probability / (1.0 - probability))
 
 
-def _xg_share(rows: list[tuple[float, float]]) -> float | None:
+def _share(rows: Sequence[tuple[float, float]]) -> float | None:
     shares = [made / (made + allowed) for made, allowed in rows if made + allowed > 0]
     return sum(shares) / len(shares) if shares else None
 
 
-def _xg_form(
-    conn: sqlite3.Connection, game: Game, cutoff: datetime
+def _share_form(
+    conn: sqlite3.Connection,
+    game: Game,
+    cutoff: datetime,
+    read: TeamFormReader,
+    kind: MissingKind,
 ) -> tuple[float, list[MissingInput]]:
+    """Return home minus away share of ``read``'s made-for over its total, and the gaps."""
     shares: dict[str, float | None] = {}
     for team in (game.home, game.away):
-        shares[team] = _xg_share(mp_team_form_before(conn, team, cutoff, FORM_WINDOW))
+        shares[team] = _share(read(conn, team, cutoff, FORM_WINDOW))
     missing = [
-        MissingInput(MissingKind.XG_FORM, team, "no MoneyPuck games before this game")
+        MissingInput(kind, team, "no MoneyPuck games before this game")
         for team, share in shares.items()
         if share is None
     ]
@@ -162,22 +176,38 @@ def build_features(
     *,
     goalie_mode: GoalieMode,
     catalog: Catalog | None = None,
+    names: Sequence[str] = FEATURES,
 ) -> FeatureRow:
     """Return the features of ``game`` as known at ``as_of``.
 
-    ``elo`` must hold the ratings after every game that was over at the cutoff.
-    A caller that builds many rows passes one ``catalog`` to reuse.
+    ``names`` picks the form features to read, so a candidate set that does not
+    use a form does not read it or report its gaps. ``elo`` must hold the ratings
+    after every game that was over at the cutoff. A caller that builds many rows
+    passes one ``catalog`` to reuse.
     """
+    unknown = [name for name in names if name not in ALL_FEATURE_NAMES]
+    if unknown:
+        raise ValueError(
+            f"build_features: unknown feature {unknown[0]!r}; use one of {ALL_FEATURE_NAMES}"
+        )
     catalog = player_catalog(conn) if catalog is None else catalog
     cutoff = min(as_of, game.start)
-    xg_form, xg_missing = _xg_form(conn, game, cutoff)
+    forms = {
+        name: _share_form(conn, game, cutoff, reader, kind)
+        for name, (reader, kind) in _FORM_READERS.items()
+        if name in names
+    }
     gsax, goalie_missing, goalie_used = _goalie_gsax(conn, game, as_of, goalie_mode, catalog)
     rest, rest_missing = _rest(conn, game)
-    form_used = len(xg_missing) < 2  # noqa: PLR2004  # two teams, so fewer than two gaps
+    # Two teams, so fewer than two gaps means the form was read for at least one team.
+    form_used = any(len(gaps) < 2 for _, gaps in forms.values())  # noqa: PLR2004
+    values = {name: value for name, (value, _) in forms.items()}
+    values.update({"goalie_gsax": gsax, "rest": rest})
+    missing = [m for _, gaps in forms.values() for m in gaps]
     return FeatureRow(
         game_id=game.game_id,
         elo_logit=_logit(elo.home_win_chance(game.home, game.away)),
-        values={"xg_form": xg_form, "goalie_gsax": gsax, "rest": rest},
-        missing=(*xg_missing, *goalie_missing, *rest_missing),
+        values=values,
+        missing=(*missing, *goalie_missing, *rest_missing),
         uses_moneypuck=form_used or goalie_used,
     )
