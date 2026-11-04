@@ -119,6 +119,8 @@ def _write_report(report_dir: Path) -> None:
     report_dir.mkdir()
     (report_dir / f"report-{DAY}.md").write_text("# report\n", encoding="utf-8")
     (report_dir / f"report-{DAY}.json").write_text("{}\n", encoding="utf-8")
+    (report_dir / f"backtest-{DAY}.json").write_text("{}\n", encoding="utf-8")
+    (report_dir / f"backtest-games-{DAY}.csv").write_text("game_id\n", encoding="utf-8")
 
 
 def test_publish_creates_the_release_with_the_day_tag(fakes: Path, tmp_path: Path) -> None:

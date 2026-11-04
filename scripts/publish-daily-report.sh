@@ -44,7 +44,9 @@ fi
 
 md="$report_dir/report-$day.md"
 json="$report_dir/report-$day.json"
-for file in "$md" "$json"; do
+backtest="$report_dir/backtest-$day.json"
+backtest_games="$report_dir/backtest-games-$day.csv"
+for file in "$md" "$json" "$backtest" "$backtest_games"; do
   if [[ ! -s "$file" ]]; then
     echo "publish-daily-report: $file is missing or empty; the report was not built" >&2
     exit 1
@@ -59,6 +61,6 @@ if grep -qxF "$tag" <<<"$released"; then
   exit 1
 fi
 
-gh release create "$tag" "$md" "$json" \
+gh release create "$tag" "$md" "$json" "$backtest" "$backtest_games" \
   --title "NHL predictions $day" \
   --notes-file "$md"

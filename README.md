@@ -107,7 +107,7 @@ HOCKEY_MODEL_DB=~/.cache/hockey-model/store.db hockey-model backtest --games-out
 - `report-due [--date YYYY-MM-DD] [--force]` prints whether the current trigger publishes the day's report. The report runs at the last trigger before the first puck drop. A day with no games runs at its last trigger. The trigger spacing is `TRIGGER_INTERVAL_HOURS` in `report_trigger.py`, and the cron in `.github/workflows/daily-report.yml` MUST match it.
 - `fit` without `--through-season` fits through the season that holds today, in UTC.
 
-The `daily-report` workflow runs `scripts/report-gate.sh` at each trigger. When the gate is due, it runs `scripts/daily-report.sh` and then `scripts/publish-daily-report.sh`, which creates a release tagged `reports-DATE`. A day that already has that release is skipped. A second publish for the same day fails. Delete the release first to publish the day again.
+The `daily-report` workflow runs `scripts/report-gate.sh` at each trigger. When the gate is due, it runs `scripts/daily-report.sh` and then `scripts/publish-daily-report.sh`, which creates a release tagged `reports-DATE` with the daily report, the backtest JSON (`backtest-DATE.json`), and the backtest per-game CSV (`backtest-games-DATE.csv`). The store lives in the Actions cache. A cache miss, such as after eviction, starts a full backfill that takes hours. A day that already has that release is skipped. A second publish for the same day fails. Delete the release first to publish the day again.
 
 ### Data sources
 
