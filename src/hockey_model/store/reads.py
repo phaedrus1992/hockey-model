@@ -9,7 +9,7 @@ games late, and the backtest must still see them.
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from hockey_model.game import StarterSource, StarterStatus
@@ -236,3 +236,17 @@ def mp_attempt_form_before(
     return _mp_pairs_before(
         conn, ("shot_attempts_for", "shot_attempts_against"), team, before, limit
     )
+
+
+def games_on_day(conn: sqlite3.Connection, day: date) -> list[GameRow]:
+    """Return the newest read of each game that starts on the UTC ``day``, earliest first.
+
+    The newest read can be in progress. The caller decides what a state means.
+    """
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    cursor = conn.execute(
+        f"SELECT {_GAME_COLUMNS} FROM latest_games g WHERE g.start_utc >= ? AND g.start_utc < ?"
+        " ORDER BY g.start_utc, g.game_id",
+        (iso_utc(start), iso_utc(start + timedelta(days=1))),
+    )
+    return [_game_row(row) for row in cursor]
