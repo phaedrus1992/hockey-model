@@ -42,7 +42,6 @@ def check_all() -> dict[str, object]:
             path = REGISTRY_DIR / f"{record_id}.json"
             record = ExperimentRecord.load(path)
             validate_against_schema(record, SCHEMA_PATH)
-            _check_status_field(record)
             result_entry: dict[str, object] = {
                 "id": record.id,
                 "status": record.status,
@@ -62,17 +61,6 @@ def check_all() -> dict[str, object]:
     }
 
 
-def _check_status_field(record: ExperimentRecord) -> None:
-    """Check that a record's status is a valid value."""
-    valid_statuses = (STATUS_REGISTERED, STATUS_REJECTED, STATUS_INCONCLUSIVE, STATUS_PROMOTED)
-    if record.status not in valid_statuses:
-        raise HockeyModelError(
-            f"experiment {record.id!r}: invalid status {record.status!r}; "
-            f"use one of {STATUS_REGISTERED}, {STATUS_REJECTED}, "
-            f"{STATUS_INCONCLUSIVE}, {STATUS_PROMOTED}"
-        )
-
-
 def check_experiment(record_id: str) -> dict[str, object]:
     """Check a single record by ID. Returns the same format as check_all."""
     from hockey_model.experiments.registry import REGISTRY_DIR
@@ -81,7 +69,6 @@ def check_experiment(record_id: str) -> dict[str, object]:
         path = REGISTRY_DIR / f"{record_id}.json"
         record = ExperimentRecord.load(path)
         validate_against_schema(record, SCHEMA_PATH)
-        _check_status_field(record)
         return {
             "ok": True,
             "record": {

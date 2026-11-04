@@ -85,18 +85,32 @@ class ExperimentRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExperimentRecord:
-        """Deserialize from a dict loaded from JSON."""
-        if "baseline" in data and isinstance(data["baseline"], dict):
-            data["baseline"] = _Baseline(**data["baseline"])
-        if "result" in data and data["result"] is not None and isinstance(data["result"], dict):
-            data["result"] = _Result(**data["result"])
-        return cls(**data)
+        """Deserialize from a dict loaded from JSON.
+
+        Does not mutate the input dict. Converts baseline, result,
+        and selection_folds to the correct types.
+        """
+        work = dict(data)
+        if "baseline" in work and isinstance(work["baseline"], dict):
+            work["baseline"] = _Baseline(**work["baseline"])
+        if "result" in work and work["result"] is not None and isinstance(work["result"], dict):
+            work["result"] = _Result(**work["result"])
+        folds = work.get("selection_folds")
+        if folds is not None:
+            work["selection_folds"] = [tuple(f) for f in folds]
+        return cls(**work)
 
     @classmethod
     def load(cls, path: Path) -> ExperimentRecord:
         """Load a record from a JSON file."""
-        text = path.read_text(encoding="utf-8")
-        data = json.loads(text)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HockeyModelError(f"cannot read {path}: {exc}") from exc
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise HockeyModelError(f"invalid JSON in {path}: {exc}") from exc
         return cls.from_dict(data)
 
     def save(self, path: Path) -> None:
