@@ -3,17 +3,19 @@
 #
 # Usage: publish-daily-report.sh --date YYYY-MM-DD --report-dir DIR [--help]
 #   --date        UTC day of the report.
-#   --report-dir  Directory that holds report-DATE.md and report-DATE.json.
+#   --report-dir  Directory with report-DATE.md, report-DATE.json, backtest-DATE.json,
+#                 and backtest-games-DATE.csv.
 #
-# A release that already exists for the day is an error. Delete the release to publish
-# the day again. The script never replaces a release on its own.
+# The release target is GITHUB_SHA, the commit that built the report. A release that
+# already exists for the day makes gh fail, and the script never replaces it. Delete the
+# release to publish the day again.
 set -euo pipefail
 
 day=""
 report_dir=""
 
 usage() {
-  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 while (($# > 0)); do
@@ -41,6 +43,15 @@ if [[ -z "$day" || -z "$report_dir" ]]; then
   echo "publish-daily-report: --date and --report-dir are required; see --help" >&2
   exit 2
 fi
+# The date goes into a tag and a path, so it must have exactly the calendar shape.
+if [[ ! "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "publish-daily-report: --date must be YYYY-MM-DD, got '$day'" >&2
+  exit 2
+fi
+if [[ -z "${GITHUB_SHA:-}" ]]; then
+  echo "publish-daily-report: GITHUB_SHA must name the commit that built the report" >&2
+  exit 2
+fi
 
 md="$report_dir/report-$day.md"
 json="$report_dir/report-$day.json"
@@ -52,15 +63,19 @@ for file in "$md" "$json" "$backtest" "$backtest_games"; do
     exit 1
   fi
 done
-
-tag="reports-$day"
-# The full list, so an existing release is found whatever its age in the list.
-released="$(gh release list --limit 1000 --json tagName --jq '.[].tagName')"
-if grep -qxF "$tag" <<<"$released"; then
-  echo "publish-daily-report: release $tag already exists; delete it to publish $day again" >&2
+for file in "$json" "$backtest"; do
+  if ! jq -e . "$file" >/dev/null; then
+    echo "publish-daily-report: $file is not valid JSON; the report was not published" >&2
+    exit 1
+  fi
+done
+if [[ "$(head -n 1 "$backtest_games")" != *,* ]]; then
+  echo "publish-daily-report: $backtest_games has no CSV header; the backtest was not built" >&2
   exit 1
 fi
 
+tag="reports-$day"
 gh release create "$tag" "$md" "$json" "$backtest" "$backtest_games" \
+  --target "$GITHUB_SHA" \
   --title "NHL predictions $day" \
   --notes-file "$md"

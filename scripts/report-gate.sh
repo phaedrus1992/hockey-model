@@ -7,14 +7,14 @@
 #            published is still skipped.
 #
 # Prints one JSON object on stdout: {"due": bool, "tag": str, "reason": str}.
-# Exits non-zero when the schedule cannot be read or the release lookup fails.
+# Exits non-zero when the schedule payload is malformed or the release lookup fails.
 set -euo pipefail
 
 day=""
 force=false
 
 usage() {
-  sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 while (($# > 0)); do
@@ -51,16 +51,30 @@ if [[ "$force" == true ]]; then
   args+=(--force)
 fi
 status_json="$(uv run hockey-model report-due "${args[@]}")"
+if ! jq -e '(.due | type == "boolean") and (.tag | type == "string") and (.games | type == "number")' \
+  <<<"$status_json" >/dev/null; then
+  echo "report-gate: report-due printed a payload without due, tag, and games: $status_json" >&2
+  exit 1
+fi
 tag="$(jq -r '.tag' <<<"$status_json")"
 due="$(jq -r '.due' <<<"$status_json")"
+games="$(jq -r '.games' <<<"$status_json")"
+if [[ "$games" == "0" ]]; then
+  echo "::warning::report-gate: the schedule lists no games for $day; the report will say so" >&2
+fi
+
 reason="not-due"
 if [[ "$due" == "true" ]]; then
   reason="due"
-  # Full list, so a published day is found whatever its age in the list.
-  released="$(gh release list --limit 1000 --json tagName --jq '.[].tagName')"
-  if grep -qxF "$tag" <<<"$released"; then
+  # Ask for the one tag. "release not found" means the day is not published yet; any
+  # other failure (auth, network) stops the run.
+  view_err="$(gh release view "$tag" 2>&1 >/dev/null)" && published=true || published=false
+  if [[ "$published" == true ]]; then
     due="false"
     reason="already-published"
+  elif [[ "$view_err" != *"release not found"* ]]; then
+    echo "report-gate: gh release view $tag failed: $view_err" >&2
+    exit 1
   fi
 fi
 

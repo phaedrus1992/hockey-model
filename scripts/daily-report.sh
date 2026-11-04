@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# Refresh the store, fit the model, and write the daily report for one UTC day.
+# Refresh the store, fit the model, and write the daily report and backtest for one UTC day.
 #
 # Usage: daily-report.sh --date YYYY-MM-DD --out-dir DIR [--help]
 #   --date     UTC day to predict.
-#   --out-dir  Directory for report-DATE.md and report-DATE.json. Created when missing.
+#   --out-dir  Directory for the report and backtest files. Created when missing.
 #
-# Reads the store path from HOCKEY_MODEL_DB. A missing store is backfilled from
-# the first season the model uses. Any failed step stops the script with its exit code,
-# so a run that fails writes no report.
+# Reads the store path from HOCKEY_MODEL_DB. The first backfill runs until a marker file
+# next to the store says it finished. An interrupted backfill resumes on the next run,
+# because refresh skips what it already read. Any failed step stops the script with its
+# exit code, so a failed run writes no report.
 set -euo pipefail
 
 day=""
 out_dir=""
 
 usage() {
-  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 while (($# > 0)); do
@@ -49,10 +50,15 @@ fi
 
 mkdir -p "$(dirname "$HOCKEY_MODEL_DB")" "$out_dir"
 
-if [[ -f "$HOCKEY_MODEL_DB" ]]; then
-  uv run hockey-model refresh
-else
+# The marker is written only after a backfill finishes. A store file without it is partial.
+marker="$HOCKEY_MODEL_DB.backfilled"
+if [[ ! -f "$marker" ]]; then
+  echo "daily-report: the store has no finished backfill; backfilling from 2014-10-01." >&2
+  echo "daily-report: a full backfill takes hours and can outlast the job time limit." >&2
   uv run hockey-model refresh --backfill-from 2014-10-01
+  touch "$marker"
+else
+  uv run hockey-model refresh
 fi
 uv run hockey-model fit
 uv run hockey-model daily --date "$day" --out-dir "$out_dir"
