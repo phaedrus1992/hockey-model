@@ -2,6 +2,7 @@
 
 from datetime import UTC, date, datetime, timedelta
 
+from hockey_model.game_day import game_day_of
 from hockey_model.sources.daily_faceoff import STARTERS_URL, fetch_starters
 from hockey_model.sources.espn import ESPN_BASE, fetch_injuries, fetch_scoreboard_starters
 from hockey_model.sources.moneypuck import (
@@ -19,7 +20,7 @@ from hockey_model.store.moneypuck_writes import (
     write_goalie_games,
     write_team_games,
 )
-from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun, game_day
+from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
 from hockey_model.store.source_reads import ESPN_INJURIES, last_ok_read
 from hockey_model.store.starter_writes import write_starter_reads
 
@@ -104,7 +105,7 @@ def _write_starters(run: RefreshRun, source: str, reads: list[StarterRead], stam
 
 def espn_starters(run: RefreshRun) -> None:
     """Read the ESPN probable goalies for today and tomorrow, as game days in Eastern time."""
-    today = game_day(run.now)
+    today = game_day_of(run.now)
     days: list[date] = [today, today + timedelta(days=1)]
 
     def unit(stamp: datetime) -> int:

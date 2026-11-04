@@ -2,6 +2,7 @@
 
 from datetime import UTC, date, datetime, timedelta
 
+from hockey_model.game_day import game_day_of
 from hockey_model.sources.nhl import (
     FINAL_STATES,
     boxscore_url,
@@ -10,7 +11,7 @@ from hockey_model.sources.nhl import (
     score_day_url,
 )
 from hockey_model.store.nhl_writes import games_missing_boxscore, write_boxscore, write_games
-from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun, game_day
+from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
 from hockey_model.store.source_reads import failed_since, failed_urls, last_ok_read
 from hockey_model.store.timestamps import parse_iso_utc
 
@@ -36,7 +37,7 @@ FAILED_DAY_RETRY_WINDOW = timedelta(days=30)
 
 def _failed_days(run: RefreshRun) -> list[date]:
     """Return the recent score days whose newest read failed."""
-    oldest = game_day(run.now - FAILED_DAY_RETRY_WINDOW)
+    oldest = game_day_of(run.now - FAILED_DAY_RETRY_WINDOW)
     days = (date.fromisoformat(url.rsplit("/", 1)[1]) for url in failed_urls(run.conn, SCORES))
     return [day for day in days if day >= oldest]
 
@@ -49,8 +50,8 @@ def _first_day(run: RefreshRun) -> date:
         f"SELECT MAX(start_utc) FROM games WHERE state IN ({marks})", sorted(FINAL_STATES)
     ).fetchone()
     if newest is None:
-        return game_day(run.now - DEFAULT_LOOKBACK)
-    return min([game_day(parse_iso_utc(newest) - OVERLAP), *_failed_days(run)])
+        return game_day_of(run.now - DEFAULT_LOOKBACK)
+    return min([game_day_of(parse_iso_utc(newest) - OVERLAP), *_failed_days(run)])
 
 
 def _day_complete(run: RefreshRun, day: date) -> bool:
@@ -64,7 +65,7 @@ def score_days(run: RefreshRun) -> None:
 
     A day that was read after it ended is complete and is not read again.
     """
-    last_day = game_day(run.now) + timedelta(days=SCHEDULE_DAYS_AHEAD)
+    last_day = game_day_of(run.now) + timedelta(days=SCHEDULE_DAYS_AHEAD)
     day = _first_day(run)
     failures = 0
     while day <= last_day:
