@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from hockey_model.game import StarterSource, StarterStatus
+from hockey_model.game_day import game_day_window
 from hockey_model.identity import Catalog
 from hockey_model.sources.espn import InjuryRead
 from hockey_model.sources.nhl import GameRow
@@ -236,3 +237,17 @@ def mp_attempt_form_before(
     return _mp_pairs_before(
         conn, ("shot_attempts_for", "shot_attempts_against"), team, before, limit
     )
+
+
+def games_on_day(conn: sqlite3.Connection, day: date) -> list[GameRow]:
+    """Return the newest read of each game of the Eastern game ``day``, earliest first.
+
+    The newest read can be in progress. The caller decides what a state means.
+    """
+    opens, closes = game_day_window(day)
+    cursor = conn.execute(
+        f"SELECT {_GAME_COLUMNS} FROM latest_games g WHERE g.start_utc >= ? AND g.start_utc < ?"
+        " ORDER BY g.start_utc, g.game_id",
+        (iso_utc(opens), iso_utc(closes)),
+    )
+    return [_game_row(row) for row in cursor]
