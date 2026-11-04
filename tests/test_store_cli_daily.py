@@ -8,7 +8,10 @@ import pytest
 
 from hockey_model import store_cli
 from hockey_model.cli import main
+from hockey_model.game_model.logistic import ELO_ONLY
 from hockey_model.sources.nhl import GameRow
+from hockey_model.store.db import connect
+from hockey_model.store.fits import save_fit
 
 
 def _row(game_id: int, start: str) -> GameRow:
@@ -102,3 +105,20 @@ def test_refresh_refuses_starters_only_with_a_backfill(
     code = main(["refresh", "--starters-only", "--backfill-from", "2014-10-01"])
     assert code == 2
     assert "drop --starters-only" in capsys.readouterr().err
+
+
+def test_daily_names_the_fit_and_the_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = tmp_path / "store.db"
+    conn = connect(db)
+    save_fit(conn, ELO_ONLY, 20252026, datetime(2026, 11, 1, tzinfo=UTC))
+    conn.close()
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    monkeypatch.setenv("GITHUB_SHA", "c0ffee")
+    assert main(["daily", "--date", "2026-11-04", "--out-dir", str(tmp_path)]) == 0
+    capsys.readouterr()
+    payload = json.loads((tmp_path / "report-2026-11-04.json").read_text(encoding="utf-8"))
+    assert payload["model"]["code_sha"] == "c0ffee"
+    assert payload["model"]["features"] == []
+    assert len(payload["model"]["fit_sha256"]) == 64

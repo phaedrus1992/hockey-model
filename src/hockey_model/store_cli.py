@@ -3,12 +3,12 @@
 import argparse
 import os
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from hockey_model.backtest.runner import run_backtest, write_game_records
-from hockey_model.daily_report import build_report, report_tag, write_report
+from hockey_model.daily_report import build_report, model_identity, report_tag, write_report
 from hockey_model.game import game_win_probability
 from hockey_model.game_day import game_day_of, game_day_window
 from hockey_model.game_model.features import ATTEMPT_FEATURES, FEATURES, GoalieMode
@@ -182,8 +182,10 @@ def _daily(args: argparse.Namespace) -> tuple[object, int]:
     day = args.date if args.date is not None else game_day_of(now)
     conn = connect(db_path_from_env(os.environ))
     try:
-        model = NhlGameModel(conn, newest_fit(conn))
-        report = build_report(conn, model, day, now=now, level=args.level)
+        fit = newest_fit(conn)
+        report = build_report(conn, NhlGameModel(conn, fit), day, now=now, level=args.level)
+        # Actions sets GITHUB_SHA. A local run has no commit to name.
+        report = replace(report, model=model_identity(fit, os.environ.get("GITHUB_SHA")))
     finally:
         conn.close()
     md_path, json_path = write_report(report, args.out_dir)

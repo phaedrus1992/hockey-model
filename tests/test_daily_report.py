@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from hockey_model.daily_report import (
     DailyLine,
     DailyReport,
     build_report,
+    model_identity,
     report_json,
     report_markdown,
     report_tag,
@@ -21,7 +23,7 @@ from hockey_model.daily_report import (
 )
 from hockey_model.game import GamePrediction, MissingKind
 from hockey_model.game_model.features import GoalieMode
-from hockey_model.game_model.logistic import ELO_ONLY
+from hockey_model.game_model.logistic import ELO_ONLY, FitDiagnostics, LogisticFit
 from hockey_model.game_model.nhl_model import NhlGameModel
 from hockey_model.sources.nhl import GameRow
 from hockey_model.types import HockeyModelError, Projection
@@ -156,3 +158,43 @@ def _prediction(credit_count: int) -> GamePrediction:
     point = Projection(3.0, 2.0, 4.0, 0.8)
     credits = tuple(f"src{n}" for n in range(credit_count))
     return GamePrediction(0.5, 0.5, point, point, (), credits)
+
+
+def _fit(intercept: float = 0.1) -> LogisticFit:
+    return LogisticFit(("xg_form", "rest"), intercept, 1.0, {"xg_form": 0.4, "rest": 0.05})
+
+
+def test_model_identity_is_stable_and_follows_the_weights() -> None:
+    first = model_identity(_fit(), "abc123")
+    assert first == model_identity(_fit(), "abc123")
+    assert first.fit_sha256 != model_identity(_fit(intercept=0.2), "abc123").fit_sha256
+    assert first.features == ("xg_form", "rest")
+    assert model_identity(_fit(), "").code_sha is None
+
+
+def test_model_identity_ignores_the_fit_diagnostics() -> None:
+    plain = _fit()
+    diagnostics = FitDiagnostics(
+        12, 0.68, 1e-9, 3.0, 1.0, {"elo_logit": 0.0}, {"elo_logit": 1.0}, "converged"
+    )
+    with_diagnostics = replace(plain, diagnostics=diagnostics)
+    assert model_identity(plain, None) == model_identity(with_diagnostics, None)
+
+
+def test_report_names_the_model_in_both_copies(store: sqlite3.Connection) -> None:
+    report = replace(
+        build_report(store, _model(store), DAY, now=NOW), model=model_identity(_fit(), "c0ffee")
+    )
+    payload = report_json(report)["model"]
+    assert payload == {
+        "features": ["xg_form", "rest"],
+        "fit_sha256": model_identity(_fit(), None).fit_sha256,
+        "code_sha": "c0ffee",
+    }
+    assert "Model: xg_form, rest; fit " in report_markdown(report)
+
+
+def test_report_without_a_model_says_null(store: sqlite3.Connection) -> None:
+    report = build_report(store, _model(store), DAY, now=NOW)
+    assert report_json(report)["model"] is None
+    assert "Model:" not in report_markdown(report)

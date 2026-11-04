@@ -5,6 +5,7 @@ start, and the report marks it as a late run. A game that is over or postponed g
 prediction.
 """
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from hockey_model.game import GamePrediction, MissingInput, game_win_probability
+from hockey_model.game_model.logistic import LogisticFit
 from hockey_model.game_model.training import game_input
 from hockey_model.models import GameModel
 from hockey_model.sources.nhl import FINAL_STATES, GameRow
@@ -34,13 +36,38 @@ class DailyLine:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelIdentity:
+    """Which model made a report: the fit features, a hash of the fit weights, and the code."""
+
+    features: tuple[str, ...]
+    fit_sha256: str
+    code_sha: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class DailyReport:
-    """The games of one UTC day, with their predictions and the time the run made them."""
+    """The games of one game day, with their predictions and the time the run made them."""
 
     day: date
     generated_at: datetime
     level: float
     lines: tuple[DailyLine, ...]
+    model: ModelIdentity | None = None
+
+
+def model_identity(fit: LogisticFit, code_sha: str | None) -> ModelIdentity:
+    """Return the identity of ``fit``. The hash covers every value that changes a prediction.
+
+    The fit diagnostics describe the fit and change no prediction, so the hash leaves them out.
+    """
+    values = {
+        "features": list(fit.features),
+        "intercept": fit.intercept,
+        "elo_weight": fit.elo_weight,
+        "weights": dict(fit.weights),
+    }
+    digest = hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
+    return ModelIdentity(tuple(fit.features), digest, code_sha or None)
 
 
 def report_tag(day: date) -> str:
@@ -115,6 +142,17 @@ def report_json(report: DailyReport) -> dict[str, Any]:
         "level": report.level,
         "games": [_line_json(line) for line in report.lines],
         "credits": _credits(report),
+        "model": _model_json(report.model),
+    }
+
+
+def _model_json(model: ModelIdentity | None) -> dict[str, Any] | None:
+    if model is None:
+        return None
+    return {
+        "features": list(model.features),
+        "fit_sha256": model.fit_sha256,
+        "code_sha": model.code_sha,
     }
 
 
@@ -160,6 +198,11 @@ def report_markdown(report: DailyReport) -> str:
                 f" | {_percent(p.away_win if p else None)} | {_notes(line)} |"
             )
     out.append("")
+    if report.model is not None:
+        features = ", ".join(report.model.features) or "Elo only"
+        code = report.model.code_sha or "unknown"
+        out.append(f"Model: {features}; fit {report.model.fit_sha256[:12]}; code {code[:12]}.")
+        out.append("")
     credits = _credits(report)
     if credits:
         out.append("Sources: " + " ".join(credits))
