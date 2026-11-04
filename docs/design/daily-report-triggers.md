@@ -16,7 +16,7 @@ Every game start stays a UTC instant.
 
 ## Trigger hours
 
-The report for a game day runs at the last trigger before its first puck drop.
+The report for a game day runs at the last top-of-hour slot before its first puck drop, moved earlier as described below.
 A trigger fires at minute `TRIGGER_MINUTE_UTC` of each hour in `TRIGGER_HOURS_UTC` in `src/hockey_model/report_trigger.py`, and the workflow cron lists the same minute and hours.
 
 Options:
@@ -29,8 +29,11 @@ The choice is option 3.
 
 The trigger minute is not :00.
 GitHub delays and drops scheduled runs most at the top of the hour, and many workflows also use :15, :30, and :45.
-An uncommon minute just after :30 avoids those times and keeps most of the lead before the common :00 puck drops.
-A minute just before :00 gives a lead too short to absorb a delayed run.
+Each trigger is the top-of-hour slot of the hourly grid, moved earlier to `TRIGGER_MINUTE_UTC` of the hour before it.
+The move is `REPORT_LEAD`, the minutes left in the hour after the trigger minute.
+A trigger is due when waiting for the next trigger would leave no more than `REPORT_LEAD` before the first puck drop.
+So the report runs at the moved slot, never later than the old top-of-hour slot, and a delayed run has that much more time.
+A minute just before :45 keeps that margin near what a :45 trigger gives, without the :45 queue.
 
 `scripts/trigger_hours.py` reads the season schedule and prints the hours that the first puck drops need.
 For the 2026-27 regular season, a single international game in the morning needs one hour by itself.

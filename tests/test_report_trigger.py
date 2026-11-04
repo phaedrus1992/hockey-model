@@ -8,6 +8,7 @@ from hypothesis import strategies as st
 
 from hockey_model.game_day import game_day_window
 from hockey_model.report_trigger import (
+    REPORT_LEAD,
     TRIGGER_HOURS_UTC,
     TRIGGER_MINUTE_UTC,
     first_puck_drop,
@@ -36,40 +37,44 @@ CLOSES = game_day_window(DAY)[1]
 @pytest.mark.parametrize(
     ("first", "runs_at", "skips_at"),
     [
-        # 7 pm EST slate: 00:00 UTC. The 23:37 trigger runs it.
-        ("2026-11-05T00:00", "2026-11-04T23:37", "2026-11-04T22:37"),
-        # 7:30 pm EST slate: 00:30 UTC. The 23:37 trigger runs it too.
-        ("2026-11-05T00:30", "2026-11-04T23:37", "2026-11-04T22:37"),
-        # 2 pm EST matinee: 19:00 UTC. The 18:37 trigger runs it.
-        ("2026-11-04T19:00", "2026-11-04T18:37", "2026-11-04T17:37"),
-        # 12:30 pm EST matinee: 17:30 UTC. The 16:37 trigger runs it.
-        ("2026-11-04T17:30", "2026-11-04T16:37", "2026-11-04T15:37"),
-        # 8 am EST international game: 13:00 UTC. The 12:37 trigger runs it.
-        ("2026-11-04T13:00", "2026-11-04T12:37", "2026-11-04T01:37"),
+        # 7 pm EST slate: 00:00 UTC. The old 23:00 slot moves to 22:44.
+        ("2026-11-05T00:00", "2026-11-04T22:44", "2026-11-04T21:44"),
+        # 7:30 pm EST slate: 00:30 UTC. The old 00:00 slot moves to 23:44.
+        ("2026-11-05T00:30", "2026-11-04T23:44", "2026-11-04T22:44"),
+        # 2 pm EST matinee: 19:00 UTC. The old 18:00 slot moves to 17:44.
+        ("2026-11-04T19:00", "2026-11-04T17:44", "2026-11-04T16:44"),
+        # 12:30 pm EST matinee: 17:30 UTC. The old 17:00 slot moves to 16:44.
+        ("2026-11-04T17:30", "2026-11-04T16:44", "2026-11-04T15:44"),
+        # 8 am EST international game: 13:00 UTC. The old 12:00 slot moves to 11:44.
+        ("2026-11-04T13:00", "2026-11-04T11:44", "2026-11-04T00:44"),
     ],
 )
-def test_the_last_trigger_before_the_first_puck_drop_runs(
+def test_each_old_top_of_hour_slot_moves_earlier_to_minute_44(
     first: str, runs_at: str, skips_at: str
 ) -> None:
     assert is_due(at(runs_at), at(first)) is True
     assert is_due(at(skips_at), at(first)) is False
 
 
+def test_the_lead_is_the_minutes_left_in_the_hour() -> None:
+    assert REPORT_LEAD == timedelta(minutes=60 - TRIGGER_MINUTE_UTC)
+
+
 def test_a_late_cron_run_keeps_its_own_slot() -> None:
-    assert next_trigger(at("2026-11-04T23:50")) == at("2026-11-05T00:37")
-    assert is_due(at("2026-11-04T23:50"), at("2026-11-05T00:30")) is True
+    assert next_trigger(at("2026-11-04T22:50")) == at("2026-11-04T23:44")
+    assert is_due(at("2026-11-04T22:50"), at("2026-11-05T00:00")) is True
 
 
 def test_the_gap_after_the_evening_triggers_reaches_the_next_morning() -> None:
-    assert next_trigger(at("2026-11-05T01:37")) == at("2026-11-05T12:37")
-    assert next_trigger(at("2026-11-05T12:37")) == at("2026-11-05T15:37")
+    assert next_trigger(at("2026-11-05T00:44")) == at("2026-11-05T11:44")
+    assert next_trigger(at("2026-11-05T11:44")) == at("2026-11-05T15:44")
 
 
-def test_no_games_waits_for_the_last_trigger_of_the_game_day() -> None:
+def test_no_games_runs_at_the_last_trigger_of_the_game_day() -> None:
     first = first_puck_drop(CLOSES, [])
     assert first == at("2026-11-05T05:00")
-    assert is_due(at("2026-11-05T00:37"), first) is False
-    assert is_due(at("2026-11-05T01:37"), first) is True
+    assert is_due(at("2026-11-04T23:44"), first) is False
+    assert is_due(at("2026-11-05T00:44"), first) is True
 
 
 def test_first_puck_drop_is_the_earliest_start() -> None:
@@ -78,7 +83,7 @@ def test_first_puck_drop_is_the_earliest_start() -> None:
 
 
 def test_puck_drop_already_passed_makes_the_trigger_due() -> None:
-    assert is_due(at("2026-11-05T01:37"), at("2026-11-05T00:00")) is True
+    assert is_due(at("2026-11-05T00:44"), at("2026-11-05T00:00")) is True
 
 
 def test_trigger_hours_are_sorted_unique_hours_and_the_minute_is_valid() -> None:
@@ -123,7 +128,7 @@ def test_first_puck_drop_is_the_minimum_or_the_day_close(day: date, starts: list
 
 
 @given(_UTC_TIMES, _UTC_TIMES)
-def test_is_due_matches_the_slot_comparison_and_is_monotone(now: datetime, start: datetime) -> None:
-    assert is_due(now, start) is (next_trigger(now) >= start)
+def test_is_due_matches_the_lead_comparison_and_is_monotone(now: datetime, start: datetime) -> None:
+    assert is_due(now, start) is (next_trigger(now) >= start - REPORT_LEAD)
     if is_due(now, start + timedelta(hours=1)):
         assert is_due(now, start)

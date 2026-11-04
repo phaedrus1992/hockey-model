@@ -4,10 +4,11 @@ Usage:
     uv run python3 scripts/trigger_hours.py --from YYYY-MM-DD --to YYYY-MM-DD
         [--game-types 2,3] [--minute M]
 
-For each Eastern game day, the script finds the first puck drop. It then finds the last
-UTC trigger at the trigger minute strictly before that puck drop. Prints one JSON object:
+For each Eastern game day, the script finds the first puck drop. It then finds the
+last top-of-hour slot before that puck drop, moved earlier to the trigger minute of the hour
+before it. Prints one JSON object:
 
-    {"minute": 37, "hours": [0, 1, 12, 15, ...], "game_days": 183,
+    {"minute": 44, "hours": [0, 11, 15, 16, ...], "game_days": 183,
     "days_per_hour": {"23": 62, ...}, "first_puck_drops_et": {"19:00 EST": 52, ...}}
 
 Compare "hours" with TRIGGER_HOURS_UTC in src/hockey_model/report_trigger.py, and copy a new
@@ -30,12 +31,16 @@ from hockey_model.sources.nhl import NHL_BASE, SOURCE
 from hockey_model.sources.payload import get_json
 
 
-def last_hour_before(first: datetime, minute: int) -> int:
-    """Return the UTC hour of the last trigger at ``minute`` strictly before ``first``."""
-    trigger = first.astimezone(UTC).replace(minute=minute, second=0, microsecond=0)
-    if trigger >= first:
-        trigger -= timedelta(hours=1)
-    return trigger.hour
+def trigger_hour_for(first: datetime, minute: int) -> int:
+    """Return the UTC hour of the trigger that runs a game day with first puck drop ``first``.
+
+    The trigger is the last top-of-hour slot strictly before ``first``, moved earlier to
+    ``minute`` of the hour before it, as report_trigger.py runs it.
+    """
+    slot = (first.astimezone(UTC) - timedelta(microseconds=1)).replace(
+        minute=0, second=0, microsecond=0
+    )
+    return (slot - timedelta(minutes=60 - minute)).hour
 
 
 def first_starts(weeks: Iterable[Mapping[str, Any]], game_types: set[int]) -> dict[str, datetime]:
@@ -54,7 +59,7 @@ def first_starts(weeks: Iterable[Mapping[str, Any]], game_types: set[int]) -> di
 
 def summarize(firsts: Mapping[str, datetime], minute: int) -> dict[str, Any]:
     """Return the trigger hours that the first puck drops need, with their counts."""
-    per_hour = Counter(last_hour_before(first, minute) for first in firsts.values())
+    per_hour = Counter(trigger_hour_for(first, minute) for first in firsts.values())
     local = Counter(
         first.astimezone(GAME_TIME_ZONE).strftime("%H:%M %Z") for first in firsts.values()
     )

@@ -63,11 +63,10 @@ def test_summary_names_each_trigger_hour_once() -> None:
         "2026-11-05": datetime(2026, 11, 6, 0, 30, tzinfo=UTC),
         "2026-11-06": datetime(2026, 11, 7, 0, 0, tzinfo=UTC),
     }
-    summary = HOURS.summarize(firsts, 0)
-    assert summary["minute"] == 0
-    assert summary["hours"] == [0, 23]
-    assert summary["days_per_hour"] == {"0": 1, "23": 2}
-    assert HOURS.summarize(firsts, 37)["hours"] == [23]
+    summary = HOURS.summarize(firsts, 44)
+    assert summary["minute"] == 44
+    assert summary["hours"] == [22, 23]
+    assert summary["days_per_hour"] == {"22": 2, "23": 1}
     assert summary["first_puck_drops_et"] == {"19:00 EST": 2, "19:30 EST": 1}
 
 
@@ -77,24 +76,32 @@ _UTC_TIMES = st.datetimes(
 
 
 @given(_UTC_TIMES, st.integers(min_value=0, max_value=59))
-def test_the_derived_trigger_is_within_the_hour_before_the_puck_drop(
+def test_the_trigger_is_the_slot_before_the_puck_drop_moved_earlier(
     first: datetime, minute: int
 ) -> None:
-    hour = HOURS.last_hour_before(first, minute)
-    candidates = [
-        (first - timedelta(hours=back)).replace(minute=minute, second=0, microsecond=0)
-        for back in (0, 1)
-    ]
-    trigger = max(c for c in candidates if c < first)
+    hour = HOURS.trigger_hour_for(first, minute)
+    slot = first.replace(minute=0, second=0, microsecond=0)
+    if slot >= first:
+        slot -= timedelta(hours=1)
+    trigger = slot - timedelta(minutes=60 - minute)
     assert trigger.hour == hour
-    assert timedelta(0) < first - trigger <= timedelta(hours=1)
+    assert timedelta(minutes=60 - minute) < first - trigger <= timedelta(minutes=120 - minute)
 
 
-def test_derived_hours_match_the_runtime_rule() -> None:
-    first = datetime(2026, 11, 5, 0, 30, tzinfo=UTC)
-    hour = HOURS.last_hour_before(first, TRIGGER_MINUTE_UTC)
-    assert hour == 23
-    assert is_due(datetime(2026, 11, 4, hour, TRIGGER_MINUTE_UTC, tzinfo=UTC), first)
+@pytest.mark.parametrize(
+    ("first", "hour"),
+    [
+        (datetime(2026, 11, 5, 0, 0, tzinfo=UTC), 22),
+        (datetime(2026, 11, 5, 0, 30, tzinfo=UTC), 23),
+        (datetime(2026, 11, 4, 13, 0, tzinfo=UTC), 11),
+    ],
+)
+def test_derived_hours_match_the_runtime_rule(first: datetime, hour: int) -> None:
+    assert HOURS.trigger_hour_for(first, TRIGGER_MINUTE_UTC) == hour
+    day = first - timedelta(days=1) if hour > first.hour else first
+    trigger = day.replace(hour=hour, minute=TRIGGER_MINUTE_UTC)
+    assert is_due(trigger, first)
+    assert not is_due(trigger - timedelta(hours=1), first)
 
 
 def test_minute_out_of_range_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:

@@ -25,7 +25,7 @@ def test_cron_minute_and_hours_match_the_trigger_code() -> None:
     if "mutants" in Path(__file__).resolve().parts:
         pytest.skip("the mutation copy has no .github directory")
     match = _CRON.search(WORKFLOW.read_text(encoding="utf-8"))
-    assert match is not None, "the schedule must be an hourly cron such as '37 0,1,15-23 * * *'"
+    assert match is not None, "the schedule must be an hourly cron such as '44 0,11,15-23 * * *'"
     assert int(match.group(1)) == TRIGGER_MINUTE_UTC
     assert _hours(match.group(2)) == list(TRIGGER_HOURS_UTC)
 

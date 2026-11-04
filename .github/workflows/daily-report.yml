@@ -8,7 +8,7 @@ name: daily-report
 
 on:
   schedule:
-    - cron: "37 0,1,12,15-23 * * *"
+    - cron: "44 0,11,15-23 * * *"
   workflow_dispatch:
     inputs:
       force:

@@ -1,10 +1,11 @@
 """Decide whether one scheduled trigger publishes the daily report.
 
 The scheduler fires at minute ``TRIGGER_MINUTE_UTC`` of each hour in ``TRIGGER_HOURS_UTC``.
-The report for a game day runs at the last trigger before the first puck drop of that day.
-A game day with no games has its first puck drop at the end of the day, so its report runs at
-the last trigger of the day. Game days are Eastern dates: see game_day.py. How the hours and
-the minute were chosen: docs/design/daily-report-triggers.md.
+Each trigger is a top-of-hour slot moved earlier by ``REPORT_LEAD``. The report for a game
+day runs at the first trigger after which waiting for the next trigger would leave no more
+than ``REPORT_LEAD`` before the first puck drop. A game day with no games has its first
+puck drop at the end of the day. Game days are Eastern dates: see game_day.py. How the
+hours and the minute were chosen: docs/design/daily-report-triggers.md.
 """
 
 from datetime import datetime, timedelta
@@ -12,12 +13,14 @@ from datetime import datetime, timedelta
 from hockey_model.utc import require_utc
 
 # GitHub delays and drops scheduled runs most at the top of the hour, and many workflows also
-# use :15, :30, and :45. An uncommon minute after :30 keeps the lead before a :00 puck drop.
-TRIGGER_MINUTE_UTC = 37
-# The UTC hours that hold a first puck drop's last trigger for the 2026-27 schedule, at
-# TRIGGER_MINUTE_UTC. The workflow cron MUST list the same minute and hours. Re-derive them
-# each season with scripts/trigger_hours.py.
-TRIGGER_HOURS_UTC = (0, 1, 12, 15, 16, 17, 18, 19, 20, 21, 22, 23)
+# use :15, :30, and :45. :44 avoids those times.
+TRIGGER_MINUTE_UTC = 44
+# Each trigger runs this long before the top-of-hour slot that it replaces.
+REPORT_LEAD = timedelta(minutes=60 - TRIGGER_MINUTE_UTC)
+# The UTC hours that hold a game day's trigger for the 2026-27 schedule. The workflow cron
+# MUST list the same minute and hours. Re-derive them each season with
+# scripts/trigger_hours.py.
+TRIGGER_HOURS_UTC = (0, 11, 15, 16, 17, 18, 19, 20, 21, 22, 23)
 
 
 def next_trigger(now: datetime) -> datetime:
@@ -45,9 +48,9 @@ def first_puck_drop(day_closes: datetime, starts: list[datetime]) -> datetime:
 
 
 def is_due(now: datetime, first_start: datetime) -> bool:
-    """Return True when no later trigger is still before the first puck drop.
+    """Return True when the next trigger would leave no more than ``REPORT_LEAD``.
 
     A puck drop that already passed makes every trigger due. The caller stops the
     repeat with the release check.
     """
-    return next_trigger(now) >= first_start
+    return next_trigger(now) >= first_start - REPORT_LEAD
