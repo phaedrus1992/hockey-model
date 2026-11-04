@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -390,3 +391,20 @@ def test_an_unexpected_store_failure_names_its_type_and_message(
     err = capsys.readouterr().err
     assert "RuntimeError: the table is gone" in err
     assert "model configuration" not in err
+
+
+def test_playoff_invalid_probability_exits_two_without_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class InvalidPlayoffs:
+        def playoff_odds(
+            self, team_code: str, standings: Sequence[Standing], level: float
+        ) -> Projection:
+            return Projection(1.2, 1.1, 1.3, level)
+
+    runtime = _runtime((_player("p-a"),))
+    runtime = replace(runtime, standings_model=InvalidPlayoffs())
+    assert cli.main(["playoffs", "TOR"], runtime) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "TOR" in output.err and "[0, 1]" in output.err
