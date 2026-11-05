@@ -26,7 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Certify each logistic fit by the gradient of the penalized loss and save its diagnostics (iterations, objective, gradient, conditioning, penalty, scaling, stop reason) with the fit. A clipped step no longer counts as convergence. [feat:model]
 - Add the November 2026 backtest report. The joint test passed with expected-goals form and rest, and the guess run vetoed goalie goals saved above expected. [docs:backtest]
 - Add `hockey-model backtest --candidates attempt`, which replaces the expected-goals form with a shot-attempt form for the leak test. [feat:backtest]
-- Add the experiment registry: records in `experiments/`, `hockey-model experiments check`, and `hockey-model experiments run`. A confirmation record scores only games after its data cutoff in the 2026-27 regular season and later, runs once, and refuses a cohort smaller than its minimum. An exploration record scores the seasons through 2025-26 and may run again. The checker validates every schema keyword and compares immutable fields with the commit that registered the record. [feat:experiments]
+- Add the experiment registry: records in `experiments/`, `hockey-model experiments check`, and `hockey-model experiments run`. A confirmation record scores only games after its data cutoff in the 2026-27 regular season and later, runs once, and refuses a cohort smaller than its minimum. An exploration record scores the seasons through 2025-26 and may run again. The checker validates every schema keyword, compares immutable fields with the commit that registered the record, ties `status` to `result`, and fails a record whose committed result was removed or replaced. [feat:experiments]
 
 ### Changed
 
