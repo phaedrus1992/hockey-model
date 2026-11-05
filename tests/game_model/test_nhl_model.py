@@ -75,7 +75,7 @@ def test_nhl_model_reports_stale_source(store: sqlite3.Connection) -> None:
     read_every_source(store, "2026-01-19T10:00")
     record_read(store, "espn_starters", "u", utc("2026-01-19T12:00"), error="HTTP 503")
     notes = stale_notes(model(store).predict(GAME, AS_OF, 0.8))
-    assert notes == ["espn_starters: the newest read of it failed"]
+    assert notes == ["espn_starters: the newest read of u failed"]
 
 
 def test_a_later_good_read_clears_the_stale_flag(store: sqlite3.Connection) -> None:
@@ -95,7 +95,7 @@ def test_a_failure_alone_is_not_a_good_read(store: sqlite3.Connection) -> None:
     read_every_source(store, "2026-01-19T10:00")
     record_read(store, "moneypuck", "u2", utc("2026-01-19T14:00"), error="HTTP 503")
     assert stale_notes(model(store).predict(GAME, AS_OF, 0.8)) == [
-        "moneypuck: the newest read of it failed"
+        "moneypuck: the newest read of u2 failed"
     ]
 
 

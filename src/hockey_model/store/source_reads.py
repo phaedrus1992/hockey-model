@@ -1,7 +1,7 @@
 """Record which source reads worked and which failed."""
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 
@@ -11,6 +11,15 @@ KNOWN_SOURCES = frozenset(
 )
 # The source name of the ESPN injury list. Each good read of the list is one snapshot.
 ESPN_INJURIES = "espn_injuries"
+# How old the newest good read of a live feed may be at a prediction cutoff. The morning run
+# reads the feeds each day, so a read older than a day means a run was missed.
+LIVE_FEED_MAX_AGE = timedelta(days=1)
+# The MoneyPuck files change about once a week (REFRESH_AFTER in sources/moneypuck.py), so the
+# limit is two refresh periods.
+MONEYPUCK_MAX_AGE = timedelta(days=14)
+# A failed read of a dated resource, such as one score day, counts against a prediction for this
+# long. A failure older than that is retired: it stays in the audit table, not in the notes.
+ACTIVE_FAILURE_WINDOW = timedelta(days=7)
 
 
 def record_read(
@@ -64,25 +73,3 @@ def failed_urls(conn: sqlite3.Connection, source: str) -> list[str]:
         (source, source),
     )
     return [url for (url,) in cursor]
-
-
-def stale_sources(conn: sqlite3.Connection, as_of: datetime) -> list[tuple[str, str]]:
-    """Return ``(source, reason)`` for each known source that is not current at ``as_of``.
-
-    A source is not current when its newest read before ``as_of`` failed, or when no read
-    of it has worked yet. The result is in name order.
-    """
-    cursor = conn.execute(
-        "SELECT source, MAX(fetched_at), MAX(CASE WHEN ok = 1 THEN fetched_at END)"
-        " FROM source_reads WHERE fetched_at <= ? GROUP BY source",
-        (iso_utc(as_of),),
-    )
-    reads = {source: (newest, good) for source, newest, good in cursor}
-    stale: list[tuple[str, str]] = []
-    for source in sorted(KNOWN_SOURCES):
-        newest, good = reads.get(source, (None, None))
-        if good is None:
-            stale.append((source, "no read of it has worked yet"))
-        elif newest != good:
-            stale.append((source, "the newest read of it failed"))
-    return stale

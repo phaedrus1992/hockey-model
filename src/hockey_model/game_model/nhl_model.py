@@ -12,7 +12,7 @@ from hockey_model.game_model.seasons import ELO_BURN_IN
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
 from hockey_model.sources.teams import franchise
 from hockey_model.store.reads import final_games_before, mp_team_form_before, team_games_before
-from hockey_model.store.source_reads import stale_sources
+from hockey_model.store.staleness import stale_sources
 from hockey_model.types import Projection
 
 # Goals per team and game when a team has no games in the store. The NHL average is near 3.
