@@ -253,23 +253,22 @@ class TestSchemaValidation:
             validate_against_schema({"baseline": {"fit_id": 1.5}}, schema)
 
 
-class TestSchemaRoundTrip:
-    """Property test: every record built from valid parts validates against the real schema."""
-
-    @given(
-        number=st.integers(min_value=1, max_value=9999),
-        slug=st.from_regex(r"[a-z][a-z0-9-]{0,20}", fullmatch=True),
-        min_games=st.integers(min_value=1, max_value=100000),
-        looks=st.integers(min_value=1, max_value=50),
+@given(
+    number=st.integers(min_value=1, max_value=9999),
+    slug=st.from_regex(r"[a-z][a-z0-9-]{0,20}", fullmatch=True),
+    min_games=st.integers(min_value=1, max_value=100000),
+    looks=st.integers(min_value=1, max_value=50),
+)
+def test_a_well_formed_record_passes_the_registry_schema(
+    number: int, slug: str, min_games: int, looks: int
+) -> None:
+    """Every record built from valid parts passes the registry schema."""
+    record = _make_record(
+        {
+            "id": f"{number:04d}-{slug}",
+            "min_games": min_games,
+            "look_number": looks,
+            "selection_folds": None,
+        }
     )
-    def test_a_well_formed_record_passes_the_registry_schema(self, number, slug, min_games, looks):
-        """Any record with valid parts passes the registry schema."""
-        record = _make_record(
-            {
-                "id": f"{number:04d}-{slug}",
-                "min_games": min_games,
-                "look_number": looks,
-                "selection_folds": None,
-            }
-        )
-        validate_against_schema(record, EXPERIMENT_SCHEMA)
+    validate_against_schema(record, EXPERIMENT_SCHEMA)
