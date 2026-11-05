@@ -172,6 +172,9 @@ def test_goalie_form_uses_only_the_window(store: sqlite3.Connection) -> None:
         add_game(store, gid, stamp, home=HOME, away="MTL")
         add_goalie(store, gid, HOME, 11, "C. Ingram")
         add_goalie_form(store, gid, 11, 5.0 if number < 3 else 1.0, 0)
+        # The away goalie has a neutral form, so the differential is the home window alone.
+        add_goalie(store, gid, AWAY, 21, "M. Away")
+        add_goalie_form(store, gid, 21, 0.0, 0)
     row = features(store, GoalieMode.GUESS)
     assert row.values["goalie_gsax"] == pytest.approx(1.0)
 

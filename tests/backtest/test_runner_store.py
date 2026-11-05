@@ -3,7 +3,7 @@
 import sqlite3
 
 import pytest
-from seeding import add_game
+from seeding import add_game, add_goalie, add_goalie_form, add_team_form
 
 from hockey_model.backtest.runner import run_backtest
 from hockey_model.game_model.features import ATTEMPT_FEATURES, FEATURES
@@ -13,6 +13,9 @@ from hockey_model.types import HockeyModelError
 PLAN = SeasonPlan(
     burn_in=1, fit_first=2, select_train=(2, 4), select_validate=(5, 5), scored=(6, 7)
 )
+
+
+GOALIE = {"TOR": 11, "BOS": 21}
 
 
 def seed(store: sqlite3.Connection, seasons: range) -> None:
@@ -31,6 +34,13 @@ def seed(store: sqlite3.Connection, seasons: range) -> None:
                 season=season,
                 score=score,
             )
+            # Form and a starting goalie for both teams in every game, so the features are
+            # measured, not imputed.
+            add_team_form(store, game_id, home, 2.6, 2.5)
+            add_team_form(store, game_id, away, 2.5, 2.6)
+            for team, nhl_id in ((home, GOALIE[home]), (away, GOALIE[away])):
+                add_goalie(store, game_id, team, nhl_id, f"Goalie {team}")
+                add_goalie_form(store, game_id, nhl_id, 2.5, 2)
 
 
 def test_the_report_from_a_small_store(store: sqlite3.Connection) -> None:

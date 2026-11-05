@@ -178,6 +178,9 @@ def test_a_goalie_feature_uses_the_guessed_starter(store: sqlite3.Connection) ->
     for day in (15, 16, 17):
         add_goalie(store, day, "TOR", 11, "C. Ingram")
         add_goalie_form(store, day, 11, 3.0, 0)
+        # The away goalie has a neutral form, so the home goalie is the whole difference.
+        add_goalie(store, day, "BOS", 21, "B. Away")
+        add_goalie_form(store, day, 21, 0.0, 0)
     fit = LogisticFit(("goalie_gsax",), 0.0, 1.0, {"goalie_gsax": 1.0})
     with_goalie = model(store, fit).predict(GAME, AS_OF, 0.8)
     without = model(store).predict(GAME, AS_OF, 0.8)

@@ -17,6 +17,7 @@ from hockey_model.game_model.features import (
     GoalieMode,
     feature_name_problem,
 )
+from hockey_model.game_model.imputation import check_imputation
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
 from hockey_model.game_model.seasons import FIT_FIRST, season_of
@@ -212,17 +213,20 @@ def _fit(args: argparse.Namespace) -> tuple[object, int]:
                     f"fit through {through}: no games in the store from {FIT_FIRST}; "
                     "run `hockey-model refresh --backfill-from 2014-10-01`"
                 )
+            # The check runs before the fit, so a refused fit saves no row and no artifact.
+            quality = [q.as_dict() for q in check_imputation([r.features for r in rows], features)]
             fit = fit_logistic([r.features for r in rows], [r.home_won for r in rows], features)
             games = len(rows)
         else:
-            fit, games = ELO_ONLY, 0
-        fit_id = save_fit(conn, fit, through, datetime.now(UTC))
+            quality, fit, games = [], ELO_ONLY, 0
+        fit_id = save_fit(conn, fit, through, datetime.now(UTC), quality)
     finally:
         conn.close()
     return {
         "fit_id": fit_id,
         "through_season": through,
         "games": games,
+        "imputation": quality,
         **asdict(fit),
     }, 0
 

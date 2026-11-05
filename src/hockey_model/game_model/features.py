@@ -137,7 +137,11 @@ def _goalie_gsax(
     mode: GoalieMode,
     catalog: Catalog,
 ) -> tuple[float, list[MissingInput], bool]:
-    """Return the home minus away goals saved above expected, the gaps, and MoneyPuck use."""
+    """Return the home minus away goals saved above expected, the gaps, and MoneyPuck use.
+
+    A side that has no rate makes the whole differential ``NEUTRAL_FORM``. Otherwise the other
+    side's rate would pass through as a measured difference.
+    """
     cutoff = min(as_of, game.start)
     missing: list[MissingInput] = []
     values: dict[str, float] = {}
@@ -147,6 +151,8 @@ def _goalie_gsax(
         missing.extend(notes)
         values[team] = 0.0
         if start is None:
+            note = f"no starting goalie for {team}, so goalie form is not used"
+            missing.append(MissingInput(MissingKind.GOALIE_FORM, team, note))
             continue
         if start.player.nhl_id is None:
             note = f"{start.player.full_name} has no NHL id, so goalie form is not used"
@@ -159,6 +165,8 @@ def _goalie_gsax(
             continue
         used = True
         values[team] = sum(xg - goals for xg, goals in rows) / len(rows)
+    if any(m.kind is MissingKind.GOALIE_FORM for m in missing):
+        return NEUTRAL_FORM, missing, used
     return values[game.home] - values[game.away], missing, used
 
 

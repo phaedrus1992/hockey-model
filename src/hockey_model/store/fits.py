@@ -3,6 +3,7 @@
 import json
 import math
 import sqlite3
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any
@@ -14,9 +15,17 @@ from hockey_model.store.timestamps import iso_utc
 
 
 def save_fit(
-    conn: sqlite3.Connection, fit: LogisticFit, fit_through_season: int, created_at: datetime
+    conn: sqlite3.Connection,
+    fit: LogisticFit,
+    fit_through_season: int,
+    created_at: datetime,
+    imputation: Sequence[Mapping[str, object]] | None = None,
 ) -> int:
-    """Store a fit and return its id. An invalid fit raises ``StoreError`` and saves no row."""
+    """Store a fit and return its id. An invalid fit raises ``StoreError`` and saves no row.
+
+    ``imputation`` is the share of rows where each feature was imputed, as the fit was built.
+    It is stored beside the weights, so a reader can see how much of the fit was a stand-in.
+    """
     try:
         _check_fit(fit)
     except ValueError as exc:
@@ -28,6 +37,8 @@ def save_fit(
     }
     if fit.diagnostics is not None:
         weights["diagnostics"] = asdict(fit.diagnostics)
+    if imputation is not None:
+        weights["imputation"] = [dict(entry) for entry in imputation]
     with conn:
         cursor = conn.execute(
             "INSERT INTO model_fits (fit_through_season, features, weights, created_at)"

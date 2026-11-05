@@ -24,6 +24,7 @@ from hockey_model.backtest.metrics import (
     per_game_log_loss,
 )
 from hockey_model.game_model.features import FEATURES, GOALIE_FEATURE, GoalieMode
+from hockey_model.game_model.imputation import check_imputation, feature_quality
 from hockey_model.game_model.logistic import LogisticFit, fit_logistic, predict_logistic
 from hockey_model.game_model.seasons import DEFAULT_PLAN, SeasonPlan, in_cohort, scored_label
 from hockey_model.game_model.training import TrainingRow, training_rows
@@ -103,6 +104,8 @@ class BacktestReport:
     # stay empty, and the scores stay descriptive. The reasons say what is missing.
     eligible: bool = True
     ineligible_reasons: tuple[str, ...] = ()
+    # How often each tested feature was imputed in the scored games, as FeatureQuality dicts.
+    imputation: tuple[Mapping[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +125,8 @@ def _wins(rows: Sequence[TrainingRow]) -> list[bool]:
 
 
 def _fit(rows: Sequence[TrainingRow], features: Sequence[str]) -> LogisticFit:
+    # The check runs first, so a fit above the imputation limit is refused before it is fitted.
+    check_imputation([r.features for r in rows], features)
     return fit_logistic([r.features for r in rows], _wins(rows), features)
 
 
@@ -304,6 +309,7 @@ def _build_report(
     model = next(r for r in runs if r.name == MODEL_ACTUAL)
     success = not reasons and model.diff_vs_elo_ci is not None and model.diff_vs_elo_ci[1] < 0.0
     uses_moneypuck = bool(MONEYPUCK_FEATURES & set(tested))
+    quality = feature_quality([g.row.features for g in games], tested)
     return BacktestReport(
         candidate_features=tuple(candidates),
         vetoed=vetoed,
@@ -320,6 +326,7 @@ def _build_report(
         coverage=coverage,
         eligible=not reasons,
         ineligible_reasons=reasons,
+        imputation=tuple(q.as_dict() for q in quality),
     )
 
 
