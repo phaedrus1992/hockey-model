@@ -52,6 +52,13 @@ if [[ -z "$day" || -z "$out_dir" ]]; then
   echo "daily-report: --date and --out-dir are required; see --help" >&2
   exit 2
 fi
+# The day names files next to the store, so only a real date may pass.
+# shellcheck source=scripts/valid-day.sh
+source "$(dirname "$0")/valid-day.sh"
+if ! is_valid_day "$day"; then
+  echo "daily-report: --date '$day' is not a real date YYYY-MM-DD; see --help" >&2
+  exit 2
+fi
 if [[ -z "${HOCKEY_MODEL_DB:-}" ]]; then
   echo "daily-report: HOCKEY_MODEL_DB must name the store file; see --help" >&2
   exit 2

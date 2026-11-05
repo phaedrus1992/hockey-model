@@ -355,12 +355,35 @@ def test_prepare_prints_the_refresh_report_when_the_refresh_fails(
     assert not (tmp_path / "store" / "store.db.backfilled").exists()
 
 
-def test_prepare_refuses_a_date_that_is_not_a_date_shape(fakes: Path, tmp_path: Path) -> None:
+BAD_DAYS = ["../2026-11-04", "2026-13-45", "2026-02-30", "2025-02-29", "2026-00-10", "2026-4-5"]
+
+
+@pytest.mark.parametrize("bad", BAD_DAYS)
+def test_prepare_refuses_a_date_that_is_not_a_real_date(
+    fakes: Path, tmp_path: Path, bad: str
+) -> None:
     env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
-    result = _run("daily-prepare.sh", env, "--date", "../2026-11-04")
+    result = _run("daily-prepare.sh", env, "--date", bad)
     assert result.returncode == 2
-    assert "not YYYY-MM-DD" in result.stderr
+    assert "not a real date" in result.stderr
     assert _calls(tmp_path) == []
+
+
+@pytest.mark.parametrize("bad", BAD_DAYS)
+def test_report_refuses_a_date_that_is_not_a_real_date(
+    fakes: Path, tmp_path: Path, bad: str
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    result = _run("daily-report.sh", env, "--date", bad, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 2
+    assert "not a real date" in result.stderr
+    assert _calls(tmp_path) == []
+
+
+@pytest.mark.parametrize("good", ["2024-02-29", "2000-02-29", "2026-12-31", "2026-11-05"])
+def test_prepare_accepts_a_real_date(fakes: Path, tmp_path: Path, good: str) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", good).returncode == 0
 
 
 def test_prepare_passes_the_budget_from_the_environment(fakes: Path, tmp_path: Path) -> None:
