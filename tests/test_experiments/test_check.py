@@ -10,11 +10,13 @@ Covers:
 import hashlib
 import json
 import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 from seeding import add_game
 
+from hockey_model.backtest.metrics import MIN_BLOCK_LENGTH, MIN_INDEPENDENT_BLOCKS
 from hockey_model.backtest.runner import BacktestReport
 from hockey_model.experiments.check import (
     check_all,
@@ -101,14 +103,22 @@ def _init_repo(root: Path) -> None:
     _git(root, "config", "commit.gpgsign", "false")
 
 
-def _seed(store, seasons, *, game_type: int = 2, first_id: int = 1) -> int:
-    """Put 20 final games in each season and return the last game id used."""
+# The scored cohort of a run needs this many games for a bootstrap interval.
+ENOUGH_GAMES = MIN_INDEPENDENT_BLOCKS * MIN_BLOCK_LENGTH
+
+
+def _seed(store, seasons, *, game_type: int = 2, first_id: int = 1, games: int = 20) -> int:
+    """Put ``games`` final games in each season and return the last game id used."""
     game_id = first_id - 1
     for season in seasons:
-        for day in range(1, 21):
+        for index in range(games):
             game_id += 1
-            start = f"{season // 10000:04d}-11-{day:02d}T00:00"
-            add_game(store, game_id, start, season=season, game_type=game_type)
+            start = datetime(season // 10000, 11, 1) + timedelta(
+                days=index % 20, minutes=(index // 20) * 90
+            )
+            add_game(
+                store, game_id, start.strftime("%Y-%m-%dT%H:%M"), season=season, game_type=game_type
+            )
     return game_id
 
 
@@ -560,18 +570,18 @@ class TestRunExperiment:
     ):
         """A confirmation run scores only cohort games and saves status, result, and CSV."""
         _seed(store, FIT_SEASONS)
-        _seed(store, [20262027], first_id=1000)
+        _seed(store, [20262027], first_id=1000, games=ENOUGH_GAMES)
         record = _register(registry_dir, {"id": "0002-forward"})
         payload, entries = run_experiment(record.id, store, repo_root=registry_dir.parent)
         assert payload["ok"] is True
         assert payload["scored"] == "seasons from 20262027 onward"
         assert payload["status"] in {"promoted", "rejected", "inconclusive"}
-        assert len(entries) == 3 * 20
+        assert len(entries) == 3 * ENOUGH_GAMES
 
         saved = ExperimentRecord.load(registry_dir / "0002-forward.json")
         assert saved.status != "registered"
         assert saved.result is not None
-        assert saved.result.games == 20
+        assert saved.result.games == ENOUGH_GAMES
         assert saved.result.interval[0] <= saved.result.difference <= saved.result.interval[1]
         csv_path = registry_dir / "results" / "0002-forward-games.csv"
         assert csv_path.exists()
@@ -583,7 +593,7 @@ class TestRunExperiment:
     def test_run_experiment_writes_the_named_games_file(self, registry_dir: Path, store):
         """A run writes the per-game file the caller names, one row per exported game."""
         _seed(store, FIT_SEASONS)
-        _seed(store, [20262027], first_id=1000)
+        _seed(store, [20262027], first_id=1000, games=ENOUGH_GAMES)
         record = _register(registry_dir, {"id": "0009-games"})
         out = registry_dir / "scratch-games.csv"
         payload, entries = run_experiment(
@@ -595,7 +605,7 @@ class TestRunExperiment:
     def test_confirmation_run_refuses_when_already_run(self, registry_dir: Path, store):
         """The second confirmation run of a record is refused."""
         _seed(store, FIT_SEASONS)
-        _seed(store, [20262027], first_id=1000)
+        _seed(store, [20262027], first_id=1000, games=ENOUGH_GAMES)
         record = _register(registry_dir, {"id": "0002-forward"})
         run_experiment(record.id, store, repo_root=registry_dir.parent)
         with pytest.raises(HockeyModelError, match="expected registered"):
@@ -650,13 +660,13 @@ class TestRunExperiment:
     def test_confirmation_run_scores_only_games_after_the_cutoff(self, registry_dir: Path, store):
         """Games that started before the registered data_cutoff are not scored."""
         _seed(store, FIT_SEASONS)
-        _seed(store, [20262027], first_id=1000)
+        _seed(store, [20262027], first_id=1000, games=ENOUGH_GAMES)
         for day in range(1, 11):
             add_game(store, 3000 + day, f"2026-10-{day:02d}T00:00", season=20262027)
         record = _register(registry_dir, {"id": "0006-cutoff", "min_games": 15})
         _, entries = run_experiment(record.id, store, repo_root=registry_dir.parent)
         scored_ids = {entry["game_id"] for entry in entries}
-        assert scored_ids == set(range(1000, 1020))
+        assert scored_ids == set(range(1000, 1000 + ENOUGH_GAMES))
 
     def test_exploration_run_never_writes_a_result(self, registry_dir: Path, store):
         """An exploration run reports its seasons and says it cannot promote anything."""
@@ -673,7 +683,7 @@ class TestRunExperiment:
     def test_the_stored_result_path_is_relative(self, registry_dir: Path, store):
         """The committed record holds no machine-local path."""
         _seed(store, FIT_SEASONS)
-        _seed(store, [20262027], first_id=1000)
+        _seed(store, [20262027], first_id=1000, games=ENOUGH_GAMES)
         record = _register(registry_dir, {"id": "0002-forward"})
         run_experiment(record.id, store, repo_root=registry_dir.parent)
         saved = ExperimentRecord.load(registry_dir / "0002-forward.json")
@@ -712,6 +722,28 @@ class TestRunExperiment:
         )
         with pytest.raises(HockeyModelError, match="produced no interval"):
             record_with_result(record, empty_report, csv_path, registry_dir.parent)
+
+    def test_the_refusal_names_why_the_run_has_no_interval(self, registry_dir: Path):
+        record = _make_record()
+        csv_path = registry_dir / "results" / "0001-valid-games.csv"
+        csv_path.parent.mkdir()
+        csv_path.write_text("x\n", encoding="utf-8")
+        report = BacktestReport(
+            (),
+            (),
+            (),
+            (),
+            {},
+            (),
+            False,
+            (),
+            (),
+            {},
+            eligible=False,
+            ineligible_reasons=("season 20262027 has 3 scored regular season games",),
+        )
+        with pytest.raises(HockeyModelError, match="season 20262027 has 3 scored"):
+            record_with_result(record, report, csv_path, registry_dir.parent)
 
 
 class TestMain:

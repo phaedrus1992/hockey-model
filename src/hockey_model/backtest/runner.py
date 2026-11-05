@@ -13,9 +13,11 @@ from dataclasses import dataclass, fields
 from datetime import datetime
 from pathlib import Path
 
+from hockey_model.backtest.eligibility import SeasonCount, ineligibility_reasons, season_counts
 from hockey_model.backtest.metrics import (
     CalibrationBin,
     block_bootstrap_mean_ci,
+    bootstrap_problem,
     brier,
     calibration,
     log_loss,
@@ -95,6 +97,12 @@ class BacktestReport:
     credits: tuple[str, ...]
     # Scored games, with the goalie who started, that had each kind of missing input.
     missing_inputs: Mapping[str, int]
+    # Scored games by season and game type, with the expected count of a regular season.
+    coverage: tuple[SeasonCount, ...] = ()
+    # False when the scored games cannot support success: success and live_features then
+    # stay empty, and the scores stay descriptive. The reasons say what is missing.
+    eligible: bool = True
+    ineligible_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +205,9 @@ def _scored_run(name: str, games: Sequence[_Scored], elo_losses: Sequence[float]
     mean_diff = None
     if name != ELO:
         diffs = [a - b for a, b in zip(per_game_log_loss(probs, wins), elo_losses, strict=True)]
-        ci = block_bootstrap_mean_ci(diffs)
+        # Too few blocks leave the interval unavailable, never a false certainty.
+        if bootstrap_problem(len(diffs)) is None:
+            ci = block_bootstrap_mean_ci(diffs)
         mean_diff = sum(diffs) / len(diffs)
     return ScoredRun(
         name,
@@ -263,6 +273,56 @@ def _candidate_notes(candidates: Sequence[str]) -> tuple[str, ...]:
     )
 
 
+def _eligibility_notes(reasons: Sequence[str], coverage: Sequence[SeasonCount]) -> tuple[str, ...]:
+    """Say why success is refused, and name the seasons with stored games that never finished."""
+    notes = [f"Not eligible for success: {reason}." for reason in reasons]
+    notes.extend(
+        f"Season {c.season} game type {c.game_type} holds {c.unresolved} stored game(s) that are "
+        "not final long after their start."
+        for c in coverage
+        if c.unresolved
+    )
+    return tuple(notes)
+
+
+def _build_report(
+    conn: sqlite3.Connection,
+    plan: SeasonPlan,
+    candidates: Sequence[str],
+    scoring: tuple[Mapping[str, Mapping[str, float]], tuple[str, ...]],
+    games: Sequence[_Scored],
+) -> BacktestReport:
+    validation, vetoed = scoring
+    tested = tuple(f for f in candidates if f not in vetoed)
+    wins = [g.row.home_won for g in games]
+    elo_losses = per_game_log_loss([g.by_run[ELO] for g in games], wins)
+    runs = tuple(
+        _scored_run(name, games, elo_losses) for name in (HOME_RATE, ELO, MODEL_ACTUAL, MODEL_GUESS)
+    )
+    coverage = season_counts(conn, ((g.row.game.season, g.row.game.game_type) for g in games), plan)
+    reasons = ineligibility_reasons(coverage, len(games))
+    model = next(r for r in runs if r.name == MODEL_ACTUAL)
+    success = not reasons and model.diff_vs_elo_ci is not None and model.diff_vs_elo_ci[1] < 0.0
+    uses_moneypuck = bool(MONEYPUCK_FEATURES & set(tested))
+    return BacktestReport(
+        candidate_features=tuple(candidates),
+        vetoed=vetoed,
+        tested_features=tested,
+        live_features=tested if success and _is_production(candidates) else (),
+        validation=validation,
+        runs=runs,
+        success=success,
+        notes=_notes(tested, vetoed, success)
+        + _candidate_notes(candidates)
+        + _eligibility_notes(reasons, coverage),
+        credits=(MONEYPUCK_CREDIT,) if uses_moneypuck else (),
+        missing_inputs=_missing_counts(games),
+        coverage=coverage,
+        eligible=not reasons,
+        ineligible_reasons=reasons,
+    )
+
+
 def run_backtest(
     conn: sqlite3.Connection,
     plan: SeasonPlan = DEFAULT_PLAN,
@@ -273,40 +333,21 @@ def run_backtest(
 
     Success is one test: the 95th percentile of the block-bootstrap interval of the
     per-game log loss of the model minus that of the Elo, with the goalie who started,
-    is below zero. The guess run never changes success.
+    is below zero. The guess run never changes success. Success also needs a covered
+    cohort and enough independent blocks; see ``BacktestReport.eligible``.
     """
     first, last = plan.fit_first, plan.scored[1]
     actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in, names=candidates)
     guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in, names=candidates)
-    validation, vetoed = _validate(actual, guess, plan, candidates)
-    tested = tuple(f for f in candidates if f not in vetoed)
+    scoring = _validate(actual, guess, plan, candidates)
+    tested = tuple(f for f in candidates if f not in scoring[1])
     games = _score_seasons(actual, guess, tested, plan)
     if not games:
         raise HockeyModelError(
             f"backtest: no games in the scored {scored_label(plan)}; "
             "run `hockey-model refresh --backfill-from 2014-10-01`"
         )
-    wins = [g.row.home_won for g in games]
-    elo_losses = per_game_log_loss([g.by_run[ELO] for g in games], wins)
-    runs = tuple(
-        _scored_run(name, games, elo_losses) for name in (HOME_RATE, ELO, MODEL_ACTUAL, MODEL_GUESS)
-    )
-    model = next(r for r in runs if r.name == MODEL_ACTUAL)
-    success = model.diff_vs_elo_ci is not None and model.diff_vs_elo_ci[1] < 0.0
-    uses_moneypuck = bool(MONEYPUCK_FEATURES & set(tested))
-    report = BacktestReport(
-        candidate_features=tuple(candidates),
-        vetoed=vetoed,
-        tested_features=tested,
-        live_features=tested if success and _is_production(candidates) else (),
-        validation=validation,
-        runs=runs,
-        success=success,
-        notes=_notes(tested, vetoed, success) + _candidate_notes(candidates),
-        credits=(MONEYPUCK_CREDIT,) if uses_moneypuck else (),
-        missing_inputs=_missing_counts(games),
-    )
-    return report, _records(games)
+    return _build_report(conn, plan, candidates, scoring, games), _records(games)
 
 
 def write_game_records(path: Path, records: Sequence[GameRecord]) -> None:

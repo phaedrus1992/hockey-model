@@ -33,6 +33,26 @@ REGULAR_SEASON_TYPE = 2
 OPEN_END = 99_999_999
 
 
+# Regular season games that the NHL played, by season. The count differs with the number of
+# teams, a shortened schedule, and a pause, so it is policy data and not a formula. A season
+# that is not listed has no expected count and is not checked for coverage.
+EXPECTED_REGULAR_GAMES = {
+    20152016: 1230,
+    20162017: 1230,
+    20172018: 1271,
+    20182019: 1271,
+    20192020: 1082,  # the season stopped in March 2020
+    20202021: 868,  # a 56-game season
+    20212022: 1312,
+    20222023: 1312,
+    20232024: 1312,
+    20242025: 1312,
+    20252026: 1312,
+}
+# A scored regular season counts as complete from this share of its expected games. A hole
+# from a failed score day, or a season that is still loading, falls under it.
+MIN_SEASON_COVERAGE = 0.95
+
 # A season is counted from this month of its first year until the same month a year later.
 # The fit, the cohorts, and the MoneyPuck refresh all use it, so they agree in July and August.
 SEASON_START_MONTH = 9
