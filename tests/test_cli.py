@@ -219,6 +219,30 @@ def test_cli_refresh_rejects_bad_backfill_date(
     assert cli.main(["refresh", "--backfill-from", "yesterday"]) == 2
 
 
+def test_cli_refresh_rejects_a_budget_below_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["refresh", "--budget-seconds", "0"]) == 2
+    assert "--budget-seconds" in capsys.readouterr().err
+
+
+def test_cli_refresh_rejects_a_budget_with_starters_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["refresh", "--starters-only", "--budget-seconds", "60"]) == 2
+    assert "--starters-only" in capsys.readouterr().err
+
+
+def test_cli_refresh_rejects_a_budget_without_a_backfill(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["refresh", "--budget-seconds", "60"]) == 2
+    assert "--budget-seconds needs --backfill-from" in capsys.readouterr().err
+
+
 def _store_with_games(path: Path) -> None:
     conn = connect(path)
     add_game(conn, 2015020001, "2015-11-01T00:00", season=20152016)

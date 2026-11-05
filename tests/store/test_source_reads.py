@@ -19,7 +19,7 @@ SOURCE = "nhl_scores"
 
 def _record(conn: sqlite3.Connection, url: str, outcomes: list[bool]) -> None:
     for step, ok in enumerate(outcomes):
-        record_read(conn, SOURCE, url, START + timedelta(hours=step), None if ok else "HTTP 500")
+        record_read(conn, SOURCE, url, START + timedelta(days=step), None if ok else "HTTP 500")
 
 
 @pytest.fixture
@@ -44,6 +44,12 @@ def test_property_a_url_is_abandoned_after_enough_failures_since_its_last_good_r
 
 def test_a_good_read_clears_the_failures_before_it(conn: sqlite3.Connection) -> None:
     _record(conn, "u", [False, False, True, False])
+    assert abandoned_urls(conn, SOURCE) == frozenset()
+
+
+def test_failures_within_a_few_hours_do_not_abandon_the_url(conn: sqlite3.Connection) -> None:
+    for minutes in (0, 5):
+        record_read(conn, SOURCE, "u", START + timedelta(minutes=minutes), "HTTP 500")
     assert abandoned_urls(conn, SOURCE) == frozenset()
 
 

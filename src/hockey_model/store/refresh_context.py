@@ -27,6 +27,8 @@ class RefreshReport:
     errors: tuple[HockeyModelError, ...]
     notes: tuple[str, ...]
     credits: tuple[str, ...]
+    # True when a backfill read every window, False when it stopped early, None without one.
+    backfill_complete: bool | None = None
 
 
 @dataclass
@@ -38,6 +40,8 @@ class RefreshRun:
     now: datetime
     backfill_from: date | None = None
     clock: Callable[[], datetime] | None = None
+    deadline: datetime | None = None
+    backfill_complete: bool | None = None
     written: Counter[str] = field(default_factory=Counter)
     errors: list[HockeyModelError] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -46,6 +50,10 @@ class RefreshRun:
     def stamp(self) -> datetime:
         """Return the time to store with a read: the clock when one is set, else ``now``."""
         return self.now if self.clock is None else self.clock()
+
+    def out_of_time(self) -> bool:
+        """Return True once the time budget of this refresh is spent."""
+        return self.deadline is not None and self.stamp() >= self.deadline
 
     def attempt(self, source: str, url: str, unit: Callable[[datetime], int]) -> bool:
         """Run one unit of work in one transaction. Return False when it failed.
@@ -69,5 +77,9 @@ class RefreshRun:
     def report(self) -> RefreshReport:
         """Return the final report of this run."""
         return RefreshReport(
-            dict(self.written), tuple(self.errors), tuple(self.notes), tuple(self.credits)
+            dict(self.written),
+            tuple(self.errors),
+            tuple(self.notes),
+            tuple(self.credits),
+            self.backfill_complete,
         )

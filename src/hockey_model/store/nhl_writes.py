@@ -2,8 +2,9 @@
 
 import sqlite3
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 
+from hockey_model.game_day import game_day_window
 from hockey_model.sources.nhl import FINAL_STATES, BoxscoreRows, GameRow
 from hockey_model.store.timestamps import iso_utc
 
@@ -97,23 +98,29 @@ def _stored_teams(conn: sqlite3.Connection, table: str, game_id: int) -> set[str
     return {team for (team,) in cursor}
 
 
-def games_missing_boxscore(conn: sqlite3.Connection) -> list[int]:
+def games_missing_boxscore(
+    conn: sqlite3.Connection, first_day: date | None = None, last_day: date | None = None
+) -> list[int]:
     """Return the ids of final games whose boxscore is not stored for both teams, oldest first.
 
     A team is stored when it has a skater line and a goalie line. A game with one side only
-    is listed again, so a refresh reads it and adds the missing side.
+    is listed again, so a refresh reads it and adds the missing side. ``first_day`` and
+    ``last_day`` are Eastern game days, both included. Either may be None.
     """
     marks = ",".join("?" for _ in FINAL_STATES)
+    stored = " AND ".join(
+        f"EXISTS (SELECT 1 FROM {table} t WHERE t.game_id = g.game_id AND t.team = g.{side})"
+        for side in ("home", "away")
+        for table in ("skater_games", "goalie_games")
+    )
+    low = None if first_day is None else iso_utc(game_day_window(first_day)[0])
+    high = None if last_day is None else iso_utc(game_day_window(last_day)[1])
     cursor = conn.execute(
         "SELECT DISTINCT g.game_id FROM games g"
         f" WHERE g.state IN ({marks})"
-        " AND NOT ("
-        + " AND ".join(
-            f"EXISTS (SELECT 1 FROM {table} t WHERE t.game_id = g.game_id AND t.team = g.{side})"
-            for side in ("home", "away")
-            for table in ("skater_games", "goalie_games")
-        )
-        + ") ORDER BY g.start_utc, g.game_id",
-        sorted(FINAL_STATES),
+        f" AND NOT ({stored})"
+        " AND (? IS NULL OR g.start_utc >= ?) AND (? IS NULL OR g.start_utc < ?)"
+        " ORDER BY g.start_utc, g.game_id",
+        [*sorted(FINAL_STATES), low, low, high, high],
     )
     return [row[0] for row in cursor]

@@ -2,14 +2,15 @@
 
 import sqlite3
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from hockey_model.sources.http import HttpClient
+from hockey_model.store.refresh_backfill import nhl
 from hockey_model.store.refresh_context import RefreshReport, RefreshRun
-from hockey_model.store.refresh_nhl import boxscores, score_days
+from hockey_model.store.refresh_nhl import score_days
 from hockey_model.store.refresh_other import daily_faceoff, espn_injuries, espn_starters, moneypuck
 
-_STEPS = (score_days, boxscores, moneypuck, espn_starters, espn_injuries, daily_faceoff)
+_STEPS = (nhl, moneypuck, espn_starters, espn_injuries, daily_faceoff)
 # The sources that change between the morning refresh and puck drop: game times and states,
 # probable and confirmed goalies, and injuries. The boxscores and MoneyPuck files do not.
 _STARTER_STEPS = (score_days, espn_starters, espn_injuries, daily_faceoff)
@@ -32,13 +33,20 @@ def refresh(
     now: datetime,
     backfill_from: date | None = None,
     clock: Callable[[], datetime] | None = None,
+    budget: timedelta | None = None,
 ) -> RefreshReport:
     """Read every source in order, and report what was written and what failed.
 
     Each source runs even when an earlier one failed. A failed unit of work writes nothing.
     ``clock`` stamps each read with its own fetch time. Without it, every read gets ``now``.
+    ``budget`` is how long the NHL steps may read, counted from ``now``. A backfill that
+    spends it stops, and the report says the backfill is not complete.
     """
-    return _run(RefreshRun(conn, client, now, backfill_from, clock), _STEPS)
+    if budget is not None and clock is None:
+        raise ValueError("refresh: a budget needs a clock; pass clock to count the time spent")
+    deadline = None if budget is None else now + budget
+    run = RefreshRun(conn, client, now, backfill_from, clock, deadline)
+    return _run(run, _STEPS)
 
 
 def refresh_starters(

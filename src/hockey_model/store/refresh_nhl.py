@@ -1,7 +1,9 @@
 """The NHL steps of a refresh: score days, then boxscores."""
 
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
+from typing import NamedTuple
 
 from hockey_model.game_day import game_day_of
 from hockey_model.sources.nhl import (
@@ -14,7 +16,7 @@ from hockey_model.sources.nhl import (
 )
 from hockey_model.sources.shape_errors import SourceParseError
 from hockey_model.store.db import StoreError
-from hockey_model.store.nhl_writes import games_missing_boxscore, write_boxscore, write_games
+from hockey_model.store.nhl_writes import write_boxscore, write_games
 from hockey_model.store.reads import game_row, unresolved_games
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
 from hockey_model.store.source_reads import (
@@ -126,7 +128,7 @@ def _describe(items: list[str], shown: int = 5) -> str:
     return names if len(items) <= shown else f"{names} and {len(items) - shown} more"
 
 
-def _note_unresolved(run: RefreshRun, games: list[tuple[int, datetime]]) -> None:
+def note_unresolved(run: RefreshRun, games: list[tuple[int, datetime]]) -> None:
     """Name the games that are still not final long after their start."""
     if not games:
         return
@@ -137,6 +139,60 @@ def _note_unresolved(run: RefreshRun, games: list[tuple[int, datetime]]) -> None
     )
 
 
+class ReadResult(NamedTuple):
+    """How a read of days or games ended."""
+
+    clean: bool  # every unit is read, or is a known gap
+    stopped: bool  # the read quit early: three failures in a row, or the time ran out
+
+
+def score_gaps(run: RefreshRun) -> set[date]:
+    """Return the score days that failed in every recent read, and note them in the report."""
+    skipped = sorted(_day_of(url) for url in abandoned_urls(run.conn, SCORES))
+    if skipped:
+        names = _describe([day.isoformat() for day in skipped])
+        run.notes.append(f"{SCORES}: skipped {names}, which failed in every read")
+    return set(skipped)
+
+
+def plan_unresolved(run: RefreshRun) -> tuple[list[tuple[int, datetime]], list[date]]:
+    """Return the unresolved games, and the score days to read again because of them."""
+    unresolved = _unresolved_games(run)
+    return unresolved, _unresolved_days_due(run, unresolved)
+
+
+def read_days(
+    run: RefreshRun, worklist: Sequence[date], gaps: set[date], due: Sequence[date] = ()
+) -> ReadResult:
+    """Read each score day of ``worklist``, in order.
+
+    A day that was read after it ended is complete and is not read again, unless it is in
+    ``due``. A day in ``gaps`` is a known gap, so it counts as read. The read stops when three
+    days in a row fail or the time budget is spent.
+    """
+    failures = 0
+    clean = True
+    for index, day in enumerate(worklist):
+        if failures >= MAX_UNIT_FAILURES:
+            left = len(worklist) - index
+            run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
+            return ReadResult(clean=False, stopped=True)
+        if day in gaps or (day not in due and _day_complete(run, day)):
+            failures = 0
+            continue
+        if run.out_of_time():
+            run.notes.append(f"{SCORES}: stopped at {day.isoformat()}, because the time ran out")
+            return ReadResult(clean=False, stopped=True)
+
+        def unit(stamp: datetime, current: date = day) -> int:
+            return write_games(run.conn, fetch_score_day(run.client, current), stamp)
+
+        ok = run.attempt(SCORES, score_day_url(day), unit)
+        failures = 0 if ok else failures + 1
+        clean = clean and ok
+    return ReadResult(clean, stopped=False)
+
+
 def score_days(run: RefreshRun) -> None:
     """Read each score day from the first day through the schedule horizon.
 
@@ -145,32 +201,10 @@ def score_days(run: RefreshRun) -> None:
     """
     last_day = game_day_of(run.now) + timedelta(days=SCHEDULE_DAYS_AHEAD)
     first = _first_day(run)
-    unresolved = _unresolved_games(run)
-    due = _unresolved_days_due(run, unresolved)
+    unresolved, due = plan_unresolved(run)
     window = (first + timedelta(days=n) for n in range((last_day - first).days + 1))
-    worklist = sorted({*due, *window})
-    failures = 0
-    # A day that failed in every recent read is a known gap. Reading it again would fail
-    # the refresh for good, and so a backfill would never finish.
-    skipped = sorted(_day_of(url) for url in abandoned_urls(run.conn, SCORES))
-    if skipped:
-        names = _describe([day.isoformat() for day in skipped])
-        run.notes.append(f"{SCORES}: skipped {names}, which failed in every read")
-    gaps = set(skipped)
-    for index, day in enumerate(worklist):
-        if failures >= MAX_UNIT_FAILURES:
-            left = len(worklist) - index
-            run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
-            break
-        if day in gaps or (day not in due and _day_complete(run, day)):
-            failures = 0
-            continue
-
-        def unit(stamp: datetime, current: date = day) -> int:
-            return write_games(run.conn, fetch_score_day(run.client, current), stamp)
-
-        failures = 0 if run.attempt(SCORES, score_day_url(day), unit) else failures + 1
-    _note_unresolved(run, unresolved)
+    read_days(run, sorted({*due, *window}), score_gaps(run), due)
+    note_unresolved(run, unresolved)
 
 
 def check_boxscore_identity(conn: sqlite3.Connection, game_id: int, rows: BoxscoreRows) -> None:
@@ -193,12 +227,16 @@ def check_boxscore_identity(conn: sqlite3.Connection, game_id: int, rows: Boxsco
         )
 
 
-def boxscores(run: RefreshRun) -> None:
-    """Read the boxscore of each final game that has none. Each game is its own unit."""
+def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
+    """Read the boxscore of each game in ``game_ids``. Each game is its own unit.
+
+    The result is clean when every game that is not a known gap now has its boxscore.
+    """
     failures = 0
     skipped = 0
+    clean = True
     gaps = abandoned_urls(run.conn, BOXSCORES)
-    waiting = [g for g in games_missing_boxscore(run.conn) if boxscore_url(g) not in gaps]
+    waiting = [g for g in game_ids if boxscore_url(g) not in gaps]
     if gaps:
         run.notes.append(f"{BOXSCORES}: {len(gaps)} games skipped, because every read failed")
     for index, game_id in enumerate(waiting):
@@ -207,10 +245,15 @@ def boxscores(run: RefreshRun) -> None:
             run.notes.append(
                 f"{BOXSCORES}: stopped after {failures} failed reads; {left} not tried"
             )
-            break
+            return ReadResult(clean=False, stopped=True)
+        if run.out_of_time():
+            left = len(waiting) - index
+            run.notes.append(f"{BOXSCORES}: stopped, because the time ran out; {left} not tried")
+            return ReadResult(clean=False, stopped=True)
         url = boxscore_url(game_id)
         if failed_since(run.conn, BOXSCORES, url, run.now - RETRY_FAILED_AFTER):
             skipped += 1
+            clean = False
             continue
 
         def unit(stamp: datetime, game_id: int = game_id) -> int:
@@ -219,8 +262,11 @@ def boxscores(run: RefreshRun) -> None:
             write_boxscore(run.conn, game_id, rows, stamp)
             return 1
 
-        failures = 0 if run.attempt(BOXSCORES, url, unit) else failures + 1
+        ok = run.attempt(BOXSCORES, url, unit)
+        failures = 0 if ok else failures + 1
+        clean = clean and ok
     if skipped:
         run.notes.append(
             f"{BOXSCORES}: {skipped} skipped, because the last read failed a day ago or less"
         )
+    return ReadResult(clean, stopped=False)

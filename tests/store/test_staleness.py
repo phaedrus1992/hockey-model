@@ -210,7 +210,7 @@ def test_an_abandoned_score_day_stays_reported_after_the_failure_window(
 ) -> None:
     _fresh_everything(store)
     day = (AS_OF - ACTIVE_FAILURE_WINDOW - timedelta(days=20)).date()
-    for hours in (30, 20):
+    for hours in (50, 20):
         record_read(
             store, "nhl_scores", score_day_url(day), AS_OF - timedelta(days=25, hours=hours), "x"
         )

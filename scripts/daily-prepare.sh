@@ -6,8 +6,10 @@
 #   --date  Eastern game day to prepare. Default: today in Eastern time.
 #
 # Reads the store path from HOCKEY_MODEL_DB. The first backfill runs until a marker file
-# next to the store says it finished. An interrupted backfill resumes on the next run,
-# because refresh skips what it already read. The backtest files and a prepared-DATE
+# next to the store says it finished. The backfill reads one year at a time, newest year
+# first, and stops after BACKFILL_BUDGET_S seconds (default 1800). A stopped backfill
+# writes no marker and exits with code 75. It resumes on the next run, because refresh
+# skips what it already read. The backtest files and a prepared-DATE
 # marker go next to the store, where daily-report.sh finds them. Any failed step stops
 # the script with its exit code, so a failed run writes no marker.
 set -euo pipefail
@@ -49,11 +51,33 @@ store_dir="$(dirname "$HOCKEY_MODEL_DB")"
 mkdir -p "$store_dir"
 
 # The marker is written only after a backfill finishes. A store file without it is partial.
+if ! command -v jq >/dev/null; then
+  echo "daily-prepare: jq is not installed; it reads the refresh report and live_features" >&2
+  exit 1
+fi
 marker="$HOCKEY_MODEL_DB.backfilled"
 if [[ ! -f "$marker" ]]; then
   echo "daily-prepare: the store has no finished backfill; backfilling from 2014-10-01." >&2
-  echo "daily-prepare: a full backfill takes hours and can outlast the job time limit." >&2
-  uv run hockey-model refresh --backfill-from 2014-10-01
+  echo "daily-prepare: the backfill reads one year per window, newest first." >&2
+  report="$store_dir/refresh-report.json"
+  refresh_rc=0
+  uv run hockey-model refresh --backfill-from 2014-10-01 \
+    --budget-seconds "${BACKFILL_BUDGET_S:-1800}" >"$report" || refresh_rc=$?
+  cat "$report"
+  if ((refresh_rc != 0)); then
+    exit "$refresh_rc"
+  fi
+  case "$(jq -r '.backfill_complete' "$report")" in
+    true) ;;
+    false)
+      echo "daily-prepare: the backfill stopped before it reached 2014-10-01; run it again." >&2
+      exit 75
+      ;;
+    *)
+      echo "daily-prepare: $report has no backfill_complete flag; the marker needs it" >&2
+      exit 1
+      ;;
+  esac
   touch "$marker"
 else
   uv run hockey-model refresh
@@ -66,10 +90,6 @@ backtest_json="$store_dir/backtest-$day.json"
 uv run hockey-model backtest --games-out "$backtest_games" >"$backtest_json"
 # The fit serves only the features that passed the backtest's joint test. An empty list is
 # the Elo alone, and the fit command takes it as an empty --features value.
-if ! command -v jq >/dev/null; then
-  echo "daily-prepare: jq is not installed; it reads live_features from $backtest_json" >&2
-  exit 1
-fi
 if ! live_features="$(jq -er '.live_features | if type == "array" and all(type == "string") then join(",") else error("not names") end' "$backtest_json")"; then
   echo "daily-prepare: $backtest_json has no live_features list of names; the fit needs it" >&2
   exit 1
