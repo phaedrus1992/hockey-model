@@ -12,6 +12,7 @@ only its cohort and runs once.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import sys
@@ -29,6 +30,7 @@ from hockey_model.backtest.runner import (
 from hockey_model.experiments.history import (
     check_immutable_fields,
     check_one_shot,
+    deleted_record_ids,
     registration_commit,
 )
 from hockey_model.experiments.models import (
@@ -40,12 +42,16 @@ from hockey_model.experiments.models import (
     validate_against_schema,
 )
 from hockey_model.experiments.registry import (
+    REGISTRY_DIR_NAME,
+    RESULTS_DIR_NAME,
+    duplicate_numbers,
     get_record,
     list_records,
     registry_dir,
     results_dir,
 )
 from hockey_model.experiments.schemas import CHECK_OUTPUT_SCHEMA, EXPERIMENT_SCHEMA
+from hockey_model.game_model.features import ALL_FEATURE_NAMES
 from hockey_model.game_model.seasons import (
     SeasonPlan,
     confirmation_plan,
@@ -76,14 +82,6 @@ class CheckOutput(TypedDict):
     ok: bool
     records: list[CheckEntry]
     errors: list[str]
-
-
-class ExperimentCheck(TypedDict, total=False):
-    """The result of checking one record."""
-
-    ok: bool
-    record: CheckEntry
-    error: str
 
 
 class RunPayload(TypedDict, total=False):
@@ -122,9 +120,10 @@ def check_all(repo_root: Path | None = None) -> CheckOutput:
             "repository root"
         )
     results: list[CheckEntry] = []
-    errors: list[str] = []
+    ids = list_records(root)
+    errors = _registry_errors(ids, root)
 
-    for record_id in list_records(root):
+    for record_id in ids:
         try:
             results.append(_check_one(record_id, root))
         except HockeyModelError as exc:
@@ -134,14 +133,6 @@ def check_all(repo_root: Path | None = None) -> CheckOutput:
     output: CheckOutput = {"ok": len(errors) == 0, "records": results, "errors": errors}
     validate_against_schema(output, CHECK_OUTPUT_SCHEMA)
     return output
-
-
-def check_experiment(record_id: str, repo_root: Path | None = None) -> ExperimentCheck:
-    """Check one record. Return ``{"ok": True, "record": ...}`` or an error."""
-    try:
-        return {"ok": True, "record": _check_one(record_id, repo_root or Path.cwd())}
-    except HockeyModelError as exc:
-        return {"ok": False, "error": str(exc)}
 
 
 def run_experiment(
@@ -172,12 +163,15 @@ def run_experiment(
         plan = exploration_plan()
 
     report, game_records = run_backtest(conn, plan, record.candidate_features)
+    # The caller's export goes first. A write failure then leaves the look unspent.
+    if games_out is not None:
+        write_game_records(games_out, game_records)
 
     if record.cohort == "confirmation":
         csv_path = results_dir(root) / f"{record.id}-games.csv"
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         write_game_records(csv_path, game_records)
-        updated = _record_with_result(record, report, csv_path)
+        updated = record_with_result(record, report, csv_path, root)
         updated.save(registry_dir(root) / f"{updated.id}.json")
         notes = report.notes
     else:
@@ -193,15 +187,34 @@ def run_experiment(
         "notes": list(notes),
     }
     if games_out is not None:
-        write_game_records(games_out, game_records)
         payload["games_out"] = str(games_out)
     return payload, [_export_entry(record) for record in game_records]
+
+
+def _registry_errors(ids: list[str], repo_root: Path) -> list[str]:
+    """Return the errors that belong to the registry as a whole, not to one record."""
+    errors = [
+        f"registry number {number} is used by more than one record; a new record needs a new number"
+        for number in duplicate_numbers(ids)
+    ]
+    errors.extend(
+        f"{record_id}: tracked in the repository history but missing from the working tree; "
+        "a registered record cannot be deleted"
+        for record_id in deleted_record_ids(ids, repo_root)
+    )
+    return errors
 
 
 def _check_one(record_id: str, repo_root: Path) -> CheckEntry:
     """Validate one record, then check its status, immutability, and result."""
     record = get_record(record_id, repo_root)
+    if record.id != record_id:
+        raise HockeyModelError(
+            f"the file is named {record_id!r} but the record id is {record.id!r}; "
+            "rename the file or restore the id"
+        )
     validate_against_schema(record, EXPERIMENT_SCHEMA)
+    _check_features_known(record)
     _check_status_matches_result(record)
     entry: CheckEntry = {"id": record.id, "status": record.status, "valid": True}
 
@@ -215,9 +228,19 @@ def _check_one(record_id: str, repo_root: Path) -> CheckEntry:
 
     if record.result is not None:
         entry["has_result"] = True
-        _verify_result_hash(record)
+        _verify_result_hash(record, repo_root)
 
     return entry
+
+
+def _check_features_known(record: ExperimentRecord) -> None:
+    """Raise when a candidate feature is not a feature the model knows."""
+    unknown = [name for name in record.candidate_features if name not in ALL_FEATURE_NAMES]
+    if unknown:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: unknown candidate feature(s) {', '.join(unknown)}; "
+            f"use {', '.join(ALL_FEATURE_NAMES)}"
+        )
 
 
 def _check_status_matches_result(record: ExperimentRecord) -> None:
@@ -237,16 +260,24 @@ def _check_status_matches_result(record: ExperimentRecord) -> None:
         )
 
 
-def _verify_result_hash(record: ExperimentRecord) -> None:
-    """Check that the per-game CSV named by the result still matches its recorded hash."""
+def _verify_result_hash(record: ExperimentRecord, repo_root: Path) -> None:
+    """Check that the per-game CSV named by the result still matches its recorded hash.
+
+    The path is relative to the repository root and must stay inside the results directory.
+    """
     result = record.result
     if result is None:
         return
-    path = Path(result.csv_path)
-    if not path.exists():
+    path = (repo_root / result.csv_path).resolve()
+    if not path.is_relative_to(results_dir(repo_root).resolve()):
+        raise HockeyModelError(
+            f"experiment {record.id!r}: the result path {result.csv_path!r} is not inside "
+            f"{REGISTRY_DIR_NAME}/{RESULTS_DIR_NAME}/; use a path relative to the repository root"
+        )
+    if not path.is_file():
         raise HockeyModelError(
             f"experiment {record.id!r}: the result names {result.csv_path!r}, which is not "
-            "in the repository; commit the per-game CSV with the result"
+            "in the repository; add the per-game CSV with the result"
         )
     if _file_hash(path) != result.csv_hash:
         raise HockeyModelError(
@@ -312,23 +343,29 @@ def _confirmation_status(record: ExperimentRecord, report: BacktestReport) -> st
     return STATUS_PROMOTED if high < 0.0 else STATUS_REJECTED
 
 
-def _record_with_result(
-    record: ExperimentRecord, report: BacktestReport, csv_path: Path
+def record_with_result(
+    record: ExperimentRecord, report: BacktestReport, csv_path: Path, repo_root: Path
 ) -> ExperimentRecord:
-    """Return a copy of the record with the run's status and result written in."""
+    """Return a copy of the record with the run's status and result written in.
+
+    A run with no interval has no result to record. The run then fails before it
+    saves, so the look is not spent on a run that scored nothing.
+    """
     model = next((run for run in report.runs if run.name == MODEL_ACTUAL), None)
+    if model is None or model.diff_vs_elo_ci is None:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: the run produced no interval, so there is no result "
+            "to record; the record is unchanged. Refresh the store and run again"
+        )
     data = record.to_dict()
     data["status"] = _confirmation_status(record, report)
-    if model is not None and model.diff_vs_elo_ci is not None:
-        data["result"] = {
-            "games": model.games,
-            "difference": model.mean_diff_vs_elo,
-            "interval": list(model.diff_vs_elo_ci),
-            "csv_path": str(csv_path),
-            "csv_hash": _file_hash(csv_path),
-        }
-    else:
-        data["result"] = None
+    data["result"] = {
+        "games": model.games,
+        "difference": model.mean_diff_vs_elo,
+        "interval": list(model.diff_vs_elo_ci),
+        "csv_path": csv_path.relative_to(repo_root).as_posix(),
+        "csv_hash": _file_hash(csv_path),
+    }
     return ExperimentRecord.from_dict(data)
 
 
@@ -347,9 +384,10 @@ def _export_entry(game: GameRecord) -> GameExport:
 
 def _file_hash(path: Path) -> str:
     """Compute the SHA-256 hash of a file's contents."""
-    import hashlib
-
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise HockeyModelError(f"cannot read {path} to hash it: {exc}") from exc
 
 
 def main() -> None:

@@ -60,6 +60,8 @@ _SCHEMA_KEYWORDS = frozenset(
     }
 )
 _DATE_FORMATS = frozenset({"date"})
+# ``date.fromisoformat`` also accepts 20261031 and 2026-W44-6, so the shape comes first.
+_DATE_SHAPE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # Each JSON Schema type in the words an error message uses.
 _TYPE_WORDS = {
     "string": "a string",
@@ -124,23 +126,12 @@ class ExperimentRecord:
     def from_dict(cls, data: dict[str, Any]) -> ExperimentRecord:
         """Deserialize from a dict loaded from JSON.
 
-        Does not mutate the input dict. Converts baseline, result,
-        and selection_folds to the correct types.
+        Does not mutate the input dict. Raises ``HockeyModelError`` when a field has
+        the wrong shape, so a bad record never escapes as a bare ``TypeError``.
         """
-        work = dict(data)
-        if "baseline" in work and isinstance(work["baseline"], dict):
-            work["baseline"] = _Baseline(**work["baseline"])
-        if "result" in work and work["result"] is not None and isinstance(work["result"], dict):
-            work["result"] = _Result(**work["result"])
-        folds = work.get("selection_folds")
-        if folds is not None:
-            work["selection_folds"] = [tuple(f) for f in folds]
-        features = work.get("candidate_features")
-        if features is not None:
-            work["candidate_features"] = tuple(features)
         try:
-            return cls(**work)
-        except TypeError as exc:
+            return cls(**_typed_fields(data))
+        except (TypeError, ValueError) as exc:
             raise HockeyModelError(f"cannot build a record from {data!r}: {exc}") from exc
 
     @classmethod
@@ -158,9 +149,29 @@ class ExperimentRecord:
         text = json.dumps(asdict(self), indent=2, ensure_ascii=False)
         path.write_text(text + "\n", encoding="utf-8")
 
-    def immutable_fields(self) -> dict[str, Any]:
-        """Return the immutable fields for comparison."""
-        return {name: getattr(self, name) for name in IMMUTABLE_FIELDS}
+
+def _typed_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert the nested JSON values of a record to their dataclass types."""
+    work = dict(data)
+    if isinstance(work.get("baseline"), dict):
+        work["baseline"] = _Baseline(**work["baseline"])
+    if isinstance(work.get("result"), dict):
+        result = dict(work["result"])
+        result["interval"] = _as_tuple(result.get("interval"), "result.interval")
+        work["result"] = _Result(**result)
+    if work.get("selection_folds") is not None:
+        folds = _as_tuple(work["selection_folds"], "selection_folds")
+        work["selection_folds"] = [_as_tuple(f, "selection_folds item") for f in folds]
+    if work.get("candidate_features") is not None:
+        work["candidate_features"] = _as_tuple(work["candidate_features"], "candidate_features")
+    return work
+
+
+def _as_tuple(value: Any, name: str) -> tuple[Any, ...]:
+    """Return a JSON array as a tuple. A string is not an array of characters."""
+    if not isinstance(value, (list, tuple)):
+        raise TypeError(f"{name} must be an array, got {type(value).__name__}")
+    return tuple(value)
 
 
 def record_from_text(text: str, source: str) -> ExperimentRecord:
@@ -274,6 +285,8 @@ def _check_format(value: Any, schema: Mapping[str, Any], path: str) -> None:
         raise HockeyModelError(f"{path}: this validator does not implement format {fmt!r}")
     if not isinstance(value, str):
         raise HockeyModelError(f"{path}: format {fmt!r} needs a string, got {type(value).__name__}")
+    if _DATE_SHAPE.fullmatch(value) is None:
+        raise HockeyModelError(f"{path}: {value!r} is not a YYYY-MM-DD date")
     try:
         date.fromisoformat(value)
     except ValueError as exc:

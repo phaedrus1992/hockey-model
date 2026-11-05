@@ -15,9 +15,10 @@ from pathlib import Path
 import pytest
 from seeding import add_game
 
+from hockey_model.backtest.runner import BacktestReport
 from hockey_model.experiments.check import (
     check_all,
-    check_experiment,
+    record_with_result,
     run_experiment,
 )
 from hockey_model.experiments.history import (
@@ -26,7 +27,6 @@ from hockey_model.experiments.history import (
     registration_commit,
 )
 from hockey_model.experiments.models import ExperimentRecord, HockeyModelError
-from hockey_model.experiments.registry import register_record
 
 _VALID_RECORD_DATA = {
     "id": "0001-valid",
@@ -58,9 +58,9 @@ def _make_record(data: dict | None = None) -> ExperimentRecord:
 
 
 def _register(registry: Path, data: dict | None = None) -> ExperimentRecord:
-    """Register a record in the fixture registry and return it."""
+    """Write a record into the fixture registry and return it."""
     record = _make_record(data)
-    register_record(record, registry.parent)
+    record.save(registry / f"{record.id}.json")
     return record
 
 
@@ -138,7 +138,7 @@ class TestCheckAll:
                     "games": 100,
                     "difference": -0.005,
                     "interval": [-0.010, -0.001],
-                    "csv_path": str(registry_dir / "results" / "0001-valid-games.csv"),
+                    "csv_path": "experiments/results/0001-valid-games.csv",
                     "csv_hash": "0" * 64,
                 },
             },
@@ -160,7 +160,7 @@ class TestCheckAll:
                     "games": 1,
                     "difference": -0.001,
                     "interval": [-0.002, 0.000],
-                    "csv_path": str(csv_path),
+                    "csv_path": "experiments/results/0001-valid-games.csv",
                     "csv_hash": "0" * 64,
                 },
             },
@@ -183,7 +183,7 @@ class TestCheckAll:
                     "games": 1,
                     "difference": -0.001,
                     "interval": [-0.002, 0.000],
-                    "csv_path": str(csv_path),
+                    "csv_path": "experiments/results/0001-valid-games.csv",
                     "csv_hash": hashlib.sha256(text.encode()).hexdigest(),
                 },
             },
@@ -203,23 +203,6 @@ class TestCheckAll:
         assert result["ok"] is True, result["errors"]
         ids = [entry["id"] for entry in result["records"]]
         assert "0001-v1-forward-test" in ids
-
-
-class TestCheckExperiment:
-    """Test check_experiment for a single record."""
-
-    def test_check_experiment_valid(self, registry_dir: Path):
-        """check_experiment returns ok for a valid record."""
-        _register(registry_dir)
-        result = check_experiment("0001-valid", repo_root=registry_dir.parent)
-        assert result["ok"] is True
-        assert result["record"]["id"] == "0001-valid"
-
-    def test_check_experiment_not_found(self, registry_dir: Path):
-        """check_experiment reports a missing record."""
-        result = check_experiment("0001-missing", repo_root=registry_dir.parent)
-        assert result["ok"] is False
-        assert "not found" in result["error"]
 
 
 class TestRegistrationCommit:
@@ -385,6 +368,124 @@ class TestOneShot:
             check_one_shot(swapped, tmp_path)
 
 
+class TestRegistryRules:
+    """Test the checks that look at the whole registry or at a record's identity."""
+
+    def test_file_name_must_match_the_record_id(self, registry_dir: Path):
+        """Editing the id inside a record file cannot hide it from the history checks."""
+        record = _make_record({"id": "0009-renamed"})
+        record.save(registry_dir / "0001-valid.json")
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "the file is named '0001-valid'" in result["errors"][0]
+
+    def test_an_unknown_candidate_feature_fails(self, registry_dir: Path):
+        """A typo in a frozen record is caught before the record is frozen."""
+        _register(registry_dir, {"candidate_features": ["xg_frm"]})
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "unknown candidate feature(s) xg_frm" in result["errors"][0]
+
+    def test_two_records_cannot_share_a_number(self, registry_dir: Path):
+        """The registry number is the record's slot, so a repeat is an error."""
+        _register(registry_dir, {"id": "0003-first"})
+        _register(registry_dir, {"id": "0003-second"})
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "registry number 0003 is used by more than one record" in result["errors"][0]
+
+    def test_a_deleted_record_fails(self, tmp_path: Path, registry_dir: Path):
+        """Removing a committed record from the working tree is an error."""
+        _init_repo(tmp_path)
+        _register(registry_dir, {"id": "0001-valid"})
+        _register(registry_dir, {"id": "0002-other"})
+        _git(tmp_path, "add", "experiments")
+        _git(tmp_path, "commit", "-m", "register two records")
+        (registry_dir / "0002-other.json").unlink()
+        result = check_all(repo_root=tmp_path)
+        assert result["ok"] is False
+        assert any("0002-other: tracked" in error for error in result["errors"])
+
+    def test_a_shallow_clone_fails(self, tmp_path: Path):
+        """A shallow clone hides the registration commit, so the check refuses to guess."""
+        origin = tmp_path / "origin"
+        (origin / "experiments").mkdir(parents=True)
+        _init_repo(origin)
+        _register(origin / "experiments")
+        _git(origin, "add", "experiments")
+        _git(origin, "commit", "-m", "register the record")
+        _git(origin, "commit", "--allow-empty", "-m", "a second commit")
+        clone = tmp_path / "clone"
+        _git(tmp_path, "clone", "--depth", "1", origin.as_uri(), str(clone))
+        result = check_all(repo_root=clone)
+        assert result["ok"] is False
+        assert "shallow clone" in result["errors"][0]
+
+    def test_a_malformed_historical_blob_is_an_error_not_a_crash(
+        self, tmp_path: Path, registry_dir: Path
+    ):
+        """A commit that stored broken JSON for the record names the commit."""
+        _init_repo(tmp_path)
+        path = registry_dir / "0001-valid.json"
+        path.write_text("[1, 2]", encoding="utf-8")
+        _git(tmp_path, "add", "experiments")
+        _git(tmp_path, "commit", "-m", "store a broken record")
+        _register(registry_dir)
+        result = check_all(repo_root=tmp_path)
+        assert result["ok"] is False
+        assert "must be a JSON object" in result["errors"][0]
+
+
+class TestResultPaths:
+    """Test that a result names its CSV relative to the repository root."""
+
+    def _result(self, csv_path: str, csv_hash: str) -> dict:
+        return {
+            "status": "rejected",
+            "result": {
+                "games": 1,
+                "difference": 0.001,
+                "interval": [0.0005, 0.002],
+                "csv_path": csv_path,
+                "csv_hash": csv_hash,
+            },
+        }
+
+    def test_an_absolute_path_is_refused(self, registry_dir: Path):
+        """An absolute path would make the check depend on one machine."""
+        outside = registry_dir.parent / "elsewhere.csv"
+        outside.write_text("x\n", encoding="utf-8")
+        digest = hashlib.sha256(b"x\n").hexdigest()
+        _register(registry_dir, self._result(str(outside), digest))
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "is not inside experiments/results/" in result["errors"][0]
+
+    def test_a_parent_path_is_refused(self, registry_dir: Path):
+        """A path with .. cannot point the hash check at a file outside the results directory."""
+        outside = registry_dir.parent / "elsewhere.csv"
+        outside.write_text("x\n", encoding="utf-8")
+        digest = hashlib.sha256(b"x\n").hexdigest()
+        _register(registry_dir, self._result("experiments/results/../../elsewhere.csv", digest))
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "is not inside experiments/results/" in result["errors"][0]
+
+    def test_the_path_resolves_against_the_repository_root(
+        self, registry_dir: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """The check works from any working directory."""
+        csv_path = registry_dir / "results" / "0001-valid-games.csv"
+        csv_path.parent.mkdir(parents=True)
+        csv_path.write_text("x\n", encoding="utf-8")
+        digest = hashlib.sha256(b"x\n").hexdigest()
+        _register(registry_dir, self._result("experiments/results/0001-valid-games.csv", digest))
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        assert check_all(repo_root=registry_dir.parent)["ok"] is True
+
+
 class TestRunExperiment:
     """Test run_experiment against a small made-up store."""
 
@@ -502,6 +603,49 @@ class TestRunExperiment:
         saved = ExperimentRecord.load(registry_dir / "0007-explore.json")
         assert saved.status == "registered"
         assert saved.result is None
+
+    def test_the_stored_result_path_is_relative(self, registry_dir: Path, store):
+        """The committed record holds no machine-local path."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        record = _register(registry_dir, {"id": "0002-forward"})
+        run_experiment(record.id, store, repo_root=registry_dir.parent)
+        saved = ExperimentRecord.load(registry_dir / "0002-forward.json")
+        assert saved.result is not None
+        assert saved.result.csv_path == "experiments/results/0002-forward-games.csv"
+
+    def test_a_failed_export_leaves_the_look_unspent(self, registry_dir: Path, store):
+        """If the caller's export cannot be written, the record is not changed."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        record = _register(registry_dir, {"id": "0002-forward"})
+        bad_out = registry_dir.parent / "missing-dir" / "games.csv"
+        with pytest.raises(OSError):
+            run_experiment(record.id, store, games_out=bad_out, repo_root=registry_dir.parent)
+        saved = ExperimentRecord.load(registry_dir / "0002-forward.json")
+        assert saved.status == "registered"
+        assert saved.result is None
+
+    def test_a_run_without_an_interval_refuses_to_record(self, registry_dir: Path):
+        """A run that scored nothing does not spend the look."""
+        record = _make_record()
+        csv_path = registry_dir / "results" / "0001-valid-games.csv"
+        csv_path.parent.mkdir()
+        csv_path.write_text("x\n", encoding="utf-8")
+        empty_report = BacktestReport(
+            candidate_features=(),
+            vetoed=(),
+            tested_features=(),
+            live_features=(),
+            validation={},
+            runs=(),
+            success=False,
+            notes=(),
+            credits=(),
+            missing_inputs={},
+        )
+        with pytest.raises(HockeyModelError, match="produced no interval"):
+            record_with_result(record, empty_report, csv_path, registry_dir.parent)
 
 
 class TestMain:

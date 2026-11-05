@@ -6,13 +6,15 @@ Covers:
 - File save and load round-trip
 """
 
+import json
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from hockey_model.experiments.models import (
+    IMMUTABLE_FIELDS,
     ExperimentRecord,
     HockeyModelError,
     record_from_text,
@@ -108,25 +110,47 @@ class TestRecordSerialization:
         assert loaded.result.games == 100
         assert list(loaded.result.interval) == [-0.010, -0.001]
 
-    def test_immutable_fields_lists_every_immutable_name(self):
-        """immutable_fields returns every field that may not change after registration."""
-        fields = _make_record().immutable_fields()
-        assert set(fields) == {
-            "id",
-            "title",
-            "hypothesis",
-            "cohort",
-            "data_cutoff",
-            "primary_metric",
-            "baseline",
-            "selection_folds",
-            "min_games",
-            "expected_effect",
-            "promotion_criterion",
-            "failure_outcome",
-            "candidate_features",
-            "look_number",
+    def test_immutable_fields_name_real_record_fields(self):
+        """Every immutable field is a field of the record, so the comparison cannot miss one."""
+        assert set(IMMUTABLE_FIELDS) <= set(_make_record().to_dict())
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"baseline": {"fit_id": 1}},
+            {"baseline": {"fit_id": 1, "commit": "a", "extra": 1}},
+            {"result": {"games": 1}},
+            {
+                "result": {
+                    "games": 1,
+                    "difference": 0.0,
+                    "interval": 5,
+                    "csv_path": "p",
+                    "csv_hash": "h",
+                }
+            },
+            {"selection_folds": 5},
+            {"selection_folds": [5]},
+            {"candidate_features": "xg_form"},
+            {"candidate_features": 7},
+        ],
+    )
+    def test_from_dict_wraps_a_wrong_shape(self, change: dict):
+        """A wrong-shaped nested value raises HockeyModelError, never a bare TypeError."""
+        with pytest.raises(HockeyModelError, match="cannot build a record"):
+            ExperimentRecord.from_dict({**_VALID_RECORD_DATA, **change})
+
+    def test_a_result_interval_comes_back_as_a_tuple(self):
+        """The interval keeps its tuple type through to_dict and from_dict."""
+        result = {
+            "games": 3,
+            "difference": -0.001,
+            "interval": [-0.002, 0.0],
+            "csv_path": "experiments/results/x.csv",
+            "csv_hash": "0" * 64,
         }
+        record = _make_record({"result": result})
+        assert ExperimentRecord.from_dict(record.to_dict()) == record
 
     def test_record_from_text_rejects_a_non_object(self):
         """A JSON array is not a record."""
@@ -229,6 +253,16 @@ class TestSchemaValidation:
         with pytest.raises(HockeyModelError, match="is not a YYYY-MM-DD date"):
             validate_against_schema({"data_cutoff": "whenever"}, schema)
 
+    @pytest.mark.parametrize("value", ["20261031", "2026-W44-6", "2026-1-5", "2026-10-31T00:00"])
+    def test_date_format_requires_the_canonical_shape(self, value: str):
+        """The date shape is YYYY-MM-DD only, even where Python also parses other forms."""
+        schema = {
+            "type": "object",
+            "properties": {"data_cutoff": {"type": "string", "format": "date"}},
+        }
+        with pytest.raises(HockeyModelError, match="is not a YYYY-MM-DD date"):
+            validate_against_schema({"data_cutoff": value}, schema)
+
     def test_numeric_minimum_is_enforced(self, tmp_path: Path):
         """A min_games of zero fails a minimum of one."""
         schema = {"type": "object", "properties": {"min_games": {"type": "integer", "minimum": 1}}}
@@ -272,3 +306,105 @@ def test_a_well_formed_record_passes_the_registry_schema(
         }
     )
     validate_against_schema(record, EXPERIMENT_SCHEMA)
+
+
+_JSON_LEAVES = st.one_of(
+    st.none(), st.booleans(), st.integers(), st.floats(allow_nan=False), st.text(max_size=8)
+)
+_JSON_VALUES = st.recursive(
+    _JSON_LEAVES,
+    lambda inner: st.one_of(
+        st.lists(inner, max_size=3), st.dictionaries(st.text(max_size=5), inner)
+    ),
+    max_leaves=6,
+)
+
+
+@given(text=st.text(max_size=60))
+def test_record_from_text_never_raises_a_foreign_error_on_text(text: str) -> None:
+    """Any text gives a record or a HockeyModelError, never another exception."""
+    try:
+        record_from_text(text, "fuzz")
+    except HockeyModelError:
+        pass
+
+
+@settings(max_examples=100)
+@given(
+    changes=st.dictionaries(
+        st.sampled_from(sorted(_VALID_RECORD_DATA)),
+        _JSON_VALUES,
+        max_size=4,
+    )
+)
+def test_from_dict_never_raises_a_foreign_error_on_wrong_types(changes: dict) -> None:
+    """A record with any JSON value in any field gives a record or a HockeyModelError."""
+    try:
+        ExperimentRecord.from_dict({**_VALID_RECORD_DATA, **changes})
+    except HockeyModelError:
+        pass
+
+
+@given(
+    games=st.integers(min_value=0, max_value=10_000),
+    low=st.floats(min_value=-1, max_value=0, allow_nan=False),
+    high=st.floats(min_value=0, max_value=1, allow_nan=False),
+    folds=st.one_of(
+        st.none(),
+        st.lists(st.tuples(st.integers(1, 9), st.integers(1, 9)), max_size=3),
+    ),
+    with_result=st.booleans(),
+)
+def test_a_record_round_trips_through_json(games, low, high, folds, with_result) -> None:
+    """record_from_text(json.dumps(record.to_dict())) gives back an equal record."""
+    result = (
+        {
+            "games": games,
+            "difference": (low + high) / 2,
+            "interval": [low, high],
+            "csv_path": "experiments/results/x.csv",
+            "csv_hash": "a" * 64,
+        }
+        if with_result
+        else None
+    )
+    record = _make_record(
+        {
+            "selection_folds": folds,
+            "result": result,
+            "status": "rejected" if with_result else "registered",
+        }
+    )
+    assert record_from_text(json.dumps(record.to_dict()), "memory") == record
+
+
+@given(
+    expected=st.sampled_from(["string", "integer", "boolean", "array", "object"]),
+    value=_JSON_VALUES,
+)
+def test_a_value_of_the_wrong_type_is_rejected(expected: str, value) -> None:
+    """validate_against_schema accepts a value only when its JSON type is the declared one."""
+    schema = {"type": "object", "properties": {"x": {"type": expected}}}
+    matches = {
+        "string": isinstance(value, str),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "boolean": isinstance(value, bool),
+        "array": isinstance(value, list),
+        "object": isinstance(value, dict),
+    }[expected]
+    if matches:
+        validate_against_schema({"x": value}, schema)
+    else:
+        with pytest.raises(HockeyModelError):
+            validate_against_schema({"x": value}, schema)
+
+
+@given(minimum=st.integers(-50, 50), value=st.integers(-100, 100))
+def test_a_number_below_the_minimum_is_rejected(minimum: int, value: int) -> None:
+    """A bound is enforced: the value passes if and only if it reaches the minimum."""
+    schema = {"type": "object", "properties": {"x": {"type": "integer", "minimum": minimum}}}
+    if value >= minimum:
+        validate_against_schema({"x": value}, schema)
+    else:
+        with pytest.raises(HockeyModelError, match="below the minimum"):
+            validate_against_schema({"x": value}, schema)

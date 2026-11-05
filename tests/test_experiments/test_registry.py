@@ -3,10 +3,8 @@
 Covers:
 - registry_dir and results_dir (paths inside the repository root)
 - list_records (empty, with records, non-record files skipped, missing directory)
-- get_record (valid, not found)
-- record_exists (present, absent)
-- find_record_by_id (valid, not found, corrupt file)
-- register_record (new, duplicate id, duplicate number, bad id, invalid record)
+- get_record and record_exists (valid, not found, malformed id)
+- check_record_id and duplicate_numbers
 """
 
 from pathlib import Path
@@ -15,11 +13,11 @@ import pytest
 
 from hockey_model.experiments.models import ExperimentRecord, HockeyModelError
 from hockey_model.experiments.registry import (
-    find_record_by_id,
+    check_record_id,
+    duplicate_numbers,
     get_record,
     list_records,
     record_exists,
-    register_record,
     registry_dir,
     results_dir,
 )
@@ -41,12 +39,6 @@ _VALID_RECORD_DATA = {
     "failure_outcome": "ship Elo alone",
     "status": "registered",
 }
-
-
-def _make_record(data: dict | None = None) -> ExperimentRecord:
-    """Create a valid record from base data, overridden by data."""
-    merged = {**_VALID_RECORD_DATA, **(data or {})}
-    return ExperimentRecord.from_dict(merged)
 
 
 class TestPaths:
@@ -90,9 +82,9 @@ class TestGetRecord:
     """Test get_record and record_exists."""
 
     def test_get_record_returns_the_record(self, registry_dir: Path, repo_root: Path):
-        """get_record loads a registered record."""
-        record = _make_record()
-        register_record(record, repo_root)
+        """get_record loads a written record."""
+        record = ExperimentRecord.from_dict(_VALID_RECORD_DATA)
+        record.save(registry_dir / f"{record.id}.json")
         loaded = get_record(record.id, repo_root)
         assert loaded.id == record.id
         assert loaded.candidate_features == ("xg_form",)
@@ -102,62 +94,42 @@ class TestGetRecord:
         with pytest.raises(HockeyModelError, match="not found"):
             get_record("0001-missing", repo_root)
 
+    def test_get_record_refuses_a_path_outside_the_registry(self, repo_root: Path):
+        """An id with path parts cannot load a file from outside the registry."""
+        (repo_root / "x.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(HockeyModelError, match="invalid experiment id"):
+            get_record("../x", repo_root)
+
     def test_record_exists_reports_presence(self, registry_dir: Path, repo_root: Path):
         """record_exists is True for a written record and False for an absent one."""
         (registry_dir / "0003-present.json").write_text("{}", encoding="utf-8")
         assert record_exists("0003-present", repo_root) is True
         assert record_exists("0004-absent", repo_root) is False
 
-
-class TestFindRecordById:
-    """Test find_record_by_id."""
-
-    def test_find_record_not_found(self, repo_root: Path):
-        """find_record_by_id returns None when the record does not exist."""
-        assert find_record_by_id("0001-missing", repo_root) is None
-
-    def test_find_record_corrupt_raises(self, registry_dir: Path, repo_root: Path):
-        """find_record_by_id raises when the record file is not valid JSON."""
-        (registry_dir / "0007-broken.json").write_text("{not json", encoding="utf-8")
-        with pytest.raises(HockeyModelError, match="invalid JSON"):
-            find_record_by_id("0007-broken", repo_root)
-
-
-class TestRegisterRecord:
-    """Test register_record."""
-
-    def test_register_new_record(self, registry_dir: Path, repo_root: Path):
-        """Registering a new record writes the file."""
-        record = _make_record()
-        register_record(record, repo_root)
-        assert (registry_dir / f"{record.id}.json").exists()
-
-    def test_register_creates_the_registry_directory(self, tmp_path: Path):
-        """Registering a record in an empty repository writes the record file."""
-        record = _make_record({"id": "0010-new"})
-        register_record(record, tmp_path)
-        assert (tmp_path / "experiments" / "0010-new.json").exists()
-
-    def test_register_duplicate_id_fails(self, repo_root: Path):
-        """Registering the same id twice raises HockeyModelError."""
-        register_record(_make_record({"id": "0099-first"}), repo_root)
-        second = _make_record({"id": "0099-first", "title": "duplicate"})
-        with pytest.raises(HockeyModelError, match="already exists"):
-            register_record(second, repo_root)
-
-    def test_register_duplicate_number_fails(self, repo_root: Path):
-        """Two records cannot share the registry number."""
-        register_record(_make_record({"id": "0099-first"}), repo_root)
-        with pytest.raises(HockeyModelError, match="number 0099 is taken"):
-            register_record(_make_record({"id": "0099-second"}), repo_root)
-
-    def test_register_bad_id_fails(self, repo_root: Path):
-        """An id without the NNNN-slug shape is refused."""
+    def test_record_exists_refuses_a_malformed_id(self, repo_root: Path):
+        """record_exists rejects an id that is not NNNN-slug."""
         with pytest.raises(HockeyModelError, match="invalid experiment id"):
-            register_record(_make_record({"id": "test-record"}), repo_root)
+            record_exists("test-record", repo_root)
 
-    def test_register_invalid_record_fails(self, repo_root: Path):
-        """A record that fails the schema is refused before it is written."""
-        with pytest.raises(HockeyModelError, match="not in"):
-            register_record(_make_record({"status": "maybe"}), repo_root)
-        assert list_records(repo_root) == []
+
+class TestRecordIds:
+    """Test id and number checks."""
+
+    @pytest.mark.parametrize("bad", ["", "1-x", "0001", "0001-", "0001-A", "0001-a/b", "../0001-a"])
+    def test_check_record_id_rejects_a_bad_shape(self, bad: str):
+        """Only NNNN-slug with a lowercase slug passes."""
+        with pytest.raises(HockeyModelError, match="invalid experiment id"):
+            check_record_id(bad)
+
+    def test_check_record_id_accepts_a_good_id(self):
+        """A four-digit number and a lowercase slug pass."""
+        check_record_id("0042-attempt-form")
+
+    def test_duplicate_numbers_lists_each_repeated_number_once(self):
+        """Three records on one number report that number one time."""
+        ids = ["0001-a", "0002-b", "0001-c", "0001-d", "0002-e", "0003-f"]
+        assert duplicate_numbers(ids) == ["0001", "0002"]
+
+    def test_duplicate_numbers_is_empty_for_unique_numbers(self):
+        """Unique numbers report nothing."""
+        assert duplicate_numbers(["0001-a", "0002-b"]) == []

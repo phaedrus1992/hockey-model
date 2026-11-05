@@ -28,6 +28,11 @@ def registration_commit(record_id: str, repo_root: Path) -> str | None:
     """Return the commit that first added the record, or None when git does not track it."""
     if not _is_work_tree(repo_root):
         return None
+    if _git(["rev-parse", "--is-shallow-repository"], repo_root).strip() == "true":
+        raise HockeyModelError(
+            f"check {record_id!r}: {repo_root} is a shallow clone, so the registration "
+            "commit is not visible; fetch the full history (for example fetch-depth: 0)"
+        )
     commits = _git(
         ["log", "--format=%H", "--", record_relative_path(record_id)],
         repo_root,
@@ -68,9 +73,10 @@ def check_one_shot(record: ExperimentRecord, repo_root: Path) -> None:
     new experiment, so it needs a new record.
     """
     relative = record_relative_path(record.id)
-    current = record.to_dict().get("result")
+    # A stored blob holds lists where the record holds tuples, so compare as JSON.
+    current = json.loads(json.dumps(record.to_dict().get("result")))
     for commit in _git(["log", "--format=%H", "--", relative], repo_root).split():
-        prior = json.loads(_git(["show", f"{commit}:{relative}"], repo_root)).get("result")
+        prior = _result_at(commit, relative, repo_root)
         if prior is None:
             continue
         if prior != current:
@@ -81,15 +87,60 @@ def check_one_shot(record: ExperimentRecord, repo_root: Path) -> None:
             )
 
 
+def deleted_record_ids(present: list[str], repo_root: Path) -> list[str]:
+    """Return the IDs of records that HEAD tracks but the working tree no longer holds.
+
+    A deleted record could hide a spent look, so the checker treats it as an error.
+    """
+    if not _is_work_tree(repo_root):
+        return []
+    if (
+        subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=repo_root, capture_output=True
+        ).returncode
+        != 0
+    ):
+        return []
+    names = _git(["ls-tree", "--name-only", "HEAD", f"{REGISTRY_DIR_NAME}/"], repo_root).split()
+    tracked = {Path(name).stem for name in names if name.endswith(".json")}
+    return sorted(tracked - set(present))
+
+
+def _result_at(commit: str, relative: str, repo_root: Path) -> object:
+    """Return the ``result`` field of a record as one commit stored it."""
+    text = _git(["show", f"{commit}:{relative}"], repo_root)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise HockeyModelError(f"read {relative} at commit {commit}: invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HockeyModelError(
+            f"read {relative} at commit {commit}: a record must be a JSON object, "
+            f"got a {type(data).__name__}"
+        )
+    return data.get("result")
+
+
 def _is_work_tree(repo_root: Path) -> bool:
-    """Return True when repo_root is inside a git work tree."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0 and result.stdout.strip() == "true"
+    """Return True when repo_root is inside a git work tree.
+
+    A directory outside any repository is False. A missing git binary or any other
+    git failure raises, so a broken git never passes as an untracked record.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise HockeyModelError(f"run git in {repo_root}: git is not installed") from exc
+    if result.returncode == 0:
+        return result.stdout.strip() == "true"
+    if "not a git repository" in result.stderr:
+        return False
+    raise HockeyModelError(f"git rev-parse in {repo_root} failed: {result.stderr.strip()}")
 
 
 def _git(args: list[str], repo_root: Path) -> str:

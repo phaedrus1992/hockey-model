@@ -153,6 +153,7 @@ registered it.
 
 An exploration record scores the seasons through 2025-26 and can run as many
 times as you like.
+It scores every game type the store holds, playoff games included, and it includes the two seasons that the backtest report already scored.
 A confirmation record scores only games after its cutoff in the 2026-27 regular
 season and later, and it runs once.
 The run refuses when the cohort holds fewer games than the record requires.
@@ -169,7 +170,9 @@ hockey-model experiments run 0001-v1-forward-test --games-out games.csv
 ```
 
 The per-game CSV of a confirmation run is committed under
-`experiments/results/`, and the record stores its SHA-256 hash.
+`experiments/results/`, and the record stores its path relative to the repository root and its SHA-256 hash.
+`experiments check` also fails when a record is deleted, when its status disagrees with its result, when a committed result was removed or replaced, and when two records share a number.
+It reads the git history, so a shallow clone stops with a message that asks for the full history.
 
 ## CLI
 
