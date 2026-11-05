@@ -54,10 +54,13 @@ jobs:
         run: |
           EC_VERSION=v4.0.2
           EC_SHA256=44efaef3ed14c6ab52eb87481d78e5e5c204796dccf26e2f4598a61ba17f8003
-          curl -fsSL -o /tmp/ec.tar.gz \
+          # RUNNER_TEMP belongs to this job, so no other process can swap the archive
+          # between the digest check and the extract.
+          archive="$RUNNER_TEMP/ec.tar.gz"
+          curl -fsSL -o "$archive" \
             "https://github.com/editorconfig-checker/editorconfig-checker/releases/download/${EC_VERSION}/editorconfig-checker-linux-amd64.tar.gz"
-          echo "${EC_SHA256}  /tmp/ec.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/ec.tar.gz -C /usr/local/bin editorconfig-checker
+          echo "${EC_SHA256}  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C /usr/local/bin editorconfig-checker
       - run: editorconfig-checker
 
   # Mutation testing is advisory. A surviving mutant shows a test with a weak oracle,

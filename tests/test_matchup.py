@@ -4,8 +4,10 @@ import math
 from collections.abc import Sequence
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
-from hockey_model.matchup import matchup, playoff_probability
+from hockey_model.matchup import check_win_pair, matchup, playoff_probability
 from hockey_model.types import (
     Player,
     ProbabilityError,
@@ -145,3 +147,22 @@ def test_playoff_probability_accepts_closed_interval_boundaries(point: float) ->
 
     result = playoff_probability("TOR", [Standing("TOR", 10, 12, 5, 8)], BoundaryStandingsModel())
     assert result == Projection(point, 0.0, 1.0, 0.8)
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.floats(min_value=0.0, max_value=1.0), st.floats(min_value=-1.0, max_value=2.0))
+def test_a_win_pair_passes_only_when_it_is_a_probability_pair_summing_to_one(
+    home: float, away: float
+) -> None:
+    valid = 0.0 <= away <= 1.0 and math.isclose(home + away, 1.0, abs_tol=1e-9)
+    if valid:
+        check_win_pair((home, away), "op")
+    else:
+        with pytest.raises(ProbabilityError):
+            check_win_pair((home, away), "op")
+
+
+@given(st.lists(st.floats(allow_nan=True), max_size=5).filter(lambda v: len(v) != 2))
+def test_a_win_pair_of_the_wrong_length_is_refused(values: list[float]) -> None:
+    with pytest.raises(ProbabilityError):
+        check_win_pair(values, "op")

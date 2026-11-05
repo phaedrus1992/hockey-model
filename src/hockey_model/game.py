@@ -7,8 +7,9 @@ from enum import StrEnum
 from hockey_model.matchup import check_win_pair
 from hockey_model.models import GameModel
 from hockey_model.team_codes import NHL_TEAM_CODES
-from hockey_model.types import HockeyModelError, Player, Projection
+from hockey_model.types import HockeyModelError, Player, Projection, ProjectionError
 from hockey_model.utc import require_utc
+from hockey_model.validation import Domain, validate_projection
 
 
 class StarterStatus(StrEnum):
@@ -97,6 +98,19 @@ class MissingInput:
 
 
 @dataclass(frozen=True, slots=True)
+class DegradedInput:
+    """A model feature that was set to its neutral value, because a team had no data for it.
+
+    ``teams`` names the teams without data, home first. A feature that was measured, even when
+    it measured zero, is never listed.
+    """
+
+    feature: str
+    kind: MissingKind
+    teams: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class GamePrediction:
     """Win probabilities and goal projections for one game."""
 
@@ -107,6 +121,7 @@ class GamePrediction:
     missing: tuple[MissingInput, ...]
     credits: tuple[str, ...]
     made_after_start: bool = False
+    degraded_inputs: tuple[DegradedInput, ...] = ()
 
 
 def game_win_probability(
@@ -123,7 +138,14 @@ def game_win_probability(
     require_utc(moment, "as_of")
     result = model.predict(game, moment, level)
     label = f"predict game {game.game_id} ({game.away} at {game.home})"
+    if not isinstance(result, GamePrediction):
+        raise ProjectionError(
+            f"{label}: the model returned {type(result).__name__}, expected a GamePrediction; "
+            "return a GamePrediction"
+        )
     check_win_pair((result.home_win, result.away_win), label)
+    validate_projection(result.home_goals, level, f"{label}: home goals", Domain.NONNEGATIVE)
+    validate_projection(result.away_goals, level, f"{label}: away goals", Domain.NONNEGATIVE)
     made_after_start = moment >= game.start
     missing = result.missing
     if made_after_start:

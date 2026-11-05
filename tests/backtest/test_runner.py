@@ -1,9 +1,11 @@
 """Tests for the backtest runner. They feed it made-up feature rows, so they run fast."""
 
 import csv
+import json
 import math
 import random
-from dataclasses import replace
+import sqlite3
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,7 +13,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from hockey_model.backtest import runner
+from hockey_model.backtest import eligibility, runner
 from hockey_model.backtest.runner import (
     MONEYPUCK_LEAK_NOTE,
     GameRecord,
@@ -76,22 +78,22 @@ def dataset(
 
 
 @pytest.fixture
-def feed(monkeypatch: pytest.MonkeyPatch):
-    """Return a function that makes the runner read the given dataset."""
+def feed(monkeypatch: pytest.MonkeyPatch, store: sqlite3.Connection):
+    """Return a function that makes the runner read the given dataset. It returns the store."""
 
-    def use(rows: dict[GoalieMode, list[TrainingRow]]) -> None:
+    def use(rows: dict[GoalieMode, list[TrainingRow]]) -> sqlite3.Connection:
         def fake(conn, first, last, mode, burn_in=0, names=FEATURES):
             del conn, burn_in, names
             return [r for r in rows[mode] if first <= r.game.season <= last]
 
         monkeypatch.setattr(runner, "training_rows", fake)
+        return store
 
     return use
 
 
 def run(rows: dict[GoalieMode, list[TrainingRow]], feed):
-    feed(rows)
-    return run_backtest(None, PLAN, candidates=FEATURES)  # ty: ignore[invalid-argument-type]
+    return run_backtest(feed(rows), PLAN, candidates=FEATURES)
 
 
 def named(report, name: str):
@@ -329,3 +331,81 @@ def test_the_notes_say_why_the_two_model_runs_are_equal_without_a_goalie_feature
 def test_the_notes_leave_out_that_remark_when_a_goalie_feature_is_tested() -> None:
     notes = runner._notes(("goalie_gsax", "rest"), (), success=True)
     assert runner.GUESS_EQUALS_ACTUAL_NOTE not in notes
+
+
+def _thin(rows: dict[GoalieMode, list[TrainingRow]], per_season: int):
+    """Keep only ``per_season`` games in each scored season."""
+    kept: dict[GoalieMode, list[TrainingRow]] = {}
+    for mode, source in rows.items():
+        seen: dict[int, int] = {}
+        kept[mode] = []
+        for row in source:
+            season = row.game.season
+            seen[season] = seen.get(season, 0) + 1
+            if season < PLAN.scored[0] or seen[season] <= per_season:
+                kept[mode].append(row)
+    return kept
+
+
+def test_a_full_cohort_is_eligible_and_lists_its_counts(feed) -> None:
+    report, _ = run(dataset(xg_effect=6.0, goalie_effect=0.8), feed)
+    assert report.eligible
+    assert report.ineligible_reasons == ()
+    assert [(c.season, c.game_type, c.scored) for c in report.coverage] == [
+        (6, 2, GAMES_PER_SEASON),
+        (7, 2, GAMES_PER_SEASON),
+    ]
+
+
+def test_too_few_scored_games_refuse_success_but_keep_the_scores(feed) -> None:
+    # The same strong effect passes in the full dataset above.
+    rows = _thin(dataset(xg_effect=6.0, goalie_effect=0.8), 30)
+    report, records = run(rows, feed)
+    assert not report.eligible
+    assert not report.success
+    assert report.live_features == ()
+    assert "independent blocks" in " ".join(report.ineligible_reasons)
+    assert "Not eligible for success" in " ".join(report.notes)
+    model = named(report, "model_actual")
+    assert model.games == 60
+    assert model.diff_vs_elo_ci is None
+    assert model.mean_diff_vs_elo is not None
+    assert model.log_loss > 0
+    assert records
+
+
+def test_a_partial_regular_season_refuses_success(feed, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(eligibility, "EXPECTED_REGULAR_GAMES", {6: GAMES_PER_SEASON, 7: 1000})
+    report, _ = run(dataset(xg_effect=6.0, goalie_effect=0.8), feed)
+    assert not report.success
+    assert report.live_features == ()
+    (reason,) = report.ineligible_reasons
+    assert f"season 7 has {GAMES_PER_SEASON} scored regular season games" in reason
+    seven = next(c for c in report.coverage if c.season == 7)
+    assert seven.expected == 1000
+
+
+def test_a_missing_scored_season_is_listed_with_zero_games(
+    feed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(eligibility, "EXPECTED_REGULAR_GAMES", {6: GAMES_PER_SEASON, 7: 400})
+    rows = dataset()
+    rows = {mode: [r for r in source if r.game.season != 7] for mode, source in rows.items()}
+    report, _ = run(rows, feed)
+    assert not report.success
+    assert any(c.season == 7 and c.scored == 0 for c in report.coverage)
+
+
+def test_the_json_carries_the_counts_and_the_reasons(feed) -> None:
+    report, _ = run(_thin(dataset(), 30), feed)
+    payload = json.loads(json.dumps(asdict(report)))
+    assert payload["eligible"] is False
+    assert payload["ineligible_reasons"]
+    assert payload["coverage"][0] == {
+        "season": 6,
+        "game_type": 2,
+        "scored": 30,
+        "expected": None,
+        "unresolved": 0,
+    }
+    assert payload["live_features"] == []

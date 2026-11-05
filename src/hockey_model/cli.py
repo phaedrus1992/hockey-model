@@ -206,11 +206,15 @@ def main(argv: Sequence[str] | None = None, runtime: CliRuntime | None = None) -
                 "run CLI command: no models are configured; "
                 "embed CliRuntime with data-backed models"
             )
+        # Run the command outside the encoder's try block, so a TypeError from a model is an
+        # unexpected failure and only a JSON encoder TypeError is a serialization failure.
+        payload = _run(args, runtime)
         try:
-            print(json.dumps(_run(args, runtime), default=_json_default, sort_keys=True))
+            text = json.dumps(payload, default=_json_default, sort_keys=True)
         except TypeError as exc:
             print(f"error: serialization failed: {exc}", file=sys.stderr)
             return 2
+        print(text)
     except (HockeyModelError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

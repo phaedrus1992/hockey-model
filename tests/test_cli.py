@@ -613,3 +613,62 @@ def test_playoff_invalid_probability_exits_two_without_json(
     output = capsys.readouterr()
     assert output.out == ""
     assert "TOR" in output.err and "[0, 1]" in output.err
+
+
+class _RaisingStatModel:
+    """A stat model whose bug is a TypeError."""
+
+    def project(self, player: Player, stat: str, horizon_games: int, level: float) -> Projection:
+        raise TypeError("model sentinel")
+
+
+def test_a_model_type_error_is_an_unexpected_failure_not_a_serialization_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = replace(_runtime((_player("p-a"),)), stat_model=_RaisingStatModel())
+    assert cli.main(["player", "goals", "p-a"], runtime) == 2
+    captured = capsys.readouterr()
+    assert captured.err == "error: unexpected failure: TypeError: model sentinel\n"
+    assert captured.out == ""
+
+
+def test_an_unsupported_payload_is_a_serialization_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_run", lambda args, runtime: {"value": object()})
+    runtime = _runtime((_player("p-a"),))
+    assert cli.main(["player", "goals", "p-a"], runtime) == 2
+    captured = capsys.readouterr()
+    assert captured.err == "error: serialization failed: cannot serialize object\n"
+    assert captured.out == ""
+
+
+def test_a_malformed_model_projection_exits_two_without_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class WrongLevel:
+        def project(
+            self, player: Player, stat: str, horizon_games: int, level: float
+        ) -> Projection:
+            return Projection(0.4, 0.1, 0.7, 0.5)
+
+    runtime = replace(_runtime((_player("p-a"),)), stat_model=WrongLevel())
+    assert cli.main(["player", "goals", "p-a"], runtime) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "the projection has level 0.5 but 0.8 was requested" in output.err
+
+
+def test_cli_game_reports_a_degraded_form_input(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["fit", "--through-season", "20152016", "--features", "xg_form"]) == 0
+    capsys.readouterr()
+    assert cli.main(["game", "2025020001"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["degraded_inputs"] == [
+        {"feature": "xg_form", "kind": "xg_form", "teams": ["TOR", "BOS"]}
+    ]

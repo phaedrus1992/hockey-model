@@ -21,7 +21,11 @@ usage() {
 while (($# > 0)); do
   case "$1" in
     --date)
-      day="${2:?daily-prepare: --date needs a value YYYY-MM-DD; see --help}"
+      if (($# < 2)); then
+        echo "daily-prepare: --date needs a value YYYY-MM-DD; see --help" >&2
+        exit 2
+      fi
+      day="$2"
       shift 2
       ;;
     -h | --help)

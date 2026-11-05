@@ -10,8 +10,10 @@ from hypothesis import strategies as st
 from hockey_model.backtest.metrics import (
     BOOTSTRAP_RESAMPLES,
     MIN_BLOCK_LENGTH,
+    MIN_INDEPENDENT_BLOCKS,
     PROB_FLOOR,
     block_bootstrap_mean_ci,
+    bootstrap_problem,
     brier,
     calibration,
     log_loss,
@@ -86,7 +88,7 @@ def test_empty_calibration_bins_have_no_means() -> None:
 
 
 def test_bootstrap_of_a_constant_list() -> None:
-    assert block_bootstrap_mean_ci([0.25] * 100) == pytest.approx((0.25, 0.25))
+    assert block_bootstrap_mean_ci([0.25] * 200) == pytest.approx((0.25, 0.25))
 
 
 def test_bootstrap_is_repeatable() -> None:
@@ -101,7 +103,7 @@ def test_bootstrap_rejects_an_empty_list() -> None:
 
 def test_bootstrap_rejects_a_non_finite_value() -> None:
     with pytest.raises(ValueError, match="not finite"):
-        block_bootstrap_mean_ci([0.1, float("nan")])
+        block_bootstrap_mean_ci([0.1] * 200 + [float("nan")])
 
 
 def test_bootstrap_interval_contains_the_mean_of_a_large_sample() -> None:
@@ -132,18 +134,34 @@ def test_bootstrap_of_a_zero_mean_straddles_zero() -> None:
     assert low < 0 < high
 
 
-def test_a_series_shorter_than_a_block_still_gets_an_interval_inside_its_range() -> None:
-    low, high = block_bootstrap_mean_ci([0.1, 0.5, 0.9])
-    assert 0.1 <= low <= high <= 0.9
+@pytest.mark.parametrize(
+    "values",
+    [[0.3], [-1.0, 0.5], [0.1, 0.5, 0.9], [0.1 * (i % 3) for i in range(MIN_BLOCK_LENGTH)]],
+)
+def test_a_series_with_too_few_blocks_has_no_interval(values: list[float]) -> None:
+    # One block repeated gives (-0.25, -0.25) for [-1.0, 0.5]: certainty from no data.
+    with pytest.raises(ValueError, match="independent blocks"):
+        block_bootstrap_mean_ci(values)
+
+
+def test_the_smallest_series_with_enough_blocks_gets_an_interval() -> None:
+    enough = MIN_INDEPENDENT_BLOCKS * MIN_BLOCK_LENGTH
+    values = [math.sin(i) for i in range(enough)]
+    low, high = block_bootstrap_mean_ci(values)
+    assert low <= high
+    with pytest.raises(ValueError, match="independent blocks"):
+        block_bootstrap_mean_ci(values[:-1])
+
+
+def test_bootstrap_problem_names_the_counts() -> None:
+    assert bootstrap_problem(MIN_INDEPENDENT_BLOCKS * MIN_BLOCK_LENGTH) is None
+    problem = bootstrap_problem(33)
+    assert problem is not None
+    assert "33 scored games hold 2 independent blocks" in problem
 
 
 def test_a_block_is_one_nights_slate() -> None:
     assert MIN_BLOCK_LENGTH == 16
-
-
-def test_a_short_series_uses_one_block_of_its_own_size() -> None:
-    low, high = block_bootstrap_mean_ci([0.1, 0.2, 0.3])
-    assert 0.1 <= low <= high <= 0.3
 
 
 def test_the_number_of_resamples() -> None:
@@ -151,7 +169,7 @@ def test_the_number_of_resamples() -> None:
 
 
 @settings(max_examples=30, deadline=None)
-@given(st.lists(st.floats(min_value=-10, max_value=10), min_size=1, max_size=60))
+@given(st.lists(st.floats(min_value=-10, max_value=10), min_size=160, max_size=240))
 def test_bootstrap_interval_is_ordered_and_inside_the_data(values: list[float]) -> None:
     low, high = block_bootstrap_mean_ci(values)
     assert low <= high
@@ -218,3 +236,14 @@ def test_swapping_both_sides_leaves_the_scores_unchanged(probs: list[float], dat
     flipped_wins = [not w for w in wins]
     assert log_loss(flipped_probs, flipped_wins) == pytest.approx(log_loss(probs, wins))
     assert brier(flipped_probs, flipped_wins) == pytest.approx(brier(probs, wins))
+
+
+@settings(max_examples=40, deadline=None)
+@given(st.integers(min_value=1, max_value=300))
+def test_the_bootstrap_raises_exactly_when_the_sample_is_too_small(count: int) -> None:
+    values = [math.sin(i) for i in range(count)]
+    if bootstrap_problem(count) is None:
+        block_bootstrap_mean_ci(values)
+    else:
+        with pytest.raises(ValueError, match="independent blocks"):
+            block_bootstrap_mean_ci(values)

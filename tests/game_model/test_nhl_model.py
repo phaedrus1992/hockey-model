@@ -12,7 +12,7 @@ from hockey_model.game import Game, MissingKind, game_win_probability
 from hockey_model.game_model.features import GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, LogisticFit
 from hockey_model.game_model.nhl_model import LEAGUE_GOALS, NhlGameModel
-from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
+from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT, TEAM_GAMES_URL, goalie_games_url
 from hockey_model.store.source_reads import KNOWN_SOURCES, record_read
 
 START = utc("2026-01-20T00:00")
@@ -62,8 +62,11 @@ def test_no_credit_without_moneypuck_rows(store: sqlite3.Connection) -> None:
 
 
 def read_every_source(store: sqlite3.Connection, when: str) -> None:
-    for source in KNOWN_SOURCES:
+    for source in KNOWN_SOURCES - {"moneypuck"}:
         record_read(store, source, "u", utc(when))
+    # The current MoneyPuck files are named, so a missing one is reported.
+    for url in (TEAM_GAMES_URL, goalie_games_url(2025)):
+        record_read(store, "moneypuck", url, utc(when))
 
 
 def stale_notes(result) -> list[str]:
@@ -75,7 +78,7 @@ def test_nhl_model_reports_stale_source(store: sqlite3.Connection) -> None:
     read_every_source(store, "2026-01-19T10:00")
     record_read(store, "espn_starters", "u", utc("2026-01-19T12:00"), error="HTTP 503")
     notes = stale_notes(model(store).predict(GAME, AS_OF, 0.8))
-    assert notes == ["espn_starters: the newest read of it failed"]
+    assert notes == ["espn_starters: the newest read of u failed"]
 
 
 def test_a_later_good_read_clears_the_stale_flag(store: sqlite3.Connection) -> None:
@@ -95,7 +98,7 @@ def test_a_failure_alone_is_not_a_good_read(store: sqlite3.Connection) -> None:
     read_every_source(store, "2026-01-19T10:00")
     record_read(store, "moneypuck", "u2", utc("2026-01-19T14:00"), error="HTTP 503")
     assert stale_notes(model(store).predict(GAME, AS_OF, 0.8)) == [
-        "moneypuck: the newest read of it failed"
+        "moneypuck: the newest read of u2 failed"
     ]
 
 
