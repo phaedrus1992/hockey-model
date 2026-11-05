@@ -67,22 +67,34 @@ def write_boxscore(
 ) -> None:
     """Store the players and stat lines of one final game.
 
-    A row already stored for the game stays as it was, with its own fetch time. A later
-    boxscore adds only the rows that are missing, which repairs a game stored with one side.
+    The rows already stored for a team stay as they were, with their own fetch time. A later
+    boxscore adds the rows of a team that has none, which repairs a game stored with one side.
     """
     stamp = iso_utc(fetched_at)
     _write_players(conn, rows, stamp)
+    # A plain INSERT, so a row that breaks a constraint raises and is not dropped.
+    have = _stored_teams(conn, "skater_games", game_id)
     conn.executemany(
-        "INSERT OR IGNORE INTO skater_games (game_id, team, nhl_id, toi_seconds, goals, assists,"
+        "INSERT INTO skater_games (game_id, team, nhl_id, toi_seconds, goals, assists,"
         " fetched_at) VALUES (?,?,?,?,?,?,?)",
-        [(game_id, *skater, stamp) for skater in rows.skaters],
+        [(game_id, *skater, stamp) for skater in rows.skaters if skater.team not in have],
     )
+    have = _stored_teams(conn, "goalie_games", game_id)
     conn.executemany(
-        "INSERT OR IGNORE INTO goalie_games"
-        " (game_id, team, nhl_id, toi_seconds, started, fetched_at)"
+        "INSERT INTO goalie_games (game_id, team, nhl_id, toi_seconds, started, fetched_at)"
         " VALUES (?,?,?,?,?,?)",
-        [(game_id, g.team, g.nhl_id, g.toi_seconds, int(g.started), stamp) for g in rows.goalies],
+        [
+            (game_id, g.team, g.nhl_id, g.toi_seconds, int(g.started), stamp)
+            for g in rows.goalies
+            if g.team not in have
+        ],
     )
+
+
+def _stored_teams(conn: sqlite3.Connection, table: str, game_id: int) -> set[str]:
+    """Return the teams that already have rows in ``table`` for the game."""
+    cursor = conn.execute(f"SELECT DISTINCT team FROM {table} WHERE game_id = ?", (game_id,))
+    return {team for (team,) in cursor}
 
 
 def games_missing_boxscore(conn: sqlite3.Connection) -> list[int]:

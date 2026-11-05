@@ -4,7 +4,7 @@ import math
 import sqlite3
 
 import pytest
-from seeding import add_game, add_team_form, utc
+from seeding import add_game, add_goalie, add_team_form, utc
 
 from hockey_model.game import DegradedInput, Game, MissingKind
 from hockey_model.game_model.elo import EloBook
@@ -64,7 +64,7 @@ def test_an_equal_measured_form_is_not_degraded(store: sqlite3.Connection) -> No
 
 
 def test_no_form_feature_means_nothing_is_degraded(store: sqlite3.Connection) -> None:
-    assert _row(store, names=("rest",)).imputed == ()
+    assert [d.feature for d in _row(store, names=("rest",)).imputed] == ["rest"]
 
 
 def test_the_attempt_feature_reports_its_own_kind(store: sqlite3.Connection) -> None:
@@ -88,3 +88,33 @@ def test_a_fit_without_the_feature_has_no_degraded_win_input(store: sqlite3.Conn
     assert result.degraded_inputs == ()
     # The goal rates still note the missing form, as before.
     assert any(m.kind is MissingKind.XG_FORM for m in result.missing)
+
+
+def test_a_goalie_without_moneypuck_games_is_a_degraded_goalie_feature(
+    store: sqlite3.Connection,
+) -> None:
+    for number, team, nhl_id in ((10, HOME, 11), (20, AWAY, 21)):
+        home, away = (team, "MTL") if team == HOME else ("MTL", team)
+        add_game(store, number, "2026-01-18T00:00", home=home, away=away)
+        add_goalie(store, number, team, nhl_id, f"Goalie {nhl_id}")
+    row = _row(store, names=("goalie_gsax",))
+    assert row.imputed == (DegradedInput("goalie_gsax", MissingKind.GOALIE_FORM, (HOME, AWAY)),)
+
+
+def test_a_team_with_no_earlier_game_is_a_degraded_rest_feature(
+    store: sqlite3.Connection,
+) -> None:
+    row = _row(store, names=("rest",))
+    assert row.imputed == (DegradedInput("rest", MissingKind.REST_UNKNOWN, (HOME, AWAY)),)
+    add_game(store, 10, "2026-01-18T00:00", home=HOME, away="MTL")
+    only_away = _row(store, names=("rest",))
+    assert only_away.imputed == (DegradedInput("rest", MissingKind.REST_UNKNOWN, (AWAY,)),)
+
+
+def test_rest_does_not_use_a_result_after_the_cutoff(store: sqlite3.Connection) -> None:
+    # A game that started before puck drop but after as_of is not known at as_of.
+    add_game(store, 10, "2026-01-19T20:00", home=HOME, away="MTL")
+    add_game(store, 11, "2026-01-15T00:00", home="MTL", away=HOME)
+    row = _row(store, names=("rest",))
+    # TOR rested the cap from the 15th, BOS has no game: both count as fully rested.
+    assert row.values["rest"] == pytest.approx(0.0)

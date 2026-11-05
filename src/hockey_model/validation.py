@@ -19,7 +19,6 @@ class Domain(StrEnum):
 
     PROBABILITY = "probability"  # fractions: every value from 0 to 1
     NONNEGATIVE = "nonnegative"  # counts and goals-against average: no value below 0
-    STRUCTURAL = "structural"  # a stat with no registered domain: shape checks only
 
 
 # A rate such as goals-against average can exceed one, so only the fractions are bounded above.
@@ -41,13 +40,16 @@ _NONNEGATIVE_STATS = frozenset(
 )
 
 
-def stat_domain(stat: str) -> Domain:
-    """Return the domain of a stat. An extension stat has none until it is registered here."""
+def stat_domain(stat: str) -> Domain | None:
+    """Return the domain of a stat, or ``None``: an extension stat has none until it is listed.
+
+    A stat with no domain gets the shape checks only.
+    """
     if stat in _PROBABILITY_STATS:
         return Domain.PROBABILITY
     if stat in _NONNEGATIVE_STATS:
         return Domain.NONNEGATIVE
-    return Domain.STRUCTURAL
+    return None
 
 
 def _is_number(value: object) -> TypeGuard[int | float]:
@@ -64,7 +66,7 @@ def validate_probability(value: object, operation: str, label: str) -> None:
 
 
 def validate_projection(
-    value: object, requested_level: float, operation: str, domain: Domain
+    value: object, requested_level: float, operation: str, domain: Domain | None
 ) -> Projection:
     """Return ``value`` when it is a valid projection at the requested level, else raise.
 
@@ -96,7 +98,7 @@ def validate_projection(
     return value
 
 
-def _check_domain(value: Projection, operation: str, domain: Domain) -> None:
+def _check_domain(value: Projection, operation: str, domain: Domain | None) -> None:
     """Raise unless the point and both bounds are inside the domain."""
     bounds = (value.point, value.low, value.high)
     if domain is Domain.PROBABILITY and any(not 0.0 <= v <= 1.0 for v in bounds):

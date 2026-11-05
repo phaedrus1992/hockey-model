@@ -162,25 +162,41 @@ def _goalie_gsax(
     return values[game.home] - values[game.away], missing, used
 
 
-def _days_rested(conn: sqlite3.Connection, team: str, start: datetime) -> float | None:
-    """Return the days since the team's last game, capped, or ``None`` with no earlier game."""
-    previous = team_games_before(conn, team, start, 1)
+def _days_rested(
+    conn: sqlite3.Connection, team: str, start: datetime, cutoff: datetime
+) -> float | None:
+    """Return the days since the last game known at ``cutoff``, capped, or ``None``."""
+    previous = team_games_before(conn, team, cutoff, 1)
     if not previous:
         return None
     return min((start - previous[0].start) / _DAY, REST_CAP_DAYS)
 
 
-def _rest(conn: sqlite3.Connection, game: Game) -> tuple[float, list[MissingInput]]:
+def _rest(
+    conn: sqlite3.Connection, game: Game, cutoff: datetime
+) -> tuple[float, list[MissingInput]]:
     """Return home minus away rest. A team with no earlier game counts as fully rested."""
     days: dict[str, float] = {}
     missing: list[MissingInput] = []
     for team in (game.home, game.away):
-        found = _days_rested(conn, team, game.start)
+        found = _days_rested(conn, team, game.start, cutoff)
         if found is None:
             note = f"no earlier game in the store; {REST_CAP_DAYS:g} days of rest is used"
             missing.append(MissingInput(MissingKind.REST_UNKNOWN, team, note))
         days[team] = REST_CAP_DAYS if found is None else found
     return days[game.home] - days[game.away], missing
+
+
+def _degraded(name: str, kind: MissingKind, gaps: Sequence[MissingInput]) -> DegradedInput:
+    return DegradedInput(name, kind, tuple(m.team for m in gaps if m.team))
+
+
+def _degraded_if(
+    name: str, kind: MissingKind, missing: Sequence[MissingInput]
+) -> tuple[DegradedInput, ...]:
+    """Return the degraded input of ``name`` from the notes of ``kind``, or an empty tuple."""
+    gaps = [m for m in missing if m.kind is kind]
+    return (_degraded(name, kind, gaps),) if gaps else ()
 
 
 def build_features(
@@ -216,17 +232,20 @@ def build_features(
         # notes and the MoneyPuck use belong to a model that reads that feature.
         goalie_missing = [m for m in goalie_missing if m.kind is not MissingKind.GOALIE_FORM]
         goalie_used = False
-    rest, rest_missing = _rest(conn, game)
+    rest, rest_missing = _rest(conn, game, cutoff)
     # Two teams, so fewer than two gaps means the form was read for at least one team.
     form_used = any(len(gaps) < 2 for _, gaps in forms.values())  # noqa: PLR2004
     values = {name: value for name, (value, _) in forms.items()}
     values.update({"goalie_gsax": gsax, "rest": rest})
     missing = [m for _, gaps in forms.values() for m in gaps]
     imputed = tuple(
-        DegradedInput(name, _FORM_READERS[name][1], tuple(m.team for m in gaps if m.team))
-        for name, (_, gaps) in forms.items()
-        if gaps
+        _degraded(name, _FORM_READERS[name][1], gaps) for name, (_, gaps) in forms.items() if gaps
     )
+    # A goalie or a rest value that was not measured is set to a stand-in for that team.
+    if GOALIE_FEATURE in names:
+        imputed += _degraded_if(GOALIE_FEATURE, MissingKind.GOALIE_FORM, goalie_missing)
+    if "rest" in names:
+        imputed += _degraded_if("rest", MissingKind.REST_UNKNOWN, rest_missing)
     return FeatureRow(
         game_id=game.game_id,
         elo_logit=_logit(elo.home_win_chance(game.home, game.away)),

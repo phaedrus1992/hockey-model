@@ -16,7 +16,7 @@ from hockey_model.game import StarterSource, StarterStatus
 from hockey_model.game_day import game_day_window
 from hockey_model.identity import Catalog
 from hockey_model.sources.espn import InjuryRead
-from hockey_model.sources.nhl import GameRow
+from hockey_model.sources.nhl import FINAL_STATES, GameRow
 from hockey_model.sources.teams import franchise
 from hockey_model.store.source_reads import ESPN_INJURIES, LIVE_FEED_MAX_AGE
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
@@ -181,6 +181,31 @@ def starter_reads_before(
     ]
 
 
+def unresolved_games(
+    conn: sqlite3.Connection, started_by: datetime
+) -> list[tuple[int, int, int, datetime]]:
+    """Return ``(game_id, season, game_type, start)`` of each non-final game started by a time.
+
+    The newest read of the game decides. The list is in start then id order.
+    """
+    marks = _marks(tuple(sorted(FINAL_STATES)))
+    cursor = conn.execute(
+        "SELECT game_id, season, game_type, start_utc FROM latest_games"
+        f" WHERE state NOT IN ({marks}) AND start_utc <= ? ORDER BY start_utc, game_id",
+        (*sorted(FINAL_STATES), iso_utc(started_by)),
+    )
+    return [(gid, season, kind, parse_iso_utc(start)) for gid, season, kind, start in cursor]
+
+
+def injury_snapshot_before(conn: sqlite3.Connection, before: datetime) -> datetime | None:
+    """Return the time of the newest good read of the injury list before ``before``."""
+    (stamp,) = conn.execute(
+        "SELECT MAX(fetched_at) FROM source_reads WHERE source = ? AND ok = 1 AND fetched_at < ?",
+        (ESPN_INJURIES, iso_utc(before)),
+    ).fetchone()
+    return None if stamp is None else parse_iso_utc(stamp)
+
+
 def injury_reads_before(conn: sqlite3.Connection, before: datetime) -> list[InjuryRead]:
     """Return the newest injury list that was read before ``before``.
 
@@ -189,12 +214,10 @@ def injury_reads_before(conn: sqlite3.Connection, before: datetime) -> list[Inju
     ``LIVE_FEED_MAX_AGE`` is not used: it could still name a player who has healed, and
     ``stale_sources`` reports it.
     """
-    (stamp,) = conn.execute(
-        "SELECT MAX(fetched_at) FROM source_reads WHERE source = ? AND ok = 1 AND fetched_at < ?",
-        (ESPN_INJURIES, iso_utc(before)),
-    ).fetchone()
-    if stamp is None or before - parse_iso_utc(stamp) > LIVE_FEED_MAX_AGE:
+    stamp = injury_snapshot_before(conn, before)
+    if stamp is None or before - stamp > LIVE_FEED_MAX_AGE:
         return []
+    stamp = iso_utc(stamp)
     cursor = conn.execute(
         "SELECT team, player_name, status, return_date FROM injury_reads WHERE fetched_at = ?",
         (stamp,),

@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime, timedelta
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from seeding import add_injury, record_injury_snapshot, utc
 
 from hockey_model.sources.moneypuck import TEAM_GAMES_URL, goalie_games_url
@@ -198,3 +200,55 @@ class TestInjurySnapshotAge:
         add_injury(store, "TOR", "Hurt Player", "Out", stamp)
         store.commit()
         assert bool(injury_reads_before(store, AS_OF)) is used
+
+
+def test_an_abandoned_score_day_stays_reported_after_the_failure_window(
+    store: sqlite3.Connection,
+) -> None:
+    _fresh_everything(store)
+    day = (AS_OF - ACTIVE_FAILURE_WINDOW - timedelta(days=20)).date()
+    for hours in (30, 20):
+        record_read(
+            store, "nhl_scores", score_day_url(day), AS_OF - timedelta(days=25, hours=hours), "x"
+        )
+    store.commit()
+    assert _reasons(store) == [("nhl_scores", f"the newest read of {score_day_url(day)} failed")]
+
+
+def test_a_current_moneypuck_file_that_was_never_read_is_reported(
+    store: sqlite3.Connection,
+) -> None:
+    _fresh_everything(store)
+    store.execute("DELETE FROM source_reads WHERE url = ?", (goalie_games_url(2025),))
+    store.commit()
+    assert _reasons(store) == [("moneypuck", f"no read of {goalie_games_url(2025)} has worked yet")]
+
+
+def test_a_read_at_the_cutoff_is_not_known_yet(store: sqlite3.Connection) -> None:
+    _fresh_everything(store)
+    record_read(store, "daily_faceoff", FACEOFF, AS_OF, error="HTTP 503")
+    store.commit()
+    assert _reasons(store) == []
+
+
+@settings(
+    max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(st.lists(st.tuples(st.integers(1, 600), st.booleans()), max_size=8))
+def test_a_newer_good_read_of_a_url_clears_every_failure_of_it(
+    store: sqlite3.Connection, history: list[tuple[int, bool]]
+) -> None:
+    store.execute("DELETE FROM source_reads")
+    _fresh_everything(store, skip="daily_faceoff")
+    for minutes, ok in history:
+        record_read(
+            store,
+            "daily_faceoff",
+            FACEOFF,
+            AS_OF - timedelta(minutes=minutes + 5),
+            error=None if ok else "x",
+        )
+    # The newest read of the URL is a good one.
+    record_read(store, "daily_faceoff", FACEOFF, AS_OF - timedelta(minutes=1))
+    store.commit()
+    assert [r for s, r in _reasons(store) if s == "daily_faceoff"] == []

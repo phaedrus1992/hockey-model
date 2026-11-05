@@ -1,9 +1,10 @@
 """Tests for the projection validation that every public entry point shares."""
 
+import math
 from datetime import UTC, datetime
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from hockey_model import (
@@ -54,19 +55,19 @@ class TestValidateProjection:
     @pytest.mark.parametrize("value", [None, 0.4, (0.4, 0.1, 0.7, LEVEL), {"point": 1}])
     def test_a_value_that_is_not_a_projection_fails(self, value: object) -> None:
         with pytest.raises(ProjectionError, match="op: the model returned .*expected a Projection"):
-            validate_projection(value, LEVEL, "op", Domain.STRUCTURAL)
+            validate_projection(value, LEVEL, "op", None)
 
     def test_a_wrong_level_fails(self) -> None:
         with pytest.raises(ProjectionError, match="level 0.9 but 0.8 was requested"):
-            validate_projection(Projection(0.4, 0.1, 0.7, 0.9), LEVEL, "op", Domain.STRUCTURAL)
+            validate_projection(Projection(0.4, 0.1, 0.7, 0.9), LEVEL, "op", None)
 
     def test_a_level_within_the_tolerance_passes(self) -> None:
         near = Projection(0.4, 0.1, 0.7, LEVEL + LEVEL_TOLERANCE / 2)
-        assert validate_projection(near, LEVEL, "op", Domain.STRUCTURAL) is near
+        assert validate_projection(near, LEVEL, "op", None) is near
 
     def test_a_point_outside_the_interval_fails(self) -> None:
         with pytest.raises(ProjectionError, match="point 0.9 is outside"):
-            validate_projection(Projection(0.9, 0.1, 0.7, LEVEL), LEVEL, "op", Domain.STRUCTURAL)
+            validate_projection(Projection(0.9, 0.1, 0.7, LEVEL), LEVEL, "op", None)
 
     @pytest.mark.parametrize(
         "raw",
@@ -82,7 +83,7 @@ class TestValidateProjection:
     def test_a_malformed_field_fails(self, raw: _Raw) -> None:
         # A plugin can return an object that skips Projection's own checks.
         with pytest.raises(ProjectionError):
-            validate_projection(raw, LEVEL, "op", Domain.STRUCTURAL)
+            validate_projection(raw, LEVEL, "op", None)
 
     def test_a_negative_count_fails(self) -> None:
         with pytest.raises(ProjectionError, match="below zero"):
@@ -103,7 +104,7 @@ class TestValidateProjection:
     def test_a_negative_value_passes_the_structural_domain(self) -> None:
         # An extension stat such as a plus-minus can be negative.
         neg = Projection(-1.0, -3.0, 1.0, LEVEL)
-        assert validate_projection(neg, LEVEL, "op", Domain.STRUCTURAL) is neg
+        assert validate_projection(neg, LEVEL, "op", None) is neg
 
     @given(
         low=st.floats(0, 100, allow_nan=False),
@@ -129,7 +130,7 @@ class TestStatDomain:
         assert stat_domain(stat) is Domain.NONNEGATIVE
 
     def test_an_unknown_stat_gets_only_the_structural_checks(self) -> None:
-        assert stat_domain("plus_minus") is Domain.STRUCTURAL
+        assert stat_domain("plus_minus") is None
 
 
 class TestValidateProbability:
@@ -292,3 +293,37 @@ class TestPublicEntryPoints:
 
     def test_the_error_is_a_hockey_model_error(self) -> None:
         assert issubclass(ProjectionError, HockeyModelError)
+
+
+_FINITE = st.floats(min_value=-5.0, max_value=5.0)
+_ANY_FLOAT = st.floats(allow_nan=True, allow_infinity=True)
+
+
+@settings(max_examples=100, deadline=None)
+@given(_FINITE, _FINITE, _FINITE, st.sampled_from([Domain.PROBABILITY, Domain.NONNEGATIVE]))
+def test_an_invalid_projection_never_comes_back_as_valid(
+    point: float, low: float, high: float, domain: Domain
+) -> None:
+    low, high = sorted((low, high))
+    value = Projection(point, low, high, LEVEL)
+    bounds = (point, low, high)
+    lowest = 0.0
+    highest = 1.0 if domain is Domain.PROBABILITY else math.inf
+    valid = (
+        all(math.isfinite(v) and lowest <= v <= highest for v in bounds) and low <= point <= high
+    )
+    if valid:
+        assert validate_projection(value, LEVEL, "op", domain) is value
+    else:
+        with pytest.raises((ProjectionError, ProbabilityError)):
+            validate_projection(value, LEVEL, "op", domain)
+
+
+@settings(max_examples=60, deadline=None)
+@given(_ANY_FLOAT)
+def test_a_probability_is_valid_exactly_when_it_is_finite_and_in_range(value: float) -> None:
+    if math.isfinite(value) and 0.0 <= value <= 1.0:
+        validate_probability(value, "op", "p")
+    else:
+        with pytest.raises(ProbabilityError):
+            validate_probability(value, "op", "p")

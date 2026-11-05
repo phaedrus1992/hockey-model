@@ -4,6 +4,8 @@ import math
 import sqlite3
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from seeding import add_game
 
 from hockey_model.backtest.eligibility import (
@@ -98,3 +100,17 @@ def test_samples_of_one_two_and_one_block_are_ineligible(games: int) -> None:
 def test_an_unlisted_season_is_not_checked_for_coverage() -> None:
     counts = (SeasonCount(20262027, 2, 3, None, 0),)
     assert ineligibility_reasons(counts, ENOUGH) == ()
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.integers(min_value=0, max_value=ENOUGH - 1))
+def test_too_few_games_are_always_ineligible(games: int) -> None:
+    assert ineligibility_reasons((), games)
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.integers(min_value=0, max_value=1500))
+def test_a_season_is_covered_exactly_at_the_floor(scored: int) -> None:
+    counts = (SeasonCount(20242025, 2, scored, 1312, 0),)
+    reasons = ineligibility_reasons(counts, ENOUGH)
+    assert bool(reasons) is (scored < 1312 * MIN_SEASON_COVERAGE)

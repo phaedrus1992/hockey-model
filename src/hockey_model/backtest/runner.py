@@ -290,10 +290,10 @@ def _build_report(
     plan: SeasonPlan,
     candidates: Sequence[str],
     scoring: tuple[Mapping[str, Mapping[str, float]], tuple[str, ...]],
+    tested: tuple[str, ...],
     games: Sequence[_Scored],
 ) -> BacktestReport:
     validation, vetoed = scoring
-    tested = tuple(f for f in candidates if f not in vetoed)
     wins = [g.row.home_won for g in games]
     elo_losses = per_game_log_loss([g.by_run[ELO] for g in games], wins)
     runs = tuple(
@@ -347,7 +347,7 @@ def run_backtest(
             f"backtest: no games in the scored {scored_label(plan)}; "
             "run `hockey-model refresh --backfill-from 2014-10-01`"
         )
-    return _build_report(conn, plan, candidates, scoring, games), _records(games)
+    return _build_report(conn, plan, candidates, scoring, tested, games), _records(games)
 
 
 def write_game_records(path: Path, records: Sequence[GameRecord]) -> None:

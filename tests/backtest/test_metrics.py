@@ -236,3 +236,14 @@ def test_swapping_both_sides_leaves_the_scores_unchanged(probs: list[float], dat
     flipped_wins = [not w for w in wins]
     assert log_loss(flipped_probs, flipped_wins) == pytest.approx(log_loss(probs, wins))
     assert brier(flipped_probs, flipped_wins) == pytest.approx(brier(probs, wins))
+
+
+@settings(max_examples=40, deadline=None)
+@given(st.integers(min_value=1, max_value=300))
+def test_the_bootstrap_raises_exactly_when_the_sample_is_too_small(count: int) -> None:
+    values = [math.sin(i) for i in range(count)]
+    if bootstrap_problem(count) is None:
+        block_bootstrap_mean_ci(values)
+    else:
+        with pytest.raises(ValueError, match="independent blocks"):
+            block_bootstrap_mean_ci(values)

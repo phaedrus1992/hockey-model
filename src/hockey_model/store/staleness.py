@@ -17,6 +17,7 @@ from hockey_model.store.source_reads import (
     KNOWN_SOURCES,
     LIVE_FEED_MAX_AGE,
     MONEYPUCK_MAX_AGE,
+    abandoned_urls,
 )
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 
@@ -46,10 +47,10 @@ def _latest_reads(conn: sqlite3.Connection, as_of: datetime) -> dict[tuple[str, 
         "WITH ranked AS ("
         " SELECT source, url, fetched_at, ok, ROW_NUMBER() OVER ("
         "  PARTITION BY source, url ORDER BY fetched_at DESC, rowid DESC) AS rank"
-        " FROM source_reads WHERE fetched_at <= ?)"
+        " FROM source_reads WHERE fetched_at < ?)"
         " SELECT l.source, l.url, l.fetched_at, l.ok,"
         "  (SELECT MAX(r.fetched_at) FROM source_reads r WHERE r.source = l.source"
-        "   AND r.url = l.url AND r.ok = 1 AND r.fetched_at <= ?)"
+        "   AND r.url = l.url AND r.ok = 1 AND r.fetched_at < ?)"
         " FROM ranked l WHERE l.rank = 1",
         (cutoff, cutoff),
     )
@@ -79,12 +80,16 @@ def _hours(span: timedelta) -> str:
     return f"{span.total_seconds() / 3600:.0f} hours"
 
 
-def _url_problem(source: str, url: str, last: _Latest, as_of: datetime) -> str | None:
+def _url_problem(
+    source: str, url: str, last: _Latest, as_of: datetime, abandoned: frozenset[str]
+) -> str | None:
     """Return why one URL is stale at ``as_of``, or ``None``."""
     limit = _age_limit(source, url, as_of)
     if not last.attempt_ok:
-        # A failed dated resource is retired once it is old. A current feed always counts.
-        if limit is not None or as_of - last.attempt_at <= ACTIVE_FAILURE_WINDOW:
+        # A failed dated resource is retired once it is old, unless a refresh gave up on it:
+        # the gap is still in the history. A current feed always counts.
+        recent = as_of - last.attempt_at <= ACTIVE_FAILURE_WINDOW
+        if limit is not None or recent or url in abandoned:
             return f"the newest read of {url} failed"
         return None
     if limit is not None and last.good_at is not None and as_of - last.good_at > limit:
@@ -115,14 +120,20 @@ def stale_sources(conn: sqlite3.Connection, as_of: datetime) -> list[tuple[str, 
     recent good read has one more. The result is in source then URL order.
     """
     latest = _latest_reads(conn, as_of)
+    abandoned = {source: abandoned_urls(conn, source) for source in KNOWN_SOURCES}
     stale: list[tuple[str, str]] = []
     for source in sorted(KNOWN_SOURCES):
         urls = {url: last for (name, url), last in latest.items() if name == source}
         if not any(last.good_at is not None for last in urls.values()):
             stale.append((source, "no read of it has worked yet"))
             continue
+        if source == _MONEYPUCK:
+            stale.extend(
+                (source, f"no read of {url} has worked yet")
+                for url in sorted(_current_moneypuck_urls(as_of) - urls.keys())
+            )
         for url in sorted(urls):
-            problem = _url_problem(source, url, urls[url], as_of)
+            problem = _url_problem(source, url, urls[url], as_of, abandoned[source])
             if problem is not None:
                 stale.append((source, problem))
         daily = _daily_problem(source, list(urls.values()), as_of)

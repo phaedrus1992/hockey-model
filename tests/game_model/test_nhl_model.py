@@ -12,7 +12,7 @@ from hockey_model.game import Game, MissingKind, game_win_probability
 from hockey_model.game_model.features import GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, LogisticFit
 from hockey_model.game_model.nhl_model import LEAGUE_GOALS, NhlGameModel
-from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
+from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT, TEAM_GAMES_URL, goalie_games_url
 from hockey_model.store.source_reads import KNOWN_SOURCES, record_read
 
 START = utc("2026-01-20T00:00")
@@ -62,8 +62,11 @@ def test_no_credit_without_moneypuck_rows(store: sqlite3.Connection) -> None:
 
 
 def read_every_source(store: sqlite3.Connection, when: str) -> None:
-    for source in KNOWN_SOURCES:
+    for source in KNOWN_SOURCES - {"moneypuck"}:
         record_read(store, source, "u", utc(when))
+    # The current MoneyPuck files are named, so a missing one is reported.
+    for url in (TEAM_GAMES_URL, goalie_games_url(2025)):
+        record_read(store, "moneypuck", url, utc(when))
 
 
 def stale_notes(result) -> list[str]:

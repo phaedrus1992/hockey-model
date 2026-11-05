@@ -21,9 +21,11 @@ from hockey_model.store.reads import (
     franchise_codes,
     goalie_starts_before,
     injury_reads_before,
+    injury_snapshot_before,
     player_catalog,
     starter_reads_before,
 )
+from hockey_model.store.source_reads import LIVE_FEED_MAX_AGE
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 from hockey_model.types import HockeyModelError, Player, Slot
 
@@ -123,6 +125,11 @@ def _injured_goalies(
     """Return the ids of the team's goalies who are out, and a note for each unclear name."""
     out: set[int | None] = set()
     notes: list[MissingInput] = []
+    snapshot = injury_snapshot_before(conn, as_of)
+    if snapshot is not None and as_of - snapshot > LIVE_FEED_MAX_AGE:
+        # An old list could still name a goalie who has healed, so no one is left out.
+        note = f"the injury list was read at {iso_utc(snapshot)}, which is too old to use"
+        notes.append(_unknown(team, note))
     for injury in injury_reads_before(conn, as_of):
         if not injury.is_out or injury.team not in franchise_codes(team):
             continue

@@ -120,7 +120,7 @@ class NhlGameModel:
         missing = [*row.missing, *goal_notes]
         missing.extend(
             MissingInput(MissingKind.STALE_SOURCE, None, f"{source}: {reason}")
-            for source, reason in stale_sources(self._conn, as_of)
+            for source, reason in stale_sources(self._conn, cutoff)
         )
         missing.extend(_clamp_notes(game, home_rate, away_rate))
         # The goal rates read MoneyPuck data even when the fit uses no MoneyPuck feature.

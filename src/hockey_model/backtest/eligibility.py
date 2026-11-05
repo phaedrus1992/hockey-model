@@ -13,8 +13,9 @@ from hockey_model.game_model.seasons import (
     SeasonPlan,
 )
 from hockey_model.sources.nhl import FINAL_STATES
+from hockey_model.store.reads import unresolved_games
 from hockey_model.store.refresh_nhl import UNRESOLVED_AFTER
-from hockey_model.store.timestamps import iso_utc, parse_iso_utc
+from hockey_model.store.timestamps import parse_iso_utc
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,13 +34,9 @@ class SeasonCount:
     unresolved: int
 
 
-def _regular_season_in_scope(plan: SeasonPlan) -> bool:
-    return plan.game_types is None or REGULAR_SEASON_TYPE in plan.game_types
-
-
 def _expected_seasons(plan: SeasonPlan) -> list[int]:
     """Return the seasons of the plan that have an expected count."""
-    if not _regular_season_in_scope(plan):
+    if plan.game_types is not None and REGULAR_SEASON_TYPE not in plan.game_types:
         return []
     low, high = plan.scored
     # An open-ended plan has a huge upper bound, so it expects every listed later season.
@@ -54,13 +51,8 @@ def _unresolved(conn: sqlite3.Connection) -> Counter[tuple[int, int]]:
     ).fetchone()
     if newest is None:
         return Counter()
-    cutoff = iso_utc(parse_iso_utc(newest) - UNRESOLVED_AFTER)
-    cursor = conn.execute(
-        "SELECT season, game_type FROM latest_games"
-        f" WHERE state NOT IN ({marks}) AND start_utc <= ?",
-        (*sorted(FINAL_STATES), cutoff),
-    )
-    return Counter((season, game_type) for season, game_type in cursor)
+    found = unresolved_games(conn, parse_iso_utc(newest) - UNRESOLVED_AFTER)
+    return Counter((season, game_type) for _, season, game_type, _ in found)
 
 
 def season_counts(

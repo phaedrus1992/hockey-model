@@ -15,7 +15,7 @@ from hockey_model.sources.nhl import (
 from hockey_model.sources.shape_errors import SourceParseError
 from hockey_model.store.db import StoreError
 from hockey_model.store.nhl_writes import games_missing_boxscore, write_boxscore, write_games
-from hockey_model.store.reads import game_row
+from hockey_model.store.reads import game_row, unresolved_games
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
 from hockey_model.store.source_reads import (
     abandoned_urls,
@@ -24,7 +24,7 @@ from hockey_model.store.source_reads import (
     last_ok_read,
     newest_read,
 )
-from hockey_model.store.timestamps import iso_utc, parse_iso_utc
+from hockey_model.store.timestamps import parse_iso_utc
 
 SCORES = "nhl_scores"
 BOXSCORES = "nhl_boxscores"
@@ -54,8 +54,6 @@ UNRESOLVED_OLD_AFTER = timedelta(days=14)
 UNRESOLVED_OLD_RETRY_AFTER = timedelta(days=7)
 # At most this many unresolved days are read again in one refresh, oldest first.
 MAX_UNRESOLVED_DAYS = 10
-# Overdue games named in a note, so the note stays short.
-_UNRESOLVED_SHOWN = 5
 
 
 def _day_of(url: str) -> date:
@@ -100,19 +98,14 @@ def _unresolved_games(run: RefreshRun) -> list[tuple[int, datetime]]:
     A game counts once it started more than ``UNRESOLVED_AFTER`` ago. A game that is still
     to come, or on today's slate, is covered by the normal window.
     """
-    marks = ",".join("?" for _ in FINAL_STATES)
-    cursor = run.conn.execute(
-        "SELECT game_id, start_utc FROM latest_games"
-        f" WHERE state NOT IN ({marks}) AND start_utc <= ? ORDER BY start_utc, game_id",
-        (*sorted(FINAL_STATES), iso_utc(run.now - UNRESOLVED_AFTER)),
-    )
-    return [(game_id, parse_iso_utc(start)) for game_id, start in cursor]
+    found = unresolved_games(run.conn, run.now - UNRESOLVED_AFTER)
+    return [(game_id, start) for game_id, _, _, start in found]
 
 
-def _unresolved_days_due(run: RefreshRun) -> list[date]:
+def _unresolved_days_due(run: RefreshRun, games: list[tuple[int, datetime]]) -> list[date]:
     """Return the score days to read again for unresolved games, oldest first and bounded."""
     due: list[date] = []
-    for _, start in _unresolved_games(run):
+    for _, start in games:
         day = game_day_of(start)
         if day in due:
             continue
@@ -127,24 +120,21 @@ def _unresolved_days_due(run: RefreshRun) -> list[date]:
     return due[:MAX_UNRESOLVED_DAYS]
 
 
-def _note_unresolved(run: RefreshRun) -> None:
+def _describe(items: list[str], shown: int = 5) -> str:
+    """Name the first few items of a list, and count the rest."""
+    names = ", ".join(items[:shown])
+    return names if len(items) <= shown else f"{names} and {len(items) - shown} more"
+
+
+def _note_unresolved(run: RefreshRun, games: list[tuple[int, datetime]]) -> None:
     """Name the games that are still not final long after their start."""
-    games = _unresolved_games(run)
     if not games:
         return
-    shown = ", ".join(str(game_id) for game_id, _ in games[:_UNRESOLVED_SHOWN])
-    more = len(games) - _UNRESOLVED_SHOWN
-    tail = f" and {more} more" if more > 0 else ""
+    names = _describe([str(game_id) for game_id, _ in games])
     run.notes.append(
         f"{SCORES}: {len(games)} game(s) are not final long after their start "
-        f"({shown}{tail}); each is read again after a wait"
+        f"({names}); each is read again after a wait"
     )
-
-
-def _describe(items: list[date], shown: int = 5) -> str:
-    """Name the first few days of a list, and count the rest."""
-    names = ", ".join(day.isoformat() for day in items[:shown])
-    return names if len(items) <= shown else f"{names} and {len(items) - shown} more"
 
 
 def score_days(run: RefreshRun) -> None:
@@ -155,7 +145,8 @@ def score_days(run: RefreshRun) -> None:
     """
     last_day = game_day_of(run.now) + timedelta(days=SCHEDULE_DAYS_AHEAD)
     first = _first_day(run)
-    due = _unresolved_days_due(run)
+    unresolved = _unresolved_games(run)
+    due = _unresolved_days_due(run, unresolved)
     window = (first + timedelta(days=n) for n in range((last_day - first).days + 1))
     worklist = sorted({*due, *window})
     failures = 0
@@ -163,7 +154,8 @@ def score_days(run: RefreshRun) -> None:
     # the refresh for good, and so a backfill would never finish.
     skipped = sorted(_day_of(url) for url in abandoned_urls(run.conn, SCORES))
     if skipped:
-        run.notes.append(f"{SCORES}: skipped {_describe(skipped)}, which failed in every read")
+        names = _describe([day.isoformat() for day in skipped])
+        run.notes.append(f"{SCORES}: skipped {names}, which failed in every read")
     gaps = set(skipped)
     for index, day in enumerate(worklist):
         if failures >= MAX_UNIT_FAILURES:
@@ -178,7 +170,7 @@ def score_days(run: RefreshRun) -> None:
             return write_games(run.conn, fetch_score_day(run.client, current), stamp)
 
         failures = 0 if run.attempt(SCORES, score_day_url(day), unit) else failures + 1
-    _note_unresolved(run)
+    _note_unresolved(run, unresolved)
 
 
 def check_boxscore_identity(conn: sqlite3.Connection, game_id: int, rows: BoxscoreRows) -> None:
