@@ -393,6 +393,111 @@ def test_an_unexpected_store_failure_names_its_type_and_message(
     assert "model configuration" not in err
 
 
+_EXPERIMENT_RECORD = {
+    "id": "0001-cli",
+    "title": "CLI record",
+    "hypothesis": "Feature X improves log loss.",
+    "cohort": "exploration",
+    "data_cutoff": "2026-10-31",
+    "primary_metric": "mean_per_game_log_loss",
+    "baseline": {"fit_id": 1, "commit": "abc123"},
+    "selection_folds": [[20152016, 20212022]],
+    "min_games": 10,
+    "candidate_features": ["xg_form", "rest"],
+    "look_number": 1,
+    "expected_effect": None,
+    "promotion_criterion": "95th percentile below zero",
+    "failure_outcome": "ship Elo alone",
+    "status": "registered",
+}
+
+
+def _registry(tmp_path: Path) -> Path:
+    """Make a temporary registry directory for the CLI to read."""
+    registry = tmp_path / "experiments"
+    registry.mkdir()
+    return registry
+
+
+def _write_record(registry: Path, data: dict) -> Path:
+    """Put one record in the registry directory."""
+    path = registry / f"{data['id']}.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _seed_seasons(conn, seasons: range) -> None:
+    """Put 20 final games in each season, so a walk-forward fit has earlier games."""
+    game_id = 0
+    for season in seasons:
+        for day in range(1, 21):
+            game_id += 1
+            start = f"{season // 10000:04d}-11-{day:02d}T00:00"
+            add_game(conn, game_id, start, season=season)
+    conn.commit()
+
+
+def test_cli_experiments_check_exits_zero_for_a_valid_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _registry(tmp_path)
+    _write_record(registry, _EXPERIMENT_RECORD)
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["experiments", "check"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["records"][0]["id"] == "0001-cli"
+
+
+def test_cli_experiments_check_exits_one_and_names_the_bad_field(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _registry(tmp_path)
+    _write_record(registry, {**_EXPERIMENT_RECORD, "min_games": "ten"})
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["experiments", "check"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "min_games" in payload["errors"][0]
+
+
+def test_cli_experiments_without_a_subcommand_exits_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["experiments"]) == 2
+    assert "specify check or run" in capsys.readouterr().err
+
+
+def test_cli_experiments_run_names_a_missing_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _registry(tmp_path)
+    _write_record(registry, _EXPERIMENT_RECORD)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["experiments", "run", "0002-absent"]) == 2
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cli_experiments_run_scores_an_exploration_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _registry(tmp_path)
+    _write_record(registry, _EXPERIMENT_RECORD)
+    monkeypatch.chdir(tmp_path)
+    db = tmp_path / "store.db"
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    conn = connect(db)
+    _seed_seasons(conn, range(20152016, 20262027, 10001))
+    conn.close()
+    assert cli.main(["experiments", "run", "0001-cli"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["scored"] == "seasons 20162017 to 20252026"
+    assert payload["status"] == "registered"
+
+
 def test_playoff_invalid_probability_exits_two_without_json(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

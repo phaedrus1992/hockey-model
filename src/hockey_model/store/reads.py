@@ -9,7 +9,7 @@ games late, and the backtest must still see them.
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from hockey_model.game import StarterSource, StarterStatus
@@ -25,6 +25,8 @@ from hockey_model.types import Player, Slot
 
 # An NHL game ends about three hours after the puck drops, with overtime and a shootout.
 RESULT_DELAY = timedelta(hours=3)
+# Later than any game, so a read returns every final game in the store.
+LATEST_GAME = datetime(9000, 1, 1, tzinfo=UTC)
 _POSITION_SLOTS = {"C": Slot.C, "L": Slot.W, "R": Slot.W, "D": Slot.D, "G": Slot.G}
 
 
