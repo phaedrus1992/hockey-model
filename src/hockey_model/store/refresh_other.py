@@ -21,7 +21,7 @@ from hockey_model.store.moneypuck_writes import (
     write_team_games,
 )
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
-from hockey_model.store.source_reads import ESPN_INJURIES, last_ok_read
+from hockey_model.store.source_reads import ESPN_INJURIES, abandoned_urls, last_ok_read
 from hockey_model.store.starter_writes import write_starter_reads
 
 MONEYPUCK = "moneypuck"
@@ -76,8 +76,13 @@ def moneypuck(run: RefreshRun) -> None:
             ),
         )
     failures = 0
+    gaps = abandoned_urls(run.conn, MONEYPUCK) - {TEAM_GAMES_URL}
+    if gaps:
+        run.notes.append(f"{MONEYPUCK}: {len(gaps)} files skipped, because every read failed")
     for season in range(FIRST_SEASON, current + 1):
         url = goalie_games_url(season)
+        if url in gaps:
+            continue
         if failures >= MAX_UNIT_FAILURES:
             run.notes.append(
                 f"{MONEYPUCK}: stopped after {failures} failed files; the rest not tried"

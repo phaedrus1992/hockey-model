@@ -15,6 +15,10 @@ on:
         description: "Publish now, even outside the trigger slot. A published day is still skipped."
         type: boolean
         default: false
+      dry_run:
+        description: "Build the report and upload it as an artifact, but do not publish a release. A published day is built again. The store cache is still saved."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,6 +34,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       due: ${{ steps.gate.outputs.due }}
+      publish: ${{ steps.gate.outputs.publish }}
       day: ${{ steps.gate.outputs.day }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,15 +46,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DISPATCH_FORCE: ${{ inputs.force }}
+          DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           args=()
           if [[ "$DISPATCH_FORCE" == "true" ]]; then
             args+=(--force)
           fi
-          bash scripts/report-gate.sh "${args[@]}" > gate.json
+          if [[ "$DISPATCH_DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          bash scripts/report-gate.sh ${args[@]+"${args[@]}"} > gate.json
           cat gate.json
-          echo "due=$(jq -r '.due' gate.json)" >> "$GITHUB_OUTPUT"
-          echo "day=$(jq -r '.date' gate.json)" >> "$GITHUB_OUTPUT"
+          {
+            echo "due=$(jq -r '.due' gate.json)"
+            echo "publish=$(jq -r '.publish' gate.json)"
+            echo "day=$(jq -r '.date' gate.json)"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     needs: gate
@@ -88,7 +100,7 @@ jobs:
 
   publish:
     needs: [gate, build]
-    if: needs.gate.outputs.due == 'true'
+    if: needs.gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
