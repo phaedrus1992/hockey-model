@@ -137,6 +137,8 @@ def _report_json(report: RefreshReport) -> dict[str, object]:
 def _refresh(args: argparse.Namespace) -> tuple[object, int]:
     if args.starters_only and args.backfill_from is not None:
         raise HockeyModelError("refresh: a backfill reads every source; drop --starters-only")
+    if args.starters_only and args.budget_seconds is not None:
+        raise HockeyModelError("refresh: --starters-only has no budget; drop --budget-seconds")
     if args.budget_seconds is not None and args.budget_seconds <= 0:
         raise HockeyModelError(
             f"refresh: --budget-seconds is {args.budget_seconds}; give a number above 0"

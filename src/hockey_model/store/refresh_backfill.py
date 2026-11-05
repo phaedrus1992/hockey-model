@@ -8,12 +8,12 @@ from hockey_model.store.nhl_writes import games_missing_boxscore
 from hockey_model.store.refresh_context import RefreshRun
 from hockey_model.store.refresh_nhl import (
     SCHEDULE_DAYS_AHEAD,
-    boxscores,
     read_boxscores,
     read_days,
     score_days,
     score_gaps,
 )
+from hockey_model.types import HockeyModelError
 
 # A backfill reads this many game days at a time. A refresh that spends its time budget
 # leaves the older windows for the next run.
@@ -36,15 +36,23 @@ def nhl(run: RefreshRun) -> None:
     """Read the score days and the boxscores. A backfill reads them window by window."""
     if run.backfill_from is None:
         score_days(run)
-        boxscores(run)
+        read_boxscores(run, games_missing_boxscore(run.conn))
         return
     last_day = game_day_of(run.now) + timedelta(days=SCHEDULE_DAYS_AHEAD)
+    if run.backfill_from > last_day:
+        raise HockeyModelError(
+            f"refresh: --backfill-from {run.backfill_from} is after {last_day}, the last day "
+            "that the schedule reads; give an earlier date"
+        )
     gaps = score_gaps(run)
+    complete = True
     for start, end in windows(run.backfill_from, last_day):
-        days_read = read_days(run, start, end, gaps)
-        boxes_read = read_boxscores(run, games_missing_boxscore(run.conn, start, end))
-        if not (days_read and boxes_read):
-            run.notes.append(f"backfill: stopped in the window {start} to {end}; run it again")
-            run.backfill_complete = False
-            return
-    run.backfill_complete = True
+        days = read_days(run, start, end, gaps)
+        boxes = read_boxscores(run, games_missing_boxscore(run.conn, start, end))
+        complete = complete and days.clean and boxes.clean
+        if days.stopped or boxes.stopped:
+            run.notes.append(f"backfill: stopped in the window {start} to {end}")
+            break
+    if not complete:
+        run.notes.append("backfill: some days or games are unread; run it again")
+    run.backfill_complete = complete

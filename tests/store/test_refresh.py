@@ -17,6 +17,7 @@ from hockey_model.store.db import connect
 from hockey_model.store.refresh import refresh, refresh_starters
 from hockey_model.store.refresh_other import current_season_start
 from hockey_model.store.source_reads import record_read
+from hockey_model.types import HockeyModelError
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 NOW = datetime(2026, 1, 10, 10, 0, tzinfo=UTC)
@@ -338,6 +339,30 @@ def test_a_backfill_that_spends_its_budget_stops_and_the_next_run_continues(
     assert "2024-06-01" in _score_requests(second)
 
 
+def test_a_recently_failed_boxscore_does_not_stop_the_older_windows(
+    conn: sqlite3.Connection,
+) -> None:
+    start = date(2024, 6, 1)
+    bad = f"{BOX_URL}2025020697/boxscore"
+    failing: dict[str, bytes | Exception] = {bad: SourceError("nhl", bad, "HTTP 404")}
+    refresh(conn, FakeClient(failing), now=NOW, backfill_from=date(2026, 1, 10))
+    client = FakeClient(failing)
+    report = refresh(conn, client, now=NOW + timedelta(hours=2), backfill_from=start)
+    assert report.backfill_complete is False
+    assert "2024-06-01" in _score_requests(client)
+    assert any("some days or games are unread" in n for n in report.notes)
+
+
+def test_a_backfill_from_a_future_day_is_an_error(conn: sqlite3.Connection) -> None:
+    with pytest.raises(HockeyModelError, match="is after"):
+        refresh(conn, FakeClient(), now=NOW, backfill_from=date(2030, 1, 1))
+
+
+def test_a_budget_needs_a_clock(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="needs a clock"):
+        refresh(conn, FakeClient(), now=NOW, budget=timedelta(minutes=1))
+
+
 def test_a_backfill_with_a_failed_day_is_not_complete(conn: sqlite3.Connection) -> None:
     report = refresh(
         conn,
@@ -408,16 +433,16 @@ def test_a_score_day_that_failed_in_two_reads_is_skipped_and_named(
     conn: sqlite3.Connection,
 ) -> None:
     failing = _failing_days("2025-11-01")
-    for hours in (0, 1):
+    for days in (0, 1):
         report = refresh(
             conn,
             FakeClient(failing),
-            now=NOW + timedelta(hours=hours),
+            now=NOW + timedelta(days=days),
             backfill_from=date(2025, 11, 1),
         )
         assert len(report.errors) == 1
     client = FakeClient(failing)
-    report = refresh(conn, client, now=NOW + timedelta(hours=2), backfill_from=date(2025, 11, 1))
+    report = refresh(conn, client, now=NOW + timedelta(days=2), backfill_from=date(2025, 11, 1))
     assert "2025-11-01" not in _score_requests(client)
     assert report.errors == ()
     assert any("nhl_scores: skipped 2025-11-01, which failed" in n for n in report.notes)

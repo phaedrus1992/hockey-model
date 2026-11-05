@@ -89,18 +89,14 @@ def games_missing_boxscore(
     ``first_day`` and ``last_day`` are Eastern game days, both included. Either may be None.
     """
     marks = ",".join("?" for _ in FINAL_STATES)
-    bounds: list[str] = []
-    if first_day is not None:
-        bounds.append(iso_utc(game_day_window(first_day)[0]))
-    if last_day is not None:
-        bounds.append(iso_utc(game_day_window(last_day)[1]))
+    low = None if first_day is None else iso_utc(game_day_window(first_day)[0])
+    high = None if last_day is None else iso_utc(game_day_window(last_day)[1])
     cursor = conn.execute(
         "SELECT DISTINCT g.game_id FROM games g"
         f" WHERE g.state IN ({marks})"
         " AND NOT EXISTS (SELECT 1 FROM goalie_games w WHERE w.game_id = g.game_id)"
-        + (" AND g.start_utc >= ?" if first_day is not None else "")
-        + (" AND g.start_utc < ?" if last_day is not None else "")
-        + " ORDER BY g.start_utc, g.game_id",
-        [*sorted(FINAL_STATES), *bounds],
+        " AND (? IS NULL OR g.start_utc >= ?) AND (? IS NULL OR g.start_utc < ?)"
+        " ORDER BY g.start_utc, g.game_id",
+        [*sorted(FINAL_STATES), low, low, high, high],
     )
     return [row[0] for row in cursor]

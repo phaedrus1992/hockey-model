@@ -52,6 +52,9 @@ def fakes(tmp_path: Path) -> Path:
     uv.write_text(
         '#!/usr/bin/env bash\necho "uv $*" >> "$FAKE_CALLS"\n'
         'if [[ "$*" == "run hockey-model refresh --backfill-from"* ]]; then\n'
+        '  if [[ -n "${FAKE_REFRESH_FAIL:-}" ]]; then\n'
+        '    printf "{\\"errors\\": [\\"boom\\"]}"; exit 1\n'
+        "  fi\n"
         '  printf "{\\"backfill_complete\\": %s}" "${FAKE_BACKFILL_COMPLETE:-true}"\n'
         "fi\n"
         'if [[ "$*" == "run hockey-model report-due"* ]]; then printf "%s" "$FAKE_DUE_JSON"; fi\n'
@@ -340,6 +343,16 @@ def test_prepare_exits_75_and_writes_no_marker_when_the_backfill_stops(
     assert "run it again" in result.stderr
     assert not (tmp_path / "store" / "store.db.backfilled").exists()
     assert not any("backtest" in line for line in _calls(tmp_path))
+
+
+def test_prepare_prints_the_refresh_report_when_the_refresh_fails(
+    fakes: Path, tmp_path: Path
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)), FAKE_REFRESH_FAIL="1")
+    result = _run("daily-prepare.sh", env, "--date", DAY)
+    assert result.returncode == 1
+    assert "boom" in result.stdout
+    assert not (tmp_path / "store" / "store.db.backfilled").exists()
 
 
 def test_prepare_passes_the_budget_from_the_environment(fakes: Path, tmp_path: Path) -> None:

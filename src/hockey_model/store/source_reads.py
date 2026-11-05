@@ -11,6 +11,8 @@ KNOWN_SOURCES = frozenset(
 )
 # A URL whose last this-many reads all failed is a known gap. A refresh skips it and says so.
 ABANDON_AFTER_FAILED_READS = 2
+# The failed reads must span at least this long, so one outage does not make a gap.
+ABANDON_MIN_SPAN_DAYS = 0.5
 # The source name of the ESPN injury list. Each good read of the list is one snapshot.
 ESPN_INJURIES = "espn_injuries"
 
@@ -84,12 +86,13 @@ def stale_sources(conn: sqlite3.Connection, as_of: datetime) -> list[tuple[str, 
 
 def abandoned_urls(conn: sqlite3.Connection, source: str) -> frozenset[str]:
     """Return the URLs of ``source`` whose reads failed ``ABANDON_AFTER_FAILED_READS`` times
-    in a row, with no good read between them."""
+    in a row, with no good read between them, over at least ``ABANDON_MIN_SPAN_DAYS``."""
     cursor = conn.execute(
         "SELECT r.url FROM source_reads r WHERE r.source = ? AND r.ok = 0 AND r.fetched_at >"
         " COALESCE((SELECT MAX(o.fetched_at) FROM source_reads o"
         "           WHERE o.source = r.source AND o.url = r.url AND o.ok = 1), '')"
-        " GROUP BY r.url HAVING COUNT(*) >= ?",
-        (source, ABANDON_AFTER_FAILED_READS),
+        " GROUP BY r.url HAVING COUNT(*) >= ?"
+        " AND julianday(MAX(r.fetched_at)) - julianday(MIN(r.fetched_at)) >= ?",
+        (source, ABANDON_AFTER_FAILED_READS, ABANDON_MIN_SPAN_DAYS),
     )
     return frozenset(url for (url,) in cursor)

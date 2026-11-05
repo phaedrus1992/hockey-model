@@ -42,6 +42,8 @@ def refresh(
     ``budget`` is how long the NHL steps may read, counted from ``now``. A backfill that
     spends it stops, and the report says the backfill is not complete.
     """
+    if budget is not None and clock is None:
+        raise ValueError("refresh: a budget needs a clock; pass clock to count the time spent")
     deadline = None if budget is None else now + budget
     run = RefreshRun(conn, client, now, backfill_from, clock, deadline)
     return _run(run, _STEPS)
