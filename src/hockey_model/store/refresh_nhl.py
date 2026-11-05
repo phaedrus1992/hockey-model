@@ -2,10 +2,10 @@
 
 import sqlite3
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
-from hockey_model.game_day import game_day_of
+from hockey_model.game_day import game_day_of, game_day_window
 from hockey_model.sources.nhl import (
     FINAL_STATES,
     BoxscoreRows,
@@ -30,9 +30,10 @@ from hockey_model.store.timestamps import parse_iso_utc
 
 SCORES = "nhl_scores"
 BOXSCORES = "nhl_boxscores"
-# A day is complete when a read came this long after the day began. The latest NHL game of a
-# day ends before 12:00 UTC on the next day.
-DAY_COMPLETE_AFTER = timedelta(hours=36)
+# A day is complete when a read came this long after the Eastern game day closed. The close is
+# 05:00 UTC in winter and 04:00 UTC in summer, so this margin gives 12:00 UTC and 11:00 UTC. The
+# latest NHL game of a day ends before both.
+DAY_COMPLETE_AFTER_CLOSE = timedelta(hours=7)
 # Without a stored game or a backfill date, a refresh starts this far back.
 DEFAULT_LOOKBACK = timedelta(days=7)
 # A refresh starts this long before the newest final game, to catch a game that was in progress.
@@ -48,7 +49,7 @@ SCHEDULE_DAYS_AHEAD = 2
 FAILED_DAY_RETRY_WINDOW = timedelta(days=30)
 # A game that started this long ago and has no final read is unresolved. A successful read of
 # its day is not proof that the game finished: it can be suspended, moved, or still unknown.
-UNRESOLVED_AFTER = DAY_COMPLETE_AFTER
+UNRESOLVED_AFTER = timedelta(hours=36)
 # An unresolved game's day is read again after this long, and after the longer wait once the
 # game is old, so a game that never resolves does not cost a request on every refresh.
 UNRESOLVED_RETRY_AFTER = timedelta(days=1)
@@ -88,10 +89,16 @@ def _first_day(run: RefreshRun) -> date:
     return min([game_day_of(parse_iso_utc(newest) - OVERLAP), *_failed_days(run)])
 
 
+def day_is_complete(day: date, last: datetime | None) -> bool:
+    """Return True when ``last``, the newest good read of ``day``, came after the day closed."""
+    if last is None:
+        return False
+    _, closes = game_day_window(day)
+    return last >= closes + DAY_COMPLETE_AFTER_CLOSE
+
+
 def _day_complete(run: RefreshRun, day: date) -> bool:
-    last = last_ok_read(run.conn, SCORES, score_day_url(day))
-    day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
-    return last is not None and last >= day_start + DAY_COMPLETE_AFTER
+    return day_is_complete(day, last_ok_read(run.conn, SCORES, score_day_url(day)))
 
 
 def _unresolved_games(run: RefreshRun) -> list[tuple[int, datetime]]:
