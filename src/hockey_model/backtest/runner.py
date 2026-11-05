@@ -9,7 +9,7 @@ import math
 import sqlite3
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +24,11 @@ from hockey_model.backtest.metrics import (
     per_game_log_loss,
 )
 from hockey_model.game_model.features import FEATURES, GOALIE_FEATURE, GoalieMode
-from hockey_model.game_model.imputation import check_imputation, feature_quality
+from hockey_model.game_model.imputation import (
+    ImputationLimitError,
+    check_imputation,
+    feature_quality,
+)
 from hockey_model.game_model.logistic import LogisticFit, fit_logistic, predict_logistic
 from hockey_model.game_model.seasons import DEFAULT_PLAN, SeasonPlan, in_cohort, scored_label
 from hockey_model.game_model.training import TrainingRow, training_rows
@@ -105,6 +109,8 @@ class BacktestReport:
     eligible: bool = True
     ineligible_reasons: tuple[str, ...] = ()
     # How often each tested feature was imputed in the scored games, as FeatureQuality dicts.
+    # This is descriptive. The imputation limit gates the training rows of each fit, and it does
+    # not change eligible or success.
     imputation: tuple[Mapping[str, object], ...] = ()
 
 
@@ -155,15 +161,26 @@ def _validate(
             f"{plan.select_validate}; run `hockey-model refresh --backfill-from 2014-10-01`"
         )
     validation: dict[str, dict[str, float]] = {}
+    # A candidate above the imputation limit is vetoed, so one such feature does not stop the
+    # run. The Elo alone is never refused: it has no feature to impute.
+    refused: set[str] = set()
     for name, features in [(ELO, ()), *[(f"{ELO}+{f}", (f,)) for f in candidates]]:
-        fit = _fit(train, features)
+        try:
+            fit = _fit(train, features)
+        except ImputationLimitError:
+            if not features:
+                raise
+            refused.update(features)
+            continue
         validation[name] = {
             "actual": _loss(fit, validate_actual),
             "guess": _loss(fit, validate_guess),
         }
     baseline = validation[ELO]["guess"]
     vetoed = tuple(
-        f for f in candidates if validation[f"{ELO}+{f}"]["guess"] > baseline + VETO_TOLERANCE
+        f
+        for f in candidates
+        if f in refused or validation[f"{ELO}+{f}"]["guess"] > baseline + VETO_TOLERANCE
     )
     return validation, vetoed
 
@@ -326,7 +343,7 @@ def _build_report(
         coverage=coverage,
         eligible=not reasons,
         ineligible_reasons=reasons,
-        imputation=tuple(q.as_dict() for q in quality),
+        imputation=tuple(asdict(q) for q in quality),
     )
 
 

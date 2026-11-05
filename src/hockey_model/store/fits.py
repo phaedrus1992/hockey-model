@@ -19,12 +19,13 @@ def save_fit(
     fit: LogisticFit,
     fit_through_season: int,
     created_at: datetime,
-    imputation: Sequence[Mapping[str, object]] | None = None,
+    imputation: Sequence[Mapping[str, object]],
 ) -> int:
     """Store a fit and return its id. An invalid fit raises ``StoreError`` and saves no row.
 
-    ``imputation`` is the share of rows where each feature was imputed, as the fit was built.
-    It is stored beside the weights, so a reader can see how much of the fit was a stand-in.
+    ``imputation`` is the imputed count and share of each selected feature, as the fit was
+    built. It is stored beside the weights, so a reader can see how much of the fit was a
+    stand-in. A fit with no features passes an empty list.
     """
     try:
         _check_fit(fit)
@@ -34,11 +35,10 @@ def save_fit(
         "intercept": fit.intercept,
         "elo_weight": fit.elo_weight,
         "features": dict(fit.weights),
+        "imputation": _imputation_entries(imputation),
     }
     if fit.diagnostics is not None:
         weights["diagnostics"] = asdict(fit.diagnostics)
-    if imputation is not None:
-        weights["imputation"] = [dict(entry) for entry in imputation]
     with conn:
         cursor = conn.execute(
             "INSERT INTO model_fits (fit_through_season, features, weights, created_at)"
@@ -79,6 +79,20 @@ def newest_fit(conn: sqlite3.Connection) -> LogisticFit:
             f"load the model fit: the saved fit is malformed ({type(exc).__name__}: {exc}); "
             "run `hockey-model fit` again"
         ) from exc
+
+
+_IMPUTATION_KEYS = frozenset({"feature", "imputed", "total", "share"})
+
+
+def _imputation_entries(entries: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Return the imputation entries as plain dicts. A bad entry raises ``StoreError``."""
+    for entry in entries:
+        if set(entry) != _IMPUTATION_KEYS:
+            raise StoreError(
+                f"save the model fit: an imputation entry needs exactly the keys "
+                f"{sorted(_IMPUTATION_KEYS)}, got {sorted(entry)}"
+            )
+    return [dict(entry) for entry in entries]
 
 
 def _check_fit(fit: LogisticFit) -> None:

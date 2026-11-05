@@ -61,6 +61,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Name the Eastern game day, not the UTC day, in the `daily` help, the daily report module docstring, and the `--date` help of `publish-daily-report.sh`. The code already selected the Eastern game day. [docs:cli]
 - Read a finished score day again only until 7 hours after the Eastern game day closes, which is 12:00 UTC in winter and 11:00 UTC in summer. The old rule read a summer day one hour too long. [fix:store]
 - Set a goalie differential to the neutral value when either starter has no rate, and mark the feature as imputed for that team. The other starter's rate no longer passes through as a measured difference. [fix:model]
-- Refuse a fit, with exit 2 and no saved fit, when a selected feature is imputed in more than 10% of its training rows. The `imputation` list in the fit and backtest JSON gives the count and share for each selected feature. [fix:model]
+- Refuse a fit, with exit 2 and no saved fit, when a selected feature is imputed in more than 10% of its training rows. A backtest vetoes such a candidate instead of stopping. The `imputation` list in the fit and backtest JSON gives the count and share for each selected feature. [fix:model]
 
 [Unreleased]: https://github.com/slackworks/hockey-model/commits/main

@@ -214,7 +214,7 @@ def _fit(args: argparse.Namespace) -> tuple[object, int]:
                     "run `hockey-model refresh --backfill-from 2014-10-01`"
                 )
             # The check runs before the fit, so a refused fit saves no row and no artifact.
-            quality = [q.as_dict() for q in check_imputation([r.features for r in rows], features)]
+            quality = [asdict(q) for q in check_imputation([r.features for r in rows], features)]
             fit = fit_logistic([r.features for r in rows], [r.home_won for r in rows], features)
             games = len(rows)
         else:

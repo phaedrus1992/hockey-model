@@ -49,6 +49,8 @@ SCHEDULE_DAYS_AHEAD = 2
 FAILED_DAY_RETRY_WINDOW = timedelta(days=30)
 # A game that started this long ago and has no final read is unresolved. A successful read of
 # its day is not proof that the game finished: it can be suspended, moved, or still unknown.
+# A game-age rule, not a day rule. It is independent of DAY_COMPLETE_AFTER_CLOSE, so editing one
+# does not change the other.
 UNRESOLVED_AFTER = timedelta(hours=36)
 # An unresolved game's day is read again after this long, and after the longer wait once the
 # game is old, so a game that never resolves does not cost a request on every refresh.
@@ -91,10 +93,8 @@ def _first_day(run: RefreshRun) -> date:
 
 def day_is_complete(day: date, last: datetime | None) -> bool:
     """Return True when ``last``, the newest good read of ``day``, came after the day closed."""
-    if last is None:
-        return False
     _, closes = game_day_window(day)
-    return last >= closes + DAY_COMPLETE_AFTER_CLOSE
+    return last is not None and last >= closes + DAY_COMPLETE_AFTER_CLOSE
 
 
 def _day_complete(run: RefreshRun, day: date) -> bool:

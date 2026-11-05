@@ -7,7 +7,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from hockey_model.game_model.features import FeatureRow
+from hockey_model.game_model.features import ALL_FEATURE_NAMES, FeatureRow
 from hockey_model.types import HockeyModelError
 
 # The largest share of rows that may use a stand-in for one selected feature. It was set
@@ -28,15 +28,6 @@ class FeatureQuality:
     total: int
     share: float
 
-    def as_dict(self) -> dict[str, float | int | str]:
-        """Return the counts and the share, for a JSON report."""
-        return {
-            "feature": self.feature,
-            "imputed": self.imputed,
-            "total": self.total,
-            "share": self.share,
-        }
-
 
 def validate_limit(limit: float) -> float:
     """Return ``limit`` when it is a share above zero and at most one. Raise otherwise."""
@@ -48,8 +39,12 @@ def validate_limit(limit: float) -> float:
 def feature_quality(rows: Sequence[FeatureRow], names: Sequence[str]) -> tuple[FeatureQuality, ...]:
     """Return the imputed count and share of each selected feature in ``rows``.
 
-    An empty ``rows`` raises. A share over no rows is not a zero share.
+    An empty ``rows`` raises. A share over no rows is not a zero share. A name that no row can
+    impute raises, so a feature with no imputed path cannot pass the limit unseen.
     """
+    unknown = [name for name in names if name not in ALL_FEATURE_NAMES]
+    if unknown:
+        raise ValueError(f"imputation share: {unknown[0]!r} is not a known feature")
     if not rows:
         raise ValueError("imputation share: no rows; an empty denominator has no share")
     counts = dict.fromkeys(names, 0)
@@ -65,7 +60,7 @@ def check_imputation(
 ) -> tuple[FeatureQuality, ...]:
     """Return the quality of each selected feature. Raise when one is above ``limit``.
 
-    The error names each feature over the limit, so a refused fit says what to fix.
+    The error names each feature over the limit and the change that fixes it.
     """
     validate_limit(limit)
     quality = feature_quality(rows, names)
@@ -75,6 +70,7 @@ def check_imputation(
             f"{q.feature} is imputed in {q.imputed} of {q.total} rows ({q.share:.1%})" for q in over
         )
         raise ImputationLimitError(
-            f"fit refused: {named}, above the limit of {limit:.1%}; no fit is saved"
+            f"feature refused: {named}, above the limit of {limit:.1%}. "
+            "Fill the missing source games, or drop the feature from the fit or the candidates."
         )
     return quality

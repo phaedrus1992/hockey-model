@@ -317,7 +317,7 @@ def test_cli_fit_above_the_imputation_limit_exits_two_and_saves_no_fit(
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
     code = cli.main(["fit", "--through-season", "20152016", "--features", "xg_form"])
     assert code == 2
-    assert "fit refused" in capsys.readouterr().err
+    assert "feature refused" in capsys.readouterr().err
     conn = connect(db)
     saved = conn.execute("SELECT COUNT(*) FROM model_fits").fetchone()[0]
     conn.close()

@@ -166,7 +166,8 @@ def _goalie_gsax(
         used = True
         values[team] = sum(xg - goals for xg, goals in rows) / len(rows)
     if any(m.kind is MissingKind.GOALIE_FORM for m in missing):
-        return NEUTRAL_FORM, missing, used
+        # The neutral value uses no MoneyPuck number, even when the other side had one.
+        return NEUTRAL_FORM, missing, False
     return values[game.home] - values[game.away], missing, used
 
 
