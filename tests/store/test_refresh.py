@@ -8,13 +8,16 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from seeding import add_game, utc
 
 from hockey_model.sources.errors import SourceError
 from hockey_model.sources.http import HttpClient
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT, TEAM_GAMES_URL, goalie_games_url
+from hockey_model.sources.nhl import score_day_url
 from hockey_model.store.db import connect
 from hockey_model.store.nhl_writes import games_missing_boxscore
 from hockey_model.store.refresh import refresh, refresh_starters
+from hockey_model.store.refresh_nhl import MAX_UNRESOLVED_DAYS, UNRESOLVED_RETRY_AFTER
 from hockey_model.store.source_reads import record_read
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -483,3 +486,115 @@ def test_a_partial_stored_game_is_repaired_and_a_failed_repair_keeps_the_old_row
         ).fetchone()[0]
         > 0
     )
+
+
+def _score_payload(game_id: int, day: str, state: str, home: str, away: str) -> bytes:
+    """A score day with one game, built from a fixture game."""
+    payload = json.loads(fixture("nhl/score_2026-01-10.json"))
+    game = copy.deepcopy(payload["games"][0])
+    game["id"] = game_id
+    game["gameState"] = state
+    game["gameDate"] = day
+    game["startTimeUTC"] = f"{day}T18:00:00Z"
+    game["homeTeam"]["abbrev"], game["awayTeam"]["abbrev"] = home, away
+    payload["games"] = [game]
+    return json.dumps(payload).encode()
+
+
+def _unresolved_store(conn: sqlite3.Connection) -> None:
+    """A LIVE game on Jan 5 that a later read marked complete, then a newer final on Jan 9."""
+    add_game(conn, 9001, "2026-01-05T18:00", state="LIVE", fetched_at=utc("2026-01-05T20:00"))
+    record_read(conn, "nhl_scores", score_day_url(date(2026, 1, 5)), utc("2026-01-08T00:00"))
+    add_game(conn, 9002, "2026-01-09T18:00", state="OFF", fetched_at=utc("2026-01-10T00:00"))
+    conn.commit()
+
+
+def _requests_for(client: FakeClient, day: date) -> int:
+    return client.urls.count(score_day_url(day))
+
+
+def test_an_old_unresolved_game_is_read_again_after_newer_finals(conn: sqlite3.Connection) -> None:
+    _unresolved_store(conn)
+    day_url = score_day_url(date(2026, 1, 5))
+    # The fake serves the fixture boxscore, whose teams are EDM at LAK.
+    overrides: dict[str, bytes | Exception] = {
+        day_url: _score_payload(9001, "2026-01-05", "OFF", "EDM", "LAK"),
+    }
+    client = FakeClient(overrides)
+    report = refresh(conn, client, now=NOW)
+    # Game 9002 is seeded without a boxscore, and the fixture does not match its teams.
+    assert not [error for error in report.errors if "9001" in str(error)]
+    assert _requests_for(client, date(2026, 1, 5)) == 1
+    (state,) = conn.execute("SELECT state FROM latest_games WHERE game_id = 9001").fetchone()
+    assert state == "OFF"
+    assert 9001 not in games_missing_boxscore(conn)
+
+
+def test_a_day_with_no_unresolved_game_is_not_read_again(conn: sqlite3.Connection) -> None:
+    add_game(conn, 9001, "2026-01-05T18:00", state="OFF", fetched_at=utc("2026-01-05T23:00"))
+    record_read(conn, "nhl_scores", score_day_url(date(2026, 1, 5)), utc("2026-01-08T00:00"))
+    add_game(conn, 9002, "2026-01-09T18:00", state="OFF", fetched_at=utc("2026-01-10T00:00"))
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=NOW)
+    assert _requests_for(client, date(2026, 1, 5)) == 0
+
+
+def test_an_unresolved_game_waits_out_a_cooldown_between_reads(conn: sqlite3.Connection) -> None:
+    _unresolved_store(conn)
+    still_live = _score_payload(9001, "2026-01-05", "LIVE", "TOR", "BOS")
+    overrides: dict[str, bytes | Exception] = {score_day_url(date(2026, 1, 5)): still_live}
+    first = FakeClient(overrides)
+    refresh(conn, first, now=NOW)
+    assert _requests_for(first, date(2026, 1, 5)) == 1
+
+    soon = FakeClient(overrides)
+    refresh(conn, soon, now=NOW + timedelta(hours=1))
+    assert _requests_for(soon, date(2026, 1, 5)) == 0
+
+    later = FakeClient(overrides)
+    refresh(conn, later, now=NOW + UNRESOLVED_RETRY_AFTER + timedelta(hours=1))
+    assert _requests_for(later, date(2026, 1, 5)) == 1
+
+
+def test_an_unresolved_game_that_stays_empty_is_listed_not_dropped(
+    conn: sqlite3.Connection,
+) -> None:
+    _unresolved_store(conn)
+    report = refresh(conn, FakeClient(), now=NOW)
+    assert any("not final" in note and "9001" in note for note in report.notes)
+    (state,) = conn.execute("SELECT state FROM latest_games WHERE game_id = 9001").fetchone()
+    assert state == "LIVE"
+
+
+def test_a_run_reads_a_bounded_number_of_unresolved_days(conn: sqlite3.Connection) -> None:
+    for offset in range(MAX_UNRESOLVED_DAYS + 5):
+        day = date(2025, 12, 1) + timedelta(days=offset)
+        add_game(
+            conn,
+            8000 + offset,
+            f"{day.isoformat()}T18:00",
+            state="LIVE",
+            fetched_at=utc(f"{day.isoformat()}T20:00"),
+        )
+        record_read(
+            conn,
+            "nhl_scores",
+            score_day_url(day),
+            utc(f"{day.isoformat()}T00:00") + timedelta(days=2),
+        )
+    add_game(conn, 9002, "2026-01-09T18:00", state="OFF", fetched_at=utc("2026-01-10T00:00"))
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=NOW)
+    old_days = [
+        u for u in client.urls if u.startswith(SCORE_URL) and u[len(SCORE_URL) :] < "2026-01-08"
+    ]
+    assert len(old_days) == MAX_UNRESOLVED_DAYS
+
+
+def test_an_explicit_backfill_reads_an_old_unresolved_day(conn: sqlite3.Connection) -> None:
+    _unresolved_store(conn)
+    client = FakeClient()
+    refresh(conn, client, now=NOW, backfill_from=date(2026, 1, 5))
+    assert _requests_for(client, date(2026, 1, 5)) == 1

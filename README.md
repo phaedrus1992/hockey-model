@@ -101,7 +101,7 @@ HOCKEY_MODEL_DB=~/.cache/hockey-model/store.db hockey-model game 2026020236
 HOCKEY_MODEL_DB=~/.cache/hockey-model/store.db hockey-model backtest --games-out games.csv
 ```
 
-- `refresh` reads every source and appends each read with its fetch time. It exits 1 when a source failed, and it prints what each source wrote, the errors, and the credits. The first backfill makes about 16,000 NHL requests at two a second, so it takes hours. Run it again after an error: it skips what it already has.
+- `refresh` reads every source and appends each read with its fetch time. It exits 1 when a source failed, and it prints what each source wrote, the errors, and the credits. The first backfill makes about 16,000 NHL requests at two a second, so it takes hours. Run it again after an error: it skips what it already has. A game that started long ago and is still not final stays in the worklist: its score day is read again after a wait, at most `MAX_UNRESOLVED_DAYS` days in one run, and the notes name the game.
 - `refresh --starters-only` reads only the schedule, the goalie sources, and the injuries. The report run uses it after the morning refresh.
 - `fit --through-season YYYYYYYY --features a,b` fits the weights on every game from the 2015-16 season through that season and saves the fit. `--features` is required, because no default feature list is approved. Pass the `live_features` of the latest backtest report, such as `xg_form,rest` for the November 2026 report below. `--features ""` saves the Elo alone, which is the right fit when the joint test fails. The candidates are `xg_form`, `goalie_gsax`, `rest`, and `attempt_form` (the leak test of #77).
 - `game GAME_ID [--level L]` prints the prediction of one stored game with the newest fit.
