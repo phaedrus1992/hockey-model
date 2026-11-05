@@ -50,6 +50,18 @@ _VALID_RECORD_DATA = {
 # seasons to fit on before the scored cohort.
 FIT_SEASONS = range(20152016, 20262027, 10001)
 
+# A record that already spent its look.
+_SPENT = {
+    "status": "rejected",
+    "result": {
+        "games": 20,
+        "difference": 0.001,
+        "interval": [0.0005, 0.002],
+        "csv_path": "experiments/results/0002-other-games.csv",
+        "csv_hash": "0" * 64,
+    },
+}
+
 
 def _make_record(data: dict | None = None) -> ExperimentRecord:
     """Create a valid record from base data, overridden by data."""
@@ -275,13 +287,13 @@ class TestImmutableFields:
     def test_immutable_fields_raise_when_the_commit_has_no_record(
         self, tmp_path: Path, registry_dir: Path
     ):
-        """A commit that does not hold the record file fails with the git error."""
+        """A commit outside the record history is refused with a message that names it."""
         root = tmp_path
         _init_repo(root)
         _git(root, "commit", "--allow-empty", "-m", "an empty commit")
         commit = _git(root, "rev-parse", "HEAD").strip()
         record = _register(registry_dir)
-        with pytest.raises(HockeyModelError, match="git show"):
+        with pytest.raises(HockeyModelError, match="is not in the history of the record"):
             check_immutable_fields(record, commit, root)
 
 
@@ -398,13 +410,60 @@ class TestRegistryRules:
         """Removing a committed record from the working tree is an error."""
         _init_repo(tmp_path)
         _register(registry_dir, {"id": "0001-valid"})
-        _register(registry_dir, {"id": "0002-other"})
+        _register(registry_dir, _SPENT | {"id": "0002-other"})
         _git(tmp_path, "add", "experiments")
         _git(tmp_path, "commit", "-m", "register two records")
         (registry_dir / "0002-other.json").unlink()
         result = check_all(repo_root=tmp_path)
         assert result["ok"] is False
         assert any("0002-other: tracked" in error for error in result["errors"])
+
+    def test_a_committed_deletion_fails(self, tmp_path: Path, registry_dir: Path):
+        """A record removed in a later commit still counts: a committed number stays."""
+        _init_repo(tmp_path)
+        _register(registry_dir, {"id": "0001-valid"})
+        _register(registry_dir, _SPENT | {"id": "0002-other"})
+        _git(tmp_path, "add", "experiments")
+        _git(tmp_path, "commit", "-m", "register two records")
+        _git(tmp_path, "rm", "-q", "experiments/0002-other.json")
+        _git(tmp_path, "commit", "-m", "remove a record")
+        result = check_all(repo_root=tmp_path)
+        assert result["ok"] is False
+        assert any("0002-other: tracked" in error for error in result["errors"])
+
+    def test_a_deleted_record_without_a_result_is_no_loss(self, tmp_path: Path, registry_dir: Path):
+        """A record that never ran can be removed before it matters."""
+        _init_repo(tmp_path)
+        _register(registry_dir, {"id": "0001-valid"})
+        _register(registry_dir, {"id": "0002-draft"})
+        _git(tmp_path, "add", "experiments")
+        _git(tmp_path, "commit", "-m", "register two records")
+        _git(tmp_path, "rm", "-q", "experiments/0002-draft.json")
+        _git(tmp_path, "commit", "-m", "drop the draft")
+        assert check_all(repo_root=tmp_path)["ok"] is True
+
+    def test_a_renamed_record_fails(self, tmp_path: Path, registry_dir: Path):
+        """Renaming a record and resetting its result cannot reset the one-shot rule."""
+        _init_repo(tmp_path)
+        spent = {
+            "id": "0002-a",
+            "status": "rejected",
+            "result": {
+                "games": 20,
+                "difference": 0.001,
+                "interval": [0.0005, 0.002],
+                "csv_path": "experiments/results/0002-a-games.csv",
+                "csv_hash": "0" * 64,
+            },
+        }
+        _register(registry_dir, spent)
+        _git(tmp_path, "add", "experiments")
+        _git(tmp_path, "commit", "-m", "register and run")
+        _git(tmp_path, "mv", "experiments/0002-a.json", "experiments/0002-b.json")
+        _make_record({"id": "0002-b"}).save(registry_dir / "0002-b.json")
+        _git(tmp_path, "commit", "-am", "rename and reset")
+        result = check_all(repo_root=tmp_path)
+        assert result["ok"] is False
 
     def test_a_shallow_clone_fails(self, tmp_path: Path):
         """A shallow clone hides the registration commit, so the check refuses to guess."""

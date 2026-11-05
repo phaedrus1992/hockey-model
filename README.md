@@ -171,7 +171,7 @@ hockey-model experiments run 0001-v1-forward-test --games-out games.csv
 
 The per-game CSV of a confirmation run is committed under
 `experiments/results/`, and the record stores its path relative to the repository root and its SHA-256 hash.
-`experiments check` also fails when a record is deleted, when its status disagrees with its result, when a committed result was removed or replaced, and when two records share a number.
+`experiments check` also fails when a record that holds a result is deleted or renamed, when its status disagrees with its result, when a committed result was removed or replaced, and when two records share a number.
 It reads the git history, so a shallow clone stops with a message that asks for the full history.
 
 ## CLI

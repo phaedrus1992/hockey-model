@@ -15,7 +15,7 @@ from hockey_model.experiments.models import (
     ExperimentRecord,
     record_from_text,
 )
-from hockey_model.experiments.registry import REGISTRY_DIR_NAME
+from hockey_model.experiments.registry import RECORD_STEM, REGISTRY_DIR_NAME
 from hockey_model.types import HockeyModelError
 
 
@@ -33,11 +33,8 @@ def registration_commit(record_id: str, repo_root: Path) -> str | None:
             f"check {record_id!r}: {repo_root} is a shallow clone, so the registration "
             "commit is not visible; fetch the full history (for example fetch-depth: 0)"
         )
-    commits = _git(
-        ["log", "--format=%H", "--", record_relative_path(record_id)],
-        repo_root,
-    ).split()
-    return commits[-1] if commits else None
+    commits = _history(record_id, repo_root)
+    return commits[-1][0] if commits else None
 
 
 def check_immutable_fields(
@@ -50,7 +47,12 @@ def check_immutable_fields(
     A field the record did not carry at registration is a schema addition, not a
     broken promise, so it is not compared.
     """
-    relative = record_relative_path(record.id)
+    relative = dict(_history(record.id, repo_root)).get(registration_commit_sha)
+    if relative is None:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: commit {registration_commit_sha} is not in the "
+            "history of the record"
+        )
     text = _git(["show", f"{registration_commit_sha}:{relative}"], repo_root)
     prior = record_from_text(text, f"commit {registration_commit_sha} of {relative}")
     registered = json.loads(text)
@@ -72,10 +74,9 @@ def check_one_shot(record: ExperimentRecord, repo_root: Path) -> None:
     A confirmation run is one-shot. Deleting or replacing a committed result is a
     new experiment, so it needs a new record.
     """
-    relative = record_relative_path(record.id)
     # A stored blob holds lists where the record holds tuples, so compare as JSON.
     current = json.loads(json.dumps(record.to_dict().get("result")))
-    for commit in _git(["log", "--format=%H", "--", relative], repo_root).split():
+    for commit, relative in _history(record.id, repo_root):
         prior = _result_at(commit, relative, repo_root)
         if prior is None:
             continue
@@ -88,22 +89,78 @@ def check_one_shot(record: ExperimentRecord, repo_root: Path) -> None:
 
 
 def deleted_record_ids(present: list[str], repo_root: Path) -> list[str]:
-    """Return the IDs of records that HEAD tracks but the working tree no longer holds.
+    """Return the IDs of deleted records whose history holds a result.
 
-    A deleted record could hide a spent look, so the checker treats it as an error.
+    A deleted record that spent its look could hide a negative result, so a record
+    with a committed result stays. A record that never had a result is no loss. A
+    rename is not a deletion: git follows it, and the changed ``id`` fails the
+    immutability check.
     """
-    if not _is_work_tree(repo_root):
+    if not _is_work_tree(repo_root) or not _has_head(repo_root):
         return []
-    if (
-        subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=repo_root, capture_output=True
-        ).returncode
-        != 0
-    ):
-        return []
-    names = _git(["ls-tree", "--name-only", "HEAD", f"{REGISTRY_DIR_NAME}/"], repo_root).split()
-    tracked = {Path(name).stem for name in names if name.endswith(".json")}
-    return sorted(tracked - set(present))
+    deleted = _git(
+        ["log", "--diff-filter=D", "--name-only", "--format=", "--", f"{REGISTRY_DIR_NAME}/"],
+        repo_root,
+    ).split()
+    deleted += _git(["ls-tree", "--name-only", "HEAD", f"{REGISTRY_DIR_NAME}/"], repo_root).split()
+    names = {Path(name).stem for name in deleted if name.endswith(".json")}
+    gone = [n for n in names if n not in present and RECORD_STEM.fullmatch(n)]
+    return sorted(n for n in gone if _ever_had_result(n, repo_root))
+
+
+def _ever_had_result(record_id: str, repo_root: Path) -> bool:
+    """Return True when any commit stored a result for the record.
+
+    A version that is not valid JSON cannot hold a trustworthy result, so it is skipped.
+    """
+    relative = record_relative_path(record_id)
+    for commit in _git(["log", "--format=%H", "--", relative], repo_root).split():
+        shown = subprocess.run(
+            ["git", "show", f"{commit}:{relative}"], cwd=repo_root, capture_output=True, text=True
+        )
+        if shown.returncode != 0:
+            continue
+        try:
+            data = json.loads(shown.stdout)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and data.get("result") is not None:
+            return True
+    return False
+
+
+def _has_head(repo_root: Path) -> bool:
+    """Return True when the repository has at least one commit."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=repo_root, capture_output=True
+    )
+    return result.returncode == 0
+
+
+def _history(record_id: str, repo_root: Path) -> list[tuple[str, str]]:
+    """Return ``(commit, path)`` pairs for the record, newest first.
+
+    Git follows a rename, so ``path`` is the file name the record had at that commit.
+    """
+    out = _git(
+        [
+            "log",
+            "--follow",
+            "--name-only",
+            "--format=commit:%H",
+            "--",
+            record_relative_path(record_id),
+        ],
+        repo_root,
+    )
+    pairs: list[tuple[str, str]] = []
+    commit = ""
+    for line in out.splitlines():
+        if line.startswith("commit:"):
+            commit = line.removeprefix("commit:")
+        elif line.strip():
+            pairs.append((commit, line.strip()))
+    return pairs
 
 
 def _result_at(commit: str, relative: str, repo_root: Path) -> object:

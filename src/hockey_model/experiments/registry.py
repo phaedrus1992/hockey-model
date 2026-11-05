@@ -22,7 +22,7 @@ RESULTS_DIR_NAME = "results"
 
 # A record id is a four-digit number and a slug. The number is the record's slot
 # in the registry, so two records cannot share it.
-_RECORD_ID = re.compile(r"^[0-9]{4}-[a-z0-9][a-z0-9-]*$")
+RECORD_STEM = re.compile(r"^[0-9]{4}-[a-z0-9][a-z0-9-]*$")
 
 
 def registry_dir(repo_root: Path) -> Path:
@@ -42,7 +42,7 @@ def list_records(repo_root: Path) -> list[str]:
         return []
     ids: list[str] = []
     for path in sorted(registry.iterdir()):
-        if path.suffix == ".json" and _RECORD_ID.fullmatch(path.stem):
+        if path.suffix == ".json" and RECORD_STEM.fullmatch(path.stem):
             ids.append(path.stem)
     return sorted(ids)
 
@@ -63,7 +63,7 @@ def record_exists(record_id: str, repo_root: Path) -> bool:
 
 def check_record_id(record_id: str) -> None:
     """Raise unless the ID has the NNNN-slug shape, so it cannot name an outside path."""
-    if not _RECORD_ID.fullmatch(record_id):
+    if not RECORD_STEM.fullmatch(record_id):
         raise HockeyModelError(
             f"invalid experiment id {record_id!r}: use NNNN-slug, for example 0002-attempt-form"
         )
