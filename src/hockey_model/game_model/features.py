@@ -33,6 +33,7 @@ _FORM_READERS: dict[str, tuple[TeamFormReader, MissingKind]] = {
     "attempt_form": (mp_attempt_form_before, MissingKind.ATTEMPT_FORM),
 }
 ALL_FEATURE_NAMES = ("xg_form", "attempt_form", "goalie_gsax", "rest")
+GOALIE_FEATURE = "goalie_gsax"
 FORM_WINDOW = 10
 GOALIE_WINDOW = 20
 REST_CAP_DAYS = 4.0
@@ -56,6 +57,17 @@ class FeatureRow:
     values: Mapping[str, float]
     missing: tuple[MissingInput, ...]
     uses_moneypuck: bool
+
+
+def feature_name_problem(names: Sequence[str]) -> str | None:
+    """Return why ``names`` is not a usable feature list, or ``None`` when it is."""
+    unknown = [name for name in names if name not in ALL_FEATURE_NAMES]
+    if unknown:
+        return f"unknown feature {unknown[0]!r}; use any of {', '.join(ALL_FEATURE_NAMES)}"
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        return f"feature {repeated[0]!r} is named more than once"
+    return None
 
 
 def _logit(probability: float) -> float:
@@ -176,7 +188,7 @@ def build_features(
     *,
     goalie_mode: GoalieMode,
     catalog: Catalog | None = None,
-    names: Sequence[str] = FEATURES,
+    names: Sequence[str],
 ) -> FeatureRow:
     """Return the features of ``game`` as known at ``as_of``.
 
@@ -185,11 +197,9 @@ def build_features(
     after every game that was over at the cutoff. A caller that builds many rows
     passes one ``catalog`` to reuse.
     """
-    unknown = [name for name in names if name not in ALL_FEATURE_NAMES]
-    if unknown:
-        raise ValueError(
-            f"build_features: unknown feature {unknown[0]!r}; use one of {ALL_FEATURE_NAMES}"
-        )
+    problem = feature_name_problem(names)
+    if problem is not None:
+        raise ValueError(f"build_features: {problem}")
     catalog = player_catalog(conn) if catalog is None else catalog
     cutoff = min(as_of, game.start)
     forms = {
@@ -198,6 +208,11 @@ def build_features(
         if name in names
     }
     gsax, goalie_missing, goalie_used = _goalie_gsax(conn, game, as_of, goalie_mode, catalog)
+    if GOALIE_FEATURE not in names:
+        # The starter notes stay, because a reader wants to know who plays. The goalie form
+        # notes and the MoneyPuck use belong to a model that reads that feature.
+        goalie_missing = [m for m in goalie_missing if m.kind is not MissingKind.GOALIE_FORM]
+        goalie_used = False
     rest, rest_missing = _rest(conn, game)
     # Two teams, so fewer than two gaps means the form was read for at least one team.
     form_used = any(len(gaps) < 2 for _, gaps in forms.values())  # noqa: PLR2004

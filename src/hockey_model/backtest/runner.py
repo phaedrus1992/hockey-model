@@ -21,7 +21,7 @@ from hockey_model.backtest.metrics import (
     log_loss,
     per_game_log_loss,
 )
-from hockey_model.game_model.features import FEATURES, GoalieMode
+from hockey_model.game_model.features import FEATURES, GOALIE_FEATURE, GoalieMode
 from hockey_model.game_model.logistic import LogisticFit, fit_logistic, predict_logistic
 from hockey_model.game_model.seasons import DEFAULT_PLAN, SeasonPlan, in_cohort, scored_label
 from hockey_model.game_model.training import TrainingRow, training_rows
@@ -34,7 +34,6 @@ MONEYPUCK_LEAK_NOTE = (
     "games after the scored seasons, so results that use MoneyPuck data may look better than "
     "they would have then."
 )
-GOALIE_FEATURE = "goalie_gsax"
 GUESS_EQUALS_ACTUAL_NOTE = (
     "No tested feature reads the starting goalie, so the actual run and the guess run are the "
     "same by construction. The equal scores do not show that a wrong goalie costs nothing."
@@ -267,7 +266,8 @@ def _candidate_notes(candidates: Sequence[str]) -> tuple[str, ...]:
 def run_backtest(
     conn: sqlite3.Connection,
     plan: SeasonPlan = DEFAULT_PLAN,
-    candidates: Sequence[str] = FEATURES,
+    *,
+    candidates: Sequence[str],
 ) -> tuple[BacktestReport, list[GameRecord]]:
     """Run the walk-forward backtest on the stored games.
 
@@ -276,8 +276,8 @@ def run_backtest(
     is below zero. The guess run never changes success.
     """
     first, last = plan.fit_first, plan.scored[1]
-    actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in, candidates)
-    guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in, candidates)
+    actual = training_rows(conn, first, last, GoalieMode.ACTUAL, plan.burn_in, names=candidates)
+    guess = training_rows(conn, first, last, GoalieMode.GUESS, plan.burn_in, names=candidates)
     validation, vetoed = _validate(actual, guess, plan, candidates)
     tested = tuple(f for f in candidates if f not in vetoed)
     games = _score_seasons(actual, guess, tested, plan)

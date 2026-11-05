@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from hockey_model.game import Game
 from hockey_model.game_model.elo import EloBook
-from hockey_model.game_model.features import FEATURES, FeatureRow, GoalieMode, build_features
+from hockey_model.game_model.features import FeatureRow, GoalieMode, build_features
 from hockey_model.game_model.seasons import ELO_BURN_IN
 from hockey_model.sources.nhl import GameRow
 from hockey_model.store.reads import LATEST_GAME, final_games_before, player_catalog
@@ -38,7 +38,8 @@ def training_rows(
     last_season: int,
     mode: GoalieMode,
     burn_in: int = ELO_BURN_IN,
-    names: Sequence[str] = FEATURES,
+    *,
+    names: Sequence[str],
 ) -> list[TrainingRow]:
     """Return a row for each final game from ``first_season`` through ``last_season``.
 

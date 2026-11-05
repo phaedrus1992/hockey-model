@@ -396,7 +396,14 @@ class TestRegistryRules:
         _register(registry_dir, {"candidate_features": ["xg_frm"]})
         result = check_all(repo_root=registry_dir.parent)
         assert result["ok"] is False
-        assert "unknown candidate feature(s) xg_frm" in result["errors"][0]
+        assert "unknown feature 'xg_frm'" in result["errors"][0]
+
+    def test_a_repeated_candidate_feature_fails(self, registry_dir: Path):
+        """The checker applies the same rule as the fit command: each feature once."""
+        _register(registry_dir, {"candidate_features": ["rest", "rest"]})
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "'rest' is named more than once" in result["errors"][0]
 
     def test_two_records_cannot_share_a_number(self, registry_dir: Path):
         """The registry number is the record's slot, so a repeat is an error."""

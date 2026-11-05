@@ -32,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Record the DraftKings comparison in the README, the backtest report, and the run report. The model is level with the line in 2024-25 and worse in 2025-26, and it fails the blend gate. [docs:backtest]
 - Move the store to schema version 2, which adds MoneyPuck shot-attempt counts. A version 1 store is refused, so rebuild it on a new path with `hockey-model refresh --backfill-from 2014-10-01`. [feat:store]
+- Require `--features` in `hockey-model fit`. The old default fitted every candidate, including `goalie_gsax`, which the backtest vetoed, and the daily report served that fit. `scripts/daily-prepare.sh` now runs the backtest first and fits on its `live_features`, so a failed joint test serves the Elo alone. [fix:cli]
 
 ### Fixed
 
@@ -43,5 +44,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Print the type and message of an unexpected failure in the store commands. [fix:cli]
 - Note in the backtest report that the goalie guess run has no injury history. [fix:backtest]
 - Allow an hour for the MoneyPuck team file, which is about 130 MB, instead of 15 minutes. [fix:sources]
+- Check a fit before it is saved, accept every supported feature including `attempt_form`, reject a feature named twice, and predict with the features that the loaded fit names. A saved attempt-form fit failed with a `KeyError` at prediction. An Elo-only fit still credits MoneyPuck, since the goal rates use its data. [fix:store]
 
 [Unreleased]: https://github.com/slackworks/hockey-model/commits/main

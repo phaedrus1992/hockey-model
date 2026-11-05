@@ -105,7 +105,12 @@ def test_xg_form_missing_for_one_team(store: sqlite3.Connection) -> None:
     history(store)
     add_game(store, 300, "2026-01-18T00:00", home="NYR", away="MTL")
     row = build_features(
-        store, Game(101, "NYR", AWAY, START), AS_OF, EloBook(), goalie_mode=GoalieMode.GUESS
+        store,
+        Game(101, "NYR", AWAY, START),
+        AS_OF,
+        EloBook(),
+        goalie_mode=GoalieMode.GUESS,
+        names=FEATURES,
     )
     assert row.values["xg_form"] == 0.0
     assert [m.team for m in row.missing if m.kind is MissingKind.XG_FORM] == ["NYR"]
@@ -257,6 +262,7 @@ def test_a_goalie_with_no_nhl_id_reports_goalie_form(store: sqlite3.Connection) 
         AS_OF,
         EloBook(),
         goalie_mode=GoalieMode.READS,
+        names=FEATURES,
     )
     assert any(
         m.kind is MissingKind.GOALIE_FORM and "no NHL id" in m.note and m.team == HOME
