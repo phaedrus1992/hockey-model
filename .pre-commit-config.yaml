@@ -1,3 +1,6 @@
+# A normal `prek install` then installs the pre-push stage too, so the coverage gate runs.
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: https://github.com/editorconfig-checker/editorconfig-checker
     rev: 0adfdb012938ada0cf563a40f2fceaf9466290ca # frozen: v4.0.2
