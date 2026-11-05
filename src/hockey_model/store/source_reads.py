@@ -9,6 +9,8 @@ from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 KNOWN_SOURCES = frozenset(
     {"nhl_scores", "nhl_boxscores", "moneypuck", "espn_starters", "espn_injuries", "daily_faceoff"}
 )
+# A URL whose last this-many reads all failed is a known gap. A refresh skips it and says so.
+ABANDON_AFTER_FAILED_READS = 2
 # The source name of the ESPN injury list. Each good read of the list is one snapshot.
 ESPN_INJURIES = "espn_injuries"
 # How old the newest good read of a live feed may be at a prediction cutoff. The morning run
@@ -73,3 +75,16 @@ def failed_urls(conn: sqlite3.Connection, source: str) -> list[str]:
         (source, source),
     )
     return [url for (url,) in cursor]
+
+
+def abandoned_urls(conn: sqlite3.Connection, source: str) -> frozenset[str]:
+    """Return the URLs of ``source`` whose reads failed ``ABANDON_AFTER_FAILED_READS`` times
+    in a row, with no good read between them."""
+    cursor = conn.execute(
+        "SELECT r.url FROM source_reads r WHERE r.source = ? AND r.ok = 0 AND r.fetched_at >"
+        " COALESCE((SELECT MAX(o.fetched_at) FROM source_reads o"
+        "           WHERE o.source = r.source AND o.url = r.url AND o.ok = 1), '')"
+        " GROUP BY r.url HAVING COUNT(*) >= ?",
+        (source, ABANDON_AFTER_FAILED_READS),
+    )
+    return frozenset(url for (url,) in cursor)

@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # Decide whether this scheduled trigger publishes the daily report.
 #
-# Usage: report-gate.sh [--date YYYY-MM-DD] [--force] [--help]
+# Usage: report-gate.sh [--date YYYY-MM-DD] [--force] [--dry-run] [--help]
 #   --date   Eastern game day to check. Default: the game day that holds now.
 #   --force  Publish even outside the trigger slot. A day that is already
 #            published is still skipped.
+#   --dry-run  Build a report that the caller does not publish. This implies --force,
+#            and the published-release check is skipped, so a published day is due again.
 #
-# Prints one JSON object on stdout: {"due": bool, "tag": str, "reason": str, "date": str}.
+# Prints one JSON object on stdout:
+#   {"due": bool, "publish": bool, "tag": str, "reason": str, "date": str}.
+# "due" says the report is built. "publish" says the report becomes a release, and it is
+# false for --dry-run.
 # Exits non-zero when the schedule payload is malformed or the release lookup fails.
 set -euo pipefail
 
 day=""
 force=false
+dry_run=false
 
 usage() {
   sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
@@ -28,6 +34,11 @@ while (($# > 0)); do
       shift 2
       ;;
     --force)
+      force=true
+      shift
+      ;;
+    --dry-run)
+      dry_run=true
       force=true
       shift
       ;;
@@ -68,7 +79,9 @@ if [[ "$games" == "0" ]]; then
 fi
 
 reason="not-due"
-if [[ "$due" == "true" ]]; then
+if [[ "$due" == "true" && "$dry_run" == true ]]; then
+  reason="dry-run"
+elif [[ "$due" == "true" ]]; then
   reason="due"
   # Ask for the one tag. "release not found" means the day is not published yet; any
   # other failure (auth, network) stops the run.
@@ -82,5 +95,9 @@ if [[ "$due" == "true" ]]; then
   fi
 fi
 
-jq -n --argjson due "$due" --arg tag "$tag" --arg reason "$reason" --arg date "$day" \
-  '{due: $due, tag: $tag, reason: $reason, date: $date}'
+publish="$due"
+if [[ "$dry_run" == true ]]; then
+  publish="false"
+fi
+jq -n --argjson due "$due" --argjson publish "$publish" --arg tag "$tag" --arg reason "$reason" \
+  --arg date "$day" '{due: $due, publish: $publish, tag: $tag, reason: $reason, date: $date}'

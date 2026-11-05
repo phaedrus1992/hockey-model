@@ -13,10 +13,17 @@ from hockey_model.sources.nhl import (
     score_day_url,
 )
 from hockey_model.sources.shape_errors import SourceParseError
+from hockey_model.store.db import StoreError
 from hockey_model.store.nhl_writes import games_missing_boxscore, write_boxscore, write_games
 from hockey_model.store.reads import game_row
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
-from hockey_model.store.source_reads import failed_since, failed_urls, last_ok_read, newest_read
+from hockey_model.store.source_reads import (
+    abandoned_urls,
+    failed_since,
+    failed_urls,
+    last_ok_read,
+    newest_read,
+)
 from hockey_model.store.timestamps import iso_utc, parse_iso_utc
 
 SCORES = "nhl_scores"
@@ -51,10 +58,21 @@ MAX_UNRESOLVED_DAYS = 10
 _UNRESOLVED_SHOWN = 5
 
 
+def _day_of(url: str) -> date:
+    """Return the day that a score URL reads."""
+    try:
+        return date.fromisoformat(url.rsplit("/", 1)[1])
+    except ValueError as exc:
+        raise StoreError(
+            f"source_reads holds {url!r} for {SCORES}, which is not a score day"
+        ) from exc
+
+
 def _failed_days(run: RefreshRun) -> list[date]:
-    """Return the recent score days whose newest read failed."""
+    """Return the recent score days whose newest read failed, except the known gaps."""
     oldest = game_day_of(run.now - FAILED_DAY_RETRY_WINDOW)
-    days = (date.fromisoformat(url.rsplit("/", 1)[1]) for url in failed_urls(run.conn, SCORES))
+    skipped = abandoned_urls(run.conn, SCORES)
+    days = (_day_of(url) for url in failed_urls(run.conn, SCORES) if url not in skipped)
     return [day for day in days if day >= oldest]
 
 
@@ -123,6 +141,12 @@ def _note_unresolved(run: RefreshRun) -> None:
     )
 
 
+def _describe(items: list[date], shown: int = 5) -> str:
+    """Name the first few days of a list, and count the rest."""
+    names = ", ".join(day.isoformat() for day in items[:shown])
+    return names if len(items) <= shown else f"{names} and {len(items) - shown} more"
+
+
 def score_days(run: RefreshRun) -> None:
     """Read each score day from the first day through the schedule horizon.
 
@@ -135,12 +159,18 @@ def score_days(run: RefreshRun) -> None:
     window = (first + timedelta(days=n) for n in range((last_day - first).days + 1))
     worklist = sorted({*due, *window})
     failures = 0
+    # A day that failed in every recent read is a known gap. Reading it again would fail
+    # the refresh for good, and so a backfill would never finish.
+    skipped = sorted(_day_of(url) for url in abandoned_urls(run.conn, SCORES))
+    if skipped:
+        run.notes.append(f"{SCORES}: skipped {_describe(skipped)}, which failed in every read")
+    gaps = set(skipped)
     for index, day in enumerate(worklist):
         if failures >= MAX_UNIT_FAILURES:
             left = len(worklist) - index
             run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
             break
-        if day not in due and _day_complete(run, day):
+        if day in gaps or (day not in due and _day_complete(run, day)):
             failures = 0
             continue
 
@@ -175,7 +205,10 @@ def boxscores(run: RefreshRun) -> None:
     """Read the boxscore of each final game that has none. Each game is its own unit."""
     failures = 0
     skipped = 0
-    waiting = games_missing_boxscore(run.conn)
+    gaps = abandoned_urls(run.conn, BOXSCORES)
+    waiting = [g for g in games_missing_boxscore(run.conn) if boxscore_url(g) not in gaps]
+    if gaps:
+        run.notes.append(f"{BOXSCORES}: {len(gaps)} games skipped, because every read failed")
     for index, game_id in enumerate(waiting):
         if failures >= MAX_UNIT_FAILURES:
             left = len(waiting) - index
