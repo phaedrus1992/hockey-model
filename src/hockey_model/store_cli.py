@@ -11,7 +11,12 @@ from hockey_model.backtest.runner import run_backtest, write_game_records
 from hockey_model.daily_report import build_report, model_identity, report_tag, write_report
 from hockey_model.game import game_win_probability
 from hockey_model.game_day import game_day_of, game_day_window
-from hockey_model.game_model.features import ATTEMPT_FEATURES, FEATURES, GoalieMode
+from hockey_model.game_model.features import (
+    ALL_FEATURE_NAMES,
+    ATTEMPT_FEATURES,
+    FEATURES,
+    GoalieMode,
+)
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
 from hockey_model.game_model.seasons import FIT_FIRST
@@ -57,8 +62,11 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
     )
     fit.add_argument(
         "--features",
-        default=",".join(FEATURES),
-        help='comma-separated features; "" fits the Elo alone',
+        default=None,
+        help=(
+            "comma-separated features, required. Use the live_features of the latest backtest "
+            'report; "" fits the Elo alone, which is the result of a failed joint test'
+        ),
     )
     backtest = add_parser("backtest", help="score the model on the stored games")
     backtest.add_argument(
@@ -139,13 +147,23 @@ def _refresh(args: argparse.Namespace) -> tuple[object, int]:
     return _report_json(report), 1 if report.errors else 0
 
 
-def _feature_names(text: str) -> tuple[str, ...]:
+def _feature_names(text: str | None) -> tuple[str, ...]:
+    """Return the features of a fit. The caller names them: no default is approved."""
+    if text is None:
+        raise HockeyModelError(
+            "fit: --features is required. Pass the live_features of the latest backtest "
+            'report, or "" for the Elo alone. A default would serve a feature that the '
+            "backtest may have vetoed"
+        )
     names = tuple(name.strip() for name in text.split(",") if name.strip())
-    unknown = [name for name in names if name not in FEATURES]
+    unknown = [name for name in names if name not in ALL_FEATURE_NAMES]
     if unknown:
         raise HockeyModelError(
-            f"fit: unknown feature {unknown[0]!r}; use any of {', '.join(FEATURES)}"
+            f"fit: unknown feature {unknown[0]!r}; use any of {', '.join(ALL_FEATURE_NAMES)}"
         )
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        raise HockeyModelError(f"fit: feature {repeated[0]!r} is named more than once")
     return names
 
 
@@ -157,7 +175,7 @@ def _fit(args: argparse.Namespace) -> tuple[object, int]:
     conn = connect(db_path_from_env(os.environ))
     try:
         if features:
-            rows = training_rows(conn, FIT_FIRST, through, GoalieMode.ACTUAL)
+            rows = training_rows(conn, FIT_FIRST, through, GoalieMode.ACTUAL, names=features)
             if not rows:
                 raise HockeyModelError(
                     f"fit through {through}: no games in the store from {FIT_FIRST}; "

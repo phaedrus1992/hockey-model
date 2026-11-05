@@ -243,7 +243,7 @@ def test_cli_fit_with_no_games_says_to_refresh(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
-    assert cli.main(["fit", "--through-season", "20152016"]) == 2
+    assert cli.main(["fit", "--through-season", "20152016", "--features", "rest"]) == 2
     assert "hockey-model refresh" in capsys.readouterr().err
 
 
@@ -274,13 +274,80 @@ def test_cli_fit_with_empty_features_saves_the_elo_alone(
     assert out["diagnostics"] is None
 
 
+def test_cli_fit_without_features_is_an_argument_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """No default feature list: a fit never silently includes a vetoed candidate."""
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["fit", "--through-season", "20152016"]) == 2
+    err = capsys.readouterr().err
+    assert "--features" in err
+    assert "backtest" in err
+    conn = connect(db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM model_fits").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_cli_fit_rejects_a_feature_named_twice(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    code = cli.main(["fit", "--through-season", "20152016", "--features", "rest,rest"])
+    assert code == 2
+    assert "'rest'" in capsys.readouterr().err
+
+
+def test_cli_fit_accepts_the_attempt_form_research_recipe(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A research fit stays possible, and the saved fit predicts."""
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["fit", "--through-season", "20152016", "--features", "attempt_form"]) == 0
+    capsys.readouterr()
+    assert cli.main(["game", "2025020001"]) == 0
+
+
+def test_the_selected_recipe_leaves_the_vetoed_feature_out_of_the_served_fit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The quick start: the recipe from the backtest report is the fit the model serves."""
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["fit", "--through-season", "20152016", "--features", "xg_form,rest"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["features"] == ["xg_form", "rest"]
+    assert "goalie_gsax" not in out["features"]
+    assert cli.main(["game", "2025020001"]) == 0
+
+
+def test_an_empty_live_recipe_serves_the_raw_elo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A failed joint test gives live_features of (). That fit is the fixed Elo, not a refit."""
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["fit", "--through-season", "20152016", "--features", ""]) == 0
+    fit = json.loads(capsys.readouterr().out)
+    assert (fit["features"], fit["elo_weight"], fit["intercept"]) == ([], 1.0, 0.0)
+    assert fit["games"] == 0
+    assert cli.main(["game", "2025020001"]) == 0
+
+
 def test_cli_game_prints_prediction(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     db = tmp_path / "store.db"
     _store_with_games(db)
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
-    assert cli.main(["fit", "--through-season", "20152016"]) == 0
+    assert cli.main(["fit", "--through-season", "20152016", "--features", "rest"]) == 0
     capsys.readouterr()
     assert cli.main(["game", "2025020001", "--level", "0.9"]) == 0
     out = json.loads(capsys.readouterr().out)
