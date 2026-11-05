@@ -131,6 +131,25 @@ def test_gate_forwards_force(fakes: Path, tmp_path: Path) -> None:
     assert f"uv run hockey-model report-due --date {DAY} --force" in _calls(tmp_path)
 
 
+def test_gate_dry_run_builds_a_published_day_without_a_release_lookup(
+    fakes: Path, tmp_path: Path
+) -> None:
+    env = _env(fakes, tmp_path, FAKE_RELEASES=f"{TAG}\n")
+    result = _run("report-gate.sh", env, "--date", DAY, "--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"due": True, "tag": TAG, "reason": "dry-run", "date": DAY}
+    assert f"uv run hockey-model report-due --date {DAY} --force" in _calls(tmp_path)
+    assert not any(line.startswith("gh ") for line in _calls(tmp_path))
+
+
+def test_gate_dry_run_still_skips_a_day_that_is_not_due(fakes: Path, tmp_path: Path) -> None:
+    due = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 3})
+    result = _run(
+        "report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=due), "--date", DAY, "--dry-run"
+    )
+    assert json.loads(result.stdout)["reason"] == "not-due"
+
+
 def test_gate_fails_when_the_release_lookup_fails_for_another_reason(
     fakes: Path, tmp_path: Path
 ) -> None:
