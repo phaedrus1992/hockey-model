@@ -21,11 +21,19 @@ usage() {
 while (($# > 0)); do
   case "$1" in
     --date)
-      day="${2:?publish-daily-report: --date needs a value YYYY-MM-DD; see --help}"
+      if (($# < 2)); then
+        echo "publish-daily-report: --date needs a value YYYY-MM-DD; see --help" >&2
+        exit 2
+      fi
+      day="$2"
       shift 2
       ;;
     --report-dir)
-      report_dir="${2:?publish-daily-report: --report-dir needs a directory; see --help}"
+      if (($# < 2)); then
+        echo "publish-daily-report: --report-dir needs a directory; see --help" >&2
+        exit 2
+      fi
+      report_dir="$2"
       shift 2
       ;;
     -h | --help)

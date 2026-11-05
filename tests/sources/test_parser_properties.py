@@ -201,3 +201,20 @@ def test_a_moneypuck_number_with_other_characters_is_rejected(text: str) -> None
         return
     with pytest.raises(NAMED_ERRORS):
         parse_team_games(_team_text_with(xGoalsFor=text))
+
+
+@SLOW
+@given(st.data())
+def test_an_accepted_boxscore_has_skaters_and_one_starting_goalie_for_each_side(
+    data: st.DataObject,
+) -> None:
+    payload = load("nhl/boxscore_2025020709.json")
+    path = data.draw(st.sampled_from(containers(payload)))
+    mutated = replaced(payload, path, data.draw(JSON_VALUES))
+    try:
+        rows = parse_boxscore(mutated)
+    except NAMED_ERRORS:
+        return
+    for team in (rows.home, rows.away):
+        assert any(s.team == team for s in rows.skaters)
+        assert sum(g.started for g in rows.goalies if g.team == team) == 1

@@ -235,3 +235,55 @@ def test_parse_boxscore_rejects_two_starters_for_one_team() -> None:
         goalie["starter"] = True
     with pytest.raises(SourceParseError, match="starting goalies"):
         parse_boxscore(payload)
+
+
+def _side(payload: dict, key: str) -> dict:
+    return payload["playerByGameStats"][key]
+
+
+def test_parse_boxscore_names_the_declared_teams() -> None:
+    payload = load(f"boxscore_{BOX_ID}.json")
+    rows = parse_boxscore(payload)
+    assert (rows.home, rows.away) == (payload["homeTeam"]["abbrev"], payload["awayTeam"]["abbrev"])
+    assert rows.home != rows.away
+
+
+@pytest.mark.parametrize("key", ["homeTeam", "awayTeam"])
+def test_parse_boxscore_rejects_a_side_with_no_players(key: str) -> None:
+    """The team comes from the declared header, so an empty side cannot hide."""
+    payload = load(f"boxscore_{BOX_ID}.json")
+    team = payload[key]["abbrev"]
+    _side(payload, key).update({"forwards": [], "defense": [], "goalies": []})
+    with pytest.raises(SourceParseError, match=f"no skater rows for {team}"):
+        parse_boxscore(payload)
+
+
+@pytest.mark.parametrize("key", ["homeTeam", "awayTeam"])
+def test_parse_boxscore_rejects_a_side_with_goalies_but_no_skaters(key: str) -> None:
+    payload = load(f"boxscore_{BOX_ID}.json")
+    team = payload[key]["abbrev"]
+    _side(payload, key).update({"forwards": [], "defense": []})
+    with pytest.raises(SourceParseError, match=f"no skater rows for {team}"):
+        parse_boxscore(payload)
+
+
+def test_parse_boxscore_rejects_both_sides_empty() -> None:
+    payload = load(f"boxscore_{BOX_ID}.json")
+    for key in ("homeTeam", "awayTeam"):
+        _side(payload, key).update({"forwards": [], "defense": [], "goalies": []})
+    with pytest.raises(SourceParseError, match="no skater rows for"):
+        parse_boxscore(payload)
+
+
+def test_parse_boxscore_keeps_an_unused_backup_goalie() -> None:
+    payload = load(f"boxscore_{BOX_ID}.json")
+    rows = parse_boxscore(payload)
+    assert any(not goalie.started for goalie in rows.goalies)
+    assert {goalie.team for goalie in rows.goalies} == {rows.home, rows.away}
+
+
+def test_parse_boxscore_rejects_a_game_that_plays_itself() -> None:
+    payload = load(f"boxscore_{BOX_ID}.json")
+    payload["awayTeam"]["abbrev"] = payload["homeTeam"]["abbrev"]
+    with pytest.raises(SourceParseError, match="names .* as both teams"):
+        parse_boxscore(payload)

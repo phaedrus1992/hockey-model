@@ -49,7 +49,9 @@ def kinds(missing) -> list[MissingKind]:
 
 def test_game_goalie_wins(season: sqlite3.Connection) -> None:
     player = Player("x", None, None, "Given Goalie", frozenset({Slot.G}), "TOR")
-    given = GoalieStart(player, StarterStatus.CONFIRMED, StarterSource.ESPN, AS_OF)
+    given = GoalieStart(
+        player, StarterStatus.CONFIRMED, StarterSource.ESPN, AS_OF - timedelta(hours=1)
+    )
     chosen = Game(100, "TOR", "BOS", START, home_goalie=given)
     start, missing = resolve_goalie(season, chosen, "TOR", AS_OF, use_reads=True)
     assert start is given
@@ -274,3 +276,12 @@ def test_a_skater_injury_does_not_match_goalies_of_other_teams(season: sqlite3.C
     start, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=False)
     assert names(start) == "C. Ingram"
     assert not any("an injured player is unclear" in m.note for m in missing)
+
+
+def test_a_stale_injury_list_adds_a_note_to_the_guess(season: sqlite3.Connection) -> None:
+    add_injury(season, "TOR", "C. Ingram", "Out", "2026-01-10T00:00")
+    season.commit()
+    start, missing = resolve_goalie(season, game(), "TOR", AS_OF, use_reads=False)
+    # The old list is not used, so the guess is still Ingram, and the note says why.
+    assert start is not None and start.player.full_name == "C. Ingram"
+    assert any("injury list" in m.note for m in missing)

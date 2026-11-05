@@ -9,6 +9,7 @@ Covers:
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -20,7 +21,9 @@ from hockey_model.game_model.seasons import (
     exploration_plan,
     in_cohort,
     scored_label,
+    season_code,
     season_of,
+    season_start_year,
 )
 from hockey_model.sources.nhl import GameRow
 
@@ -152,3 +155,22 @@ def test_a_confirmation_cohort_never_holds_a_game_on_or_before_the_cutoff(
         assert game.start > cutoff
         assert game.season >= CONFIRMATION_START
         assert game.game_type == REGULAR_SEASON_TYPE
+
+
+@pytest.mark.parametrize(
+    ("day", "start_year"),
+    [
+        (date(2026, 6, 30), 2025),
+        (date(2026, 7, 1), 2025),
+        (date(2026, 8, 31), 2025),
+        (date(2026, 9, 1), 2026),
+        (date(2027, 1, 9), 2026),
+    ],
+)
+def test_season_start_year_and_code_share_one_boundary(day: date, start_year: int) -> None:
+    assert season_start_year(day) == start_year
+    assert season_of(day) == season_code(start_year)
+
+
+def test_season_code_writes_both_years() -> None:
+    assert season_code(2026) == 20262027

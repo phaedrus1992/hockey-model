@@ -9,13 +9,16 @@ from itertools import count as count_from
 from pathlib import Path
 
 import pytest
+from seeding import add_game, utc
 
 from hockey_model.sources.errors import SourceError
 from hockey_model.sources.http import HttpClient
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT, TEAM_GAMES_URL, goalie_games_url
+from hockey_model.sources.nhl import score_day_url
 from hockey_model.store.db import connect
+from hockey_model.store.nhl_writes import games_missing_boxscore
 from hockey_model.store.refresh import refresh, refresh_starters
-from hockey_model.store.refresh_other import current_season_start
+from hockey_model.store.refresh_nhl import MAX_UNRESOLVED_DAYS, UNRESOLVED_RETRY_AFTER
 from hockey_model.store.source_reads import record_read
 from hockey_model.types import HockeyModelError
 
@@ -28,6 +31,13 @@ ESPN = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl"
 
 def fixture(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
+
+
+MAIN_GAME = 2025020697
+SCORE_TEAMS = {
+    game["id"]: (game["homeTeam"]["abbrev"], game["awayTeam"]["abbrev"])
+    for game in json.loads(fixture("nhl/score_2026-01-10.json"))["games"]
+}
 
 
 class FakeClient(HttpClient):
@@ -49,9 +59,7 @@ class FakeClient(HttpClient):
         if url.startswith(SCORE_URL):
             return self._score_day(url)
         if url.startswith(BOX_URL):
-            payload = json.loads(fixture("nhl/boxscore_2025020709.json"))
-            payload["id"] = int(url.split("/")[-2])
-            return json.dumps(payload).encode()
+            return self._boxscore(int(url.split("/")[-2]))
         if url == TEAM_GAMES_URL:
             return fixture("moneypuck/all_teams_sample.csv")
         if "seasonPlayersSummary" in url:
@@ -63,6 +71,25 @@ class FakeClient(HttpClient):
         if "dailyfaceoff" in url:
             return fixture("daily_faceoff/starting_goalies.html")
         raise SourceError(source, url, "HTTP 404")
+
+    @staticmethod
+    def _boxscore(game_id: int) -> bytes:
+        """The fixture boxscore, with the teams of the stored game as a real response has.
+
+        Each game but the main one gets its own players, because one player is on one team
+        in one read.
+        """
+        payload = json.loads(fixture("nhl/boxscore_2025020709.json"))
+        payload["id"] = game_id
+        if game_id in SCORE_TEAMS:
+            payload["homeTeam"]["abbrev"], payload["awayTeam"]["abbrev"] = SCORE_TEAMS[game_id]
+        if game_id != MAIN_GAME:
+            for side in payload["playerByGameStats"].values():
+                for group in side.values():
+                    for entry in group:
+                        entry["playerId"] += (game_id % 1000) * 100_000_000
+                        entry["name"]["default"] += f" {game_id}"
+        return json.dumps(payload).encode()
 
     @staticmethod
     def _score_day(url: str) -> bytes:
@@ -252,19 +279,6 @@ def test_refresh_uses_clock_for_each_read(conn: sqlite3.Connection) -> None:
     assert len(stamps) > 1
 
 
-@pytest.mark.parametrize(
-    ("moment", "season"),
-    [
-        (datetime(2026, 1, 10, tzinfo=UTC), 2025),
-        (datetime(2026, 6, 30, tzinfo=UTC), 2025),
-        (datetime(2026, 7, 1, tzinfo=UTC), 2026),
-        (datetime(2026, 11, 3, tzinfo=UTC), 2026),
-    ],
-)
-def test_current_season_start(moment: datetime, season: int) -> None:
-    assert current_season_start(moment) == season
-
-
 def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
     conn: sqlite3.Connection,
 ) -> None:
@@ -274,7 +288,7 @@ def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
         record_read(conn, "moneypuck", goalie_games_url(season), mid_season)
     conn.commit()
     client = FakeClient()
-    refresh(conn, client, now=datetime(2026, 7, 2, tzinfo=UTC), backfill_from=date(2026, 7, 1))
+    refresh(conn, client, now=datetime(2026, 12, 1, tzinfo=UTC), backfill_from=date(2026, 12, 1))
     requested = [url for url in client.urls if "peter-tanner" in url]
     assert goalie_games_url(2025) in requested
     assert goalie_games_url(2026) in requested
@@ -282,7 +296,7 @@ def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
 
 
 def test_a_season_read_after_it_ended_is_not_read_again(conn: sqlite3.Connection) -> None:
-    after_season = datetime(2026, 7, 2, tzinfo=UTC)
+    after_season = datetime(2026, 9, 2, tzinfo=UTC)
     record_read(conn, "moneypuck", TEAM_GAMES_URL, after_season)
     for season in range(2014, 2027):
         record_read(conn, "moneypuck", goalie_games_url(season), after_season)
@@ -478,3 +492,225 @@ def test_failed_days_apart_do_not_stop_the_refresh_before_today(conn: sqlite3.Co
     client = FakeClient(_failing_days(*days))
     refresh(conn, client, now=NOW + timedelta(hours=1))
     assert "2026-01-10" in _score_requests(client)
+
+
+def _fresh_moneypuck(conn: sqlite3.Connection, now: datetime, last_season: int) -> None:
+    """Record fresh reads of the team file and every goalie file through ``last_season``."""
+    record_read(conn, "moneypuck", TEAM_GAMES_URL, now - timedelta(days=1))
+    for season in range(2014, last_season + 1):
+        record_read(conn, "moneypuck", goalie_games_url(season), now - timedelta(days=1))
+    conn.commit()
+
+
+@pytest.mark.parametrize(
+    ("moment", "new_season_requested"),
+    [
+        (datetime(2026, 7, 15, tzinfo=UTC), False),
+        (datetime(2026, 8, 31, tzinfo=UTC), False),
+        (datetime(2026, 9, 1, tzinfo=UTC), True),
+    ],
+)
+def test_the_new_goalie_file_is_read_from_the_shared_season_boundary(
+    conn: sqlite3.Connection, moment: datetime, new_season_requested: bool
+) -> None:
+    """Refresh counts the new season from the same boundary as the cohorts and the fit."""
+    _fresh_moneypuck(conn, moment, 2025)
+    client = FakeClient()
+    refresh(conn, client, now=moment, backfill_from=date(2026, 1, 10))
+    assert (goalie_games_url(2026) in client.urls) is new_season_requested
+
+
+def _box_url(game_id: int) -> str:
+    return f"{BOX_URL}{game_id}/boxscore"
+
+
+def _boxscore_with_teams(game_id: int, home: str, away: str) -> bytes:
+    payload = json.loads(fixture("nhl/boxscore_2025020709.json"))
+    payload["id"] = game_id
+    payload["homeTeam"]["abbrev"], payload["awayTeam"]["abbrev"] = home, away
+    return json.dumps(payload).encode()
+
+
+GAME_ID = MAIN_GAME
+
+
+@pytest.mark.parametrize(
+    ("swap", "label"),
+    [
+        (lambda home, away: (away, home), "swapped home and away"),
+        (lambda home, away: (home, "VAN"), "wrong away team"),
+        (lambda home, away: ("VAN", away), "wrong home team"),
+    ],
+)
+def test_a_boxscore_for_other_teams_is_rejected_and_writes_nothing(
+    conn: sqlite3.Connection, swap, label: str
+) -> None:
+    home, away = SCORE_TEAMS[GAME_ID]
+    wrong = _boxscore_with_teams(GAME_ID, *swap(home, away))
+    client = FakeClient({_box_url(GAME_ID): wrong})
+    report = refresh(conn, client, now=NOW, backfill_from=date(2026, 1, 10))
+    assert any(f"{GAME_ID}" in str(error) and "names" in str(error) for error in report.errors)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM goalie_games WHERE game_id = ?", (GAME_ID,)
+    ).fetchone() == (0,)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM skater_games WHERE game_id = ?", (GAME_ID,)
+    ).fetchone() == (0,)
+    failed = conn.execute(
+        "SELECT ok FROM source_reads WHERE source = 'nhl_boxscores' AND url = ?",
+        (_box_url(GAME_ID),),
+    ).fetchall()
+    assert (0,) in failed
+    assert GAME_ID in games_missing_boxscore(conn)
+
+
+def test_a_boxscore_for_the_stored_teams_is_accepted(conn: sqlite3.Connection) -> None:
+    report = refresh(conn, FakeClient(), now=NOW, backfill_from=date(2026, 1, 10))
+    assert report.errors == ()
+    assert GAME_ID not in games_missing_boxscore(conn)
+
+
+def test_a_partial_stored_game_is_repaired_and_a_failed_repair_keeps_the_old_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    refresh(conn, FakeClient(), now=NOW, backfill_from=date(2026, 1, 10))
+    home, away = SCORE_TEAMS[GAME_ID]
+    # An old partial record: the away side's rows are gone.
+    conn.execute("DELETE FROM goalie_games WHERE game_id = ? AND team = ?", (GAME_ID, away))
+    conn.execute("DELETE FROM skater_games WHERE game_id = ? AND team = ?", (GAME_ID, away))
+    conn.commit()
+    assert GAME_ID in games_missing_boxscore(conn)
+    kept = conn.execute(
+        "SELECT * FROM skater_games WHERE game_id = ? ORDER BY nhl_id", (GAME_ID,)
+    ).fetchall()
+
+    later = NOW + timedelta(days=2)
+    bad = _boxscore_with_teams(GAME_ID, away, home)
+    refresh(conn, FakeClient({_box_url(GAME_ID): bad}), now=later)
+    assert (
+        conn.execute(
+            "SELECT * FROM skater_games WHERE game_id = ? ORDER BY nhl_id", (GAME_ID,)
+        ).fetchall()
+        == kept
+    )
+
+    refresh(conn, FakeClient(), now=later + timedelta(days=2))
+    assert GAME_ID not in games_missing_boxscore(conn)
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM skater_games WHERE game_id = ? AND team = ?", (GAME_ID, away)
+        ).fetchone()[0]
+        > 0
+    )
+
+
+def _score_payload(game_id: int, day: str, state: str, home: str, away: str) -> bytes:
+    """A score day with one game, built from a fixture game."""
+    payload = json.loads(fixture("nhl/score_2026-01-10.json"))
+    game = copy.deepcopy(payload["games"][0])
+    game["id"] = game_id
+    game["gameState"] = state
+    game["gameDate"] = day
+    game["startTimeUTC"] = f"{day}T18:00:00Z"
+    game["homeTeam"]["abbrev"], game["awayTeam"]["abbrev"] = home, away
+    payload["games"] = [game]
+    return json.dumps(payload).encode()
+
+
+def _unresolved_store(conn: sqlite3.Connection) -> None:
+    """A LIVE game on Jan 5 that a later read marked complete, then a newer final on Jan 9."""
+    add_game(conn, 9001, "2026-01-05T18:00", state="LIVE", fetched_at=utc("2026-01-05T20:00"))
+    record_read(conn, "nhl_scores", score_day_url(date(2026, 1, 5)), utc("2026-01-08T00:00"))
+    add_game(conn, 9002, "2026-01-09T18:00", state="OFF", fetched_at=utc("2026-01-10T00:00"))
+    conn.commit()
+
+
+def _requests_for(client: FakeClient, day: date) -> int:
+    return client.urls.count(score_day_url(day))
+
+
+def test_an_old_unresolved_game_is_read_again_after_newer_finals(conn: sqlite3.Connection) -> None:
+    _unresolved_store(conn)
+    day_url = score_day_url(date(2026, 1, 5))
+    # The fake serves the fixture boxscore, whose teams are EDM at LAK.
+    overrides: dict[str, bytes | Exception] = {
+        day_url: _score_payload(9001, "2026-01-05", "OFF", "EDM", "LAK"),
+    }
+    client = FakeClient(overrides)
+    report = refresh(conn, client, now=NOW)
+    # Game 9002 is seeded without a boxscore, and the fixture does not match its teams.
+    assert not [error for error in report.errors if "9001" in str(error)]
+    assert _requests_for(client, date(2026, 1, 5)) == 1
+    (state,) = conn.execute("SELECT state FROM latest_games WHERE game_id = 9001").fetchone()
+    assert state == "OFF"
+    assert 9001 not in games_missing_boxscore(conn)
+
+
+def test_a_day_with_no_unresolved_game_is_not_read_again(conn: sqlite3.Connection) -> None:
+    add_game(conn, 9001, "2026-01-05T18:00", state="OFF", fetched_at=utc("2026-01-05T23:00"))
+    record_read(conn, "nhl_scores", score_day_url(date(2026, 1, 5)), utc("2026-01-08T00:00"))
+    add_game(conn, 9002, "2026-01-09T18:00", state="OFF", fetched_at=utc("2026-01-10T00:00"))
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=NOW)
+    assert _requests_for(client, date(2026, 1, 5)) == 0
+
+
+def test_an_unresolved_game_waits_out_a_cooldown_between_reads(conn: sqlite3.Connection) -> None:
+    _unresolved_store(conn)
+    still_live = _score_payload(9001, "2026-01-05", "LIVE", "TOR", "BOS")
+    overrides: dict[str, bytes | Exception] = {score_day_url(date(2026, 1, 5)): still_live}
+    first = FakeClient(overrides)
+    refresh(conn, first, now=NOW)
+    assert _requests_for(first, date(2026, 1, 5)) == 1
+
+    soon = FakeClient(overrides)
+    refresh(conn, soon, now=NOW + timedelta(hours=1))
+    assert _requests_for(soon, date(2026, 1, 5)) == 0
+
+    later = FakeClient(overrides)
+    refresh(conn, later, now=NOW + UNRESOLVED_RETRY_AFTER + timedelta(hours=1))
+    assert _requests_for(later, date(2026, 1, 5)) == 1
+
+
+def test_an_unresolved_game_that_stays_empty_is_listed_not_dropped(
+    conn: sqlite3.Connection,
+) -> None:
+    _unresolved_store(conn)
+    report = refresh(conn, FakeClient(), now=NOW)
+    assert any("not final" in note and "9001" in note for note in report.notes)
+    (state,) = conn.execute("SELECT state FROM latest_games WHERE game_id = 9001").fetchone()
+    assert state == "LIVE"
+
+
+def test_a_run_reads_a_bounded_number_of_unresolved_days(conn: sqlite3.Connection) -> None:
+    for offset in range(MAX_UNRESOLVED_DAYS + 5):
+        day = date(2025, 12, 1) + timedelta(days=offset)
+        add_game(
+            conn,
+            8000 + offset,
+            f"{day.isoformat()}T18:00",
+            state="LIVE",
+            fetched_at=utc(f"{day.isoformat()}T20:00"),
+        )
+        record_read(
+            conn,
+            "nhl_scores",
+            score_day_url(day),
+            utc(f"{day.isoformat()}T00:00") + timedelta(days=2),
+        )
+    add_game(conn, 9002, "2026-01-09T18:00", state="OFF", fetched_at=utc("2026-01-10T00:00"))
+    conn.commit()
+    client = FakeClient()
+    refresh(conn, client, now=NOW)
+    old_days = [
+        u for u in client.urls if u.startswith(SCORE_URL) and u[len(SCORE_URL) :] < "2026-01-08"
+    ]
+    assert len(old_days) == MAX_UNRESOLVED_DAYS
+
+
+def test_an_explicit_backfill_reads_an_old_unresolved_day(conn: sqlite3.Connection) -> None:
+    _unresolved_store(conn)
+    client = FakeClient()
+    refresh(conn, client, now=NOW, backfill_from=date(2026, 1, 5))
+    assert _requests_for(client, date(2026, 1, 5)) == 1

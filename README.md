@@ -48,6 +48,8 @@ result = matchup(home_roster, away_roster, matchup_model)
 print(result.home_win, result.away_win)
 ```
 
+Every public entry point checks what a model returns before it returns it: a projection must be a `Projection` at the requested level with `low <= point <= high`, a count or goals-against average cannot be negative, and a fractional rate or a probability must be in [0, 1].
+A bad result raises `ProjectionError` (or `ProbabilityError` for a probability), and the library never clamps it.
 The player, team, and matchup model protocols contain no production model or
 data-source choice. An embedding application supplies those adapters.
 `FixedStatModel` is available for deterministic examples and tests.
@@ -81,6 +83,9 @@ A fitted logistic regression sets the weights.
 A caller must never treat such a result as a pregame read.
 The starting goalie comes from the first confirmed ESPN or Daily Faceoff read, then the newest likely read, then the goalie with the most recent starts.
 The result lists a goalie that no source confirmed.
+`degraded_inputs` lists each form feature of the fit that was set to the neutral value `NEUTRAL_FORM`, because a team had no MoneyPuck games before the game.
+A form that was measured, even when it measured zero, is not listed.
+The command line prints the same field, and each game in the daily report JSON carries it.
 
 The model uses no price data.
 It does not say whether the model beats a betting market.
@@ -99,11 +104,14 @@ HOCKEY_MODEL_DB=~/.cache/hockey-model/store.db hockey-model game 2026020236
 HOCKEY_MODEL_DB=~/.cache/hockey-model/store.db hockey-model backtest --games-out games.csv
 ```
 
-- `refresh` reads every source and appends each read with its fetch time. It exits 1 when a source failed, and it prints what each source wrote, the errors, the credits, and `backfill_complete`. The first backfill makes about 16,000 NHL requests at two a second, so it takes hours. A backfill reads one year at a time, newest year first. `--budget-seconds N` stops it after N seconds, and `backfill_complete` is then false. Run it again after a stop or an error: it skips what it already has.
+- `refresh` reads every source and appends each read with its fetch time. It exits 1 when a source failed, and it prints what each source wrote, the errors, the credits, and `backfill_complete`. The first backfill makes about 16,000 NHL requests at two a second, so it takes hours. A backfill reads one year at a time, newest year first. `--budget-seconds N` stops it after N seconds, and `backfill_complete` is then false. Run it again after a stop or an error: it skips what it already has. A game that started long ago and is still not final stays in the worklist: its score day is read again after a wait, at most `MAX_UNRESOLVED_DAYS` days in one run, and the notes name the game.
 - `refresh --starters-only` reads only the schedule, the goalie sources, and the injuries. The report run uses it after the morning refresh.
 - `fit --through-season YYYYYYYY --features a,b` fits the weights on every game from the 2015-16 season through that season and saves the fit. `--features` is required, because no default feature list is approved. Pass the `live_features` of the latest backtest report, such as `xg_form,rest` for the November 2026 report below. `--features ""` saves the Elo alone, which is the right fit when the joint test fails. The candidates are `xg_form`, `goalie_gsax`, `rest`, and `attempt_form` (the leak test of #77).
 - `game GAME_ID [--level L]` prints the prediction of one stored game with the newest fit.
 - `backtest [--games-out PATH] [--candidates {xg,attempt}]` runs the walk-forward backtest and prints a JSON report. `--games-out` writes one CSV row for each scored game and run. `--candidates attempt` replaces `xg_form` with the shot-attempt form, the leak test in #77.
+The report lists `coverage`: the scored games of each season and game type, with the expected count of a regular season (`EXPECTED_REGULAR_GAMES` in `game_model/seasons.py`) and the stored games of that season that never finished.
+`eligible` is false when a listed regular season is under `MIN_SEASON_COVERAGE` of its expected count, or when the scored games hold fewer than `MIN_INDEPENDENT_BLOCKS` independent blocks for the bootstrap.
+Then `success` is false, `live_features` is empty, the interval is `null`, and `ineligible_reasons` says why. The scores stay in the report as descriptions.
 - `daily [--date YYYY-MM-DD] --out-dir DIR [--level L]` predicts every game of one game day, and writes `report-DATE.md` and `report-DATE.json`. A game day is the Eastern date that the NHL schedule uses, so a 7 pm ET slate that starts after midnight UTC stays in one report. Game starts stay UTC instants. The day defaults to the game day that holds now. A game that already started is still predicted, with its inputs taken as of the puck drop and a `late_run` note. A game that is over or postponed gets no prediction. The JSON copy names the model in `model`: the fit features, a SHA-256 of the fit weights (`fit_sha256`), and the code commit from `GITHUB_SHA` (`code_sha`, null outside Actions).
 - `report-due [--date YYYY-MM-DD] [--force]` prints whether the current trigger publishes the day's report. The report runs at the last top-of-hour slot before the first puck drop of the game day, moved earlier to the trigger minute of the hour before it. A game day with no games runs at its last trigger. The triggers run at minute `TRIGGER_MINUTE_UTC` of each hour in `TRIGGER_HOURS_UTC` in `report_trigger.py`, and the cron in `.github/workflows/daily-report.yml` MUST list the same minute and hours. `scripts/trigger_hours.py` derives them from the season schedule. The design is in [docs/design/daily-report-triggers.md](docs/design/daily-report-triggers.md).
 - To test the report by hand, run `gh workflow run daily-report -f force=true -f dry_run=true`. The run builds the report for the current game day, skips the trigger slot and the published-release check, and uploads the report as an artifact. It publishes no release.

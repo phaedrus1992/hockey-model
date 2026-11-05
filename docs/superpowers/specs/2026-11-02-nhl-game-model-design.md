@@ -51,6 +51,10 @@ An NHL game adds a start time and starting goalies, so it gets its own input.
 - The source that gave the status: ESPN, Daily Faceoff, or the NHL boxscore.
 - The time of the read.
 
+A goalie supplied on a `Game` must have a read time before the earlier of `as_of` and the game start.
+Otherwise the model raises `HockeyModelError`, because the read was not known at that time.
+A supplied likely or unknown start gives the same missing-input note as a stored one.
+
 The goalie status type and the starting-goalie query are public.
 Fantasy rosters also have goalies and likely starters, so a fantasy caller uses the same query and the same status values.
 

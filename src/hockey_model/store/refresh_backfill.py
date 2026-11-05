@@ -8,6 +8,8 @@ from hockey_model.store.nhl_writes import games_missing_boxscore
 from hockey_model.store.refresh_context import RefreshRun
 from hockey_model.store.refresh_nhl import (
     SCHEDULE_DAYS_AHEAD,
+    note_unresolved,
+    plan_unresolved,
     read_boxscores,
     read_days,
     score_days,
@@ -45,14 +47,18 @@ def nhl(run: RefreshRun) -> None:
             "that the schedule reads; give an earlier date"
         )
     gaps = score_gaps(run)
+    unresolved, due = plan_unresolved(run)
     complete = True
     for start, end in windows(run.backfill_from, last_day):
-        days = read_days(run, start, end, gaps)
+        days = {start + timedelta(days=n) for n in range((end - start).days + 1)}
+        window_due = [day for day in due if start <= day <= end]
+        days_read = read_days(run, sorted(days | set(window_due)), gaps, window_due)
         boxes = read_boxscores(run, games_missing_boxscore(run.conn, start, end))
-        complete = complete and days.clean and boxes.clean
-        if days.stopped or boxes.stopped:
+        complete = complete and days_read.clean and boxes.clean
+        if days_read.stopped or boxes.stopped:
             run.notes.append(f"backfill: stopped in the window {start} to {end}")
             break
     if not complete:
         run.notes.append("backfill: some days or games are unread; run it again")
+    note_unresolved(run, unresolved)
     run.backfill_complete = complete

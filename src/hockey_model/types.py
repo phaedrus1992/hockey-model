@@ -46,6 +46,10 @@ class ProbabilityError(HockeyModelError):
     """Raised when model output is not a valid probability distribution."""
 
 
+class ProjectionError(HockeyModelError):
+    """Raised when a model returns a projection that is malformed or out of range."""
+
+
 class ModelNotConfiguredError(HockeyModelError):
     """Raised when the CLI has no runtime model configuration."""
 

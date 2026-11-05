@@ -15,6 +15,9 @@ BOOTSTRAP_SEED = 0
 # NHL night has 16 games. The lag-1 autocorrelation of a per-game loss difference is near
 # zero, so a longer block would add code and no width.
 MIN_BLOCK_LENGTH = 16
+# A resample of fewer independent blocks than this repeats a few blocks, so its interval is
+# narrow for lack of data, not for lack of risk. A series this short has no usable interval.
+MIN_INDEPENDENT_BLOCKS = 10
 _LOW_PERCENTILE = 0.05
 _HIGH_PERCENTILE = 0.95
 
@@ -85,14 +88,35 @@ def calibration(probs: Sequence[float], wins: Sequence[bool]) -> tuple[Calibrati
     return tuple(result)
 
 
+def independent_blocks(count: int) -> int:
+    """Return how many whole blocks of ``MIN_BLOCK_LENGTH`` games ``count`` games hold."""
+    return count // MIN_BLOCK_LENGTH
+
+
+def bootstrap_problem(count: int) -> str | None:
+    """Return why ``count`` games are too few for a bootstrap interval, or ``None``."""
+    blocks = independent_blocks(count)
+    if blocks >= MIN_INDEPENDENT_BLOCKS:
+        return None
+    return (
+        f"{count} scored games hold {blocks} independent blocks of {MIN_BLOCK_LENGTH}; "
+        f"the bootstrap needs at least {MIN_INDEPENDENT_BLOCKS}"
+    )
+
+
 def block_bootstrap_mean_ci(values: Sequence[float]) -> tuple[float, float]:
     """Return the 5th and 95th percentile of the mean over block resamples.
 
     ``values`` must be in game start order. Blocks are runs of consecutive games, because
-    games on one night share teams and goalies.
+    games on one night share teams and goalies. A list with fewer than
+    ``MIN_INDEPENDENT_BLOCKS`` blocks raises, because its resamples would repeat one or two
+    blocks and show a false certainty.
     """
     if not values:
         raise ValueError("bootstrap the mean: the list is empty; pass at least one value")
+    problem = bootstrap_problem(len(values))
+    if problem is not None:
+        raise ValueError(f"bootstrap the mean: {problem}; score more games")
     if not all(math.isfinite(v) for v in values):
         raise ValueError("bootstrap the mean: a value is not finite; check the scores")
     count = len(values)

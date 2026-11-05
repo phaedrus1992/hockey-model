@@ -72,17 +72,39 @@ def test_report_due_without_games_uses_the_end_of_the_day(
     assert payload["first_puck_drop_utc"] == "2026-11-05T05:00:00.000000+00:00"
 
 
+class _FrozenDatetime(datetime):
+    """A datetime whose now() is a fixed moment."""
+
+    frozen: datetime
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        return cls.frozen
+
+
 @pytest.mark.parametrize(
-    ("now", "code"),
+    ("moment", "code"),
     [
         (datetime(2026, 11, 4, 12, 0, tzinfo=UTC), 20262027),
         (datetime(2027, 1, 9, 12, 0, tzinfo=UTC), 20262027),
-        (datetime(2026, 7, 1, 12, 0, tzinfo=UTC), 20262027),
-        (datetime(2026, 6, 30, 12, 0, tzinfo=UTC), 20252026),
+        (datetime(2026, 9, 1, 12, 0, tzinfo=UTC), 20262027),
+        (datetime(2026, 8, 31, 12, 0, tzinfo=UTC), 20252026),
+        (datetime(2026, 7, 15, 12, 0, tzinfo=UTC), 20252026),
     ],
 )
-def test_season_code_is_the_season_that_holds_the_moment(now: datetime, code: int) -> None:
-    assert store_cli._season_code(now) == code
+def test_fit_without_a_season_uses_the_shared_season_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    moment: datetime,
+    code: int,
+) -> None:
+    """In July and August the fit goes through the season that just ended, as the cohorts do."""
+    _FrozenDatetime.frozen = moment
+    monkeypatch.setattr(store_cli, "datetime", _FrozenDatetime)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert main(["fit", "--features", ""]) == 0
+    assert json.loads(capsys.readouterr().out)["through_season"] == code
 
 
 def test_daily_requires_an_out_dir(capsys: pytest.CaptureFixture[str]) -> None:

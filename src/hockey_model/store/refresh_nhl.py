@@ -1,24 +1,30 @@
 """The NHL steps of a refresh: score days, then boxscores."""
 
+import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import NamedTuple
 
 from hockey_model.game_day import game_day_of
 from hockey_model.sources.nhl import (
     FINAL_STATES,
+    BoxscoreRows,
     boxscore_url,
     fetch_boxscore,
     fetch_score_day,
     score_day_url,
 )
+from hockey_model.sources.shape_errors import SourceParseError
 from hockey_model.store.db import StoreError
 from hockey_model.store.nhl_writes import write_boxscore, write_games
+from hockey_model.store.reads import game_row, unresolved_games
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
 from hockey_model.store.source_reads import (
     abandoned_urls,
     failed_since,
     failed_urls,
     last_ok_read,
+    newest_read,
 )
 from hockey_model.store.timestamps import parse_iso_utc
 
@@ -40,6 +46,16 @@ SCHEDULE_DAYS_AHEAD = 2
 # that stays broken for longer, such as a preseason day, is left to the report of its first
 # failure so that it does not fail every refresh for good.
 FAILED_DAY_RETRY_WINDOW = timedelta(days=30)
+# A game that started this long ago and has no final read is unresolved. A successful read of
+# its day is not proof that the game finished: it can be suspended, moved, or still unknown.
+UNRESOLVED_AFTER = DAY_COMPLETE_AFTER
+# An unresolved game's day is read again after this long, and after the longer wait once the
+# game is old, so a game that never resolves does not cost a request on every refresh.
+UNRESOLVED_RETRY_AFTER = timedelta(days=1)
+UNRESOLVED_OLD_AFTER = timedelta(days=14)
+UNRESOLVED_OLD_RETRY_AFTER = timedelta(days=7)
+# At most this many unresolved days are read again in one refresh, oldest first.
+MAX_UNRESOLVED_DAYS = 10
 
 
 def _day_of(url: str) -> date:
@@ -78,10 +94,49 @@ def _day_complete(run: RefreshRun, day: date) -> bool:
     return last is not None and last >= day_start + DAY_COMPLETE_AFTER
 
 
-def _describe(items: list[date], shown: int = 5) -> str:
-    """Name the first few days of a list, and count the rest."""
-    names = ", ".join(day.isoformat() for day in items[:shown])
+def _unresolved_games(run: RefreshRun) -> list[tuple[int, datetime]]:
+    """Return ``(game_id, start)`` of each game whose newest read is not final, oldest first.
+
+    A game counts once it started more than ``UNRESOLVED_AFTER`` ago. A game that is still
+    to come, or on today's slate, is covered by the normal window.
+    """
+    found = unresolved_games(run.conn, run.now - UNRESOLVED_AFTER)
+    return [(game_id, start) for game_id, _, _, start in found]
+
+
+def _unresolved_days_due(run: RefreshRun, games: list[tuple[int, datetime]]) -> list[date]:
+    """Return the score days to read again for unresolved games, oldest first and bounded."""
+    due: list[date] = []
+    for _, start in games:
+        day = game_day_of(start)
+        if day in due:
+            continue
+        wait = (
+            UNRESOLVED_OLD_RETRY_AFTER
+            if run.now - start >= UNRESOLVED_OLD_AFTER
+            else UNRESOLVED_RETRY_AFTER
+        )
+        last = newest_read(run.conn, SCORES, score_day_url(day))
+        if last is None or run.now - last >= wait:
+            due.append(day)
+    return due[:MAX_UNRESOLVED_DAYS]
+
+
+def _describe(items: list[str], shown: int = 5) -> str:
+    """Name the first few items of a list, and count the rest."""
+    names = ", ".join(items[:shown])
     return names if len(items) <= shown else f"{names} and {len(items) - shown} more"
+
+
+def note_unresolved(run: RefreshRun, games: list[tuple[int, datetime]]) -> None:
+    """Name the games that are still not final long after their start."""
+    if not games:
+        return
+    names = _describe([str(game_id) for game_id, _ in games])
+    run.notes.append(
+        f"{SCORES}: {len(games)} game(s) are not final long after their start "
+        f"({names}); each is read again after a wait"
+    )
 
 
 class ReadResult(NamedTuple):
@@ -95,47 +150,81 @@ def score_gaps(run: RefreshRun) -> set[date]:
     """Return the score days that failed in every recent read, and note them in the report."""
     skipped = sorted(_day_of(url) for url in abandoned_urls(run.conn, SCORES))
     if skipped:
-        run.notes.append(f"{SCORES}: skipped {_describe(skipped)}, which failed in every read")
+        names = _describe([day.isoformat() for day in skipped])
+        run.notes.append(f"{SCORES}: skipped {names}, which failed in every read")
     return set(skipped)
 
 
-def read_days(run: RefreshRun, first: date, last: date, gaps: set[date]) -> ReadResult:
-    """Read each score day from ``first`` through ``last``.
+def plan_unresolved(run: RefreshRun) -> tuple[list[tuple[int, datetime]], list[date]]:
+    """Return the unresolved games, and the score days to read again because of them."""
+    unresolved = _unresolved_games(run)
+    return unresolved, _unresolved_days_due(run, unresolved)
 
-    A day that was read after it ended is complete and is not read again. A day in ``gaps``
-    is a known gap, so it counts as read. The read stops when three days in a row fail or
-    the time budget is spent.
+
+def read_days(
+    run: RefreshRun, worklist: Sequence[date], gaps: set[date], due: Sequence[date] = ()
+) -> ReadResult:
+    """Read each score day of ``worklist``, in order.
+
+    A day that was read after it ended is complete and is not read again, unless it is in
+    ``due``. A day in ``gaps`` is a known gap, so it counts as read. The read stops when three
+    days in a row fail or the time budget is spent.
     """
     failures = 0
     clean = True
-    day = first
-    while day <= last:
+    for index, day in enumerate(worklist):
         if failures >= MAX_UNIT_FAILURES:
-            left = (last - day).days + 1
+            left = len(worklist) - index
             run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
             return ReadResult(clean=False, stopped=True)
-        if day in gaps or _day_complete(run, day):
+        if day in gaps or (day not in due and _day_complete(run, day)):
             failures = 0
-        elif run.out_of_time():
+            continue
+        if run.out_of_time():
             run.notes.append(f"{SCORES}: stopped at {day.isoformat()}, because the time ran out")
             return ReadResult(clean=False, stopped=True)
-        else:
-            current = day
 
-            def unit(stamp: datetime, current: date = current) -> int:
-                return write_games(run.conn, fetch_score_day(run.client, current), stamp)
+        def unit(stamp: datetime, current: date = day) -> int:
+            return write_games(run.conn, fetch_score_day(run.client, current), stamp)
 
-            ok = run.attempt(SCORES, score_day_url(day), unit)
-            failures = 0 if ok else failures + 1
-            clean = clean and ok
-        day += timedelta(days=1)
+        ok = run.attempt(SCORES, score_day_url(day), unit)
+        failures = 0 if ok else failures + 1
+        clean = clean and ok
     return ReadResult(clean, stopped=False)
 
 
 def score_days(run: RefreshRun) -> None:
-    """Read each score day from the first day through the schedule horizon."""
+    """Read each score day from the first day through the schedule horizon.
+
+    A day that was read after it ended is complete and is not read again. A day with an
+    unresolved game is read again after a wait, even when newer games are final.
+    """
     last_day = game_day_of(run.now) + timedelta(days=SCHEDULE_DAYS_AHEAD)
-    read_days(run, _first_day(run), last_day, score_gaps(run))
+    first = _first_day(run)
+    unresolved, due = plan_unresolved(run)
+    window = (first + timedelta(days=n) for n in range((last_day - first).days + 1))
+    read_days(run, sorted({*due, *window}), score_gaps(run), due)
+    note_unresolved(run, unresolved)
+
+
+def check_boxscore_identity(conn: sqlite3.Connection, game_id: int, rows: BoxscoreRows) -> None:
+    """Raise unless the boxscore names the stored game's teams, home and away as stored.
+
+    A reversed pair is a different game, so it is never read as equal. The check runs before
+    any row is written.
+    """
+    stored = game_row(conn, game_id)
+    if stored is None:
+        raise SourceParseError(
+            "nhl",
+            f"boxscore for game {game_id} has no stored game to match; read the score day first",
+        )
+    if (rows.home, rows.away) != (stored.home, stored.away):
+        raise SourceParseError(
+            "nhl",
+            f"boxscore for game {game_id} names {rows.away} at {rows.home}, but the stored game "
+            f"is {stored.away} at {stored.home}",
+        )
 
 
 def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
@@ -168,7 +257,9 @@ def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
             continue
 
         def unit(stamp: datetime, game_id: int = game_id) -> int:
-            write_boxscore(run.conn, game_id, fetch_boxscore(run.client, game_id), stamp)
+            rows = fetch_boxscore(run.client, game_id)
+            check_boxscore_identity(run.conn, game_id, rows)
+            write_boxscore(run.conn, game_id, rows, stamp)
             return 1
 
         ok = run.attempt(BOXSCORES, url, unit)

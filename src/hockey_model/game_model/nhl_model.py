@@ -12,7 +12,7 @@ from hockey_model.game_model.seasons import ELO_BURN_IN
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
 from hockey_model.sources.teams import franchise
 from hockey_model.store.reads import final_games_before, mp_team_form_before, team_games_before
-from hockey_model.store.source_reads import stale_sources
+from hockey_model.store.staleness import stale_sources
 from hockey_model.types import Projection
 
 # Goals per team and game when a team has no games in the store. The NHL average is near 3.
@@ -120,7 +120,7 @@ class NhlGameModel:
         missing = [*row.missing, *goal_notes]
         missing.extend(
             MissingInput(MissingKind.STALE_SOURCE, None, f"{source}: {reason}")
-            for source, reason in stale_sources(self._conn, as_of)
+            for source, reason in stale_sources(self._conn, cutoff)
         )
         missing.extend(_clamp_notes(game, home_rate, away_rate))
         # The goal rates read MoneyPuck data even when the fit uses no MoneyPuck feature.
@@ -132,4 +132,5 @@ class NhlGameModel:
             away_goals=_projection(away_rate, level),
             missing=tuple(missing),
             credits=credits,
+            degraded_inputs=row.imputed,
         )

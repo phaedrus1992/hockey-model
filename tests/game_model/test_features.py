@@ -255,7 +255,9 @@ def test_a_team_with_an_earlier_game_does_not_report_rest_unknown(
 
 def test_a_goalie_with_no_nhl_id_reports_goalie_form(store: sqlite3.Connection) -> None:
     player = Player("x", None, None, "No Id", frozenset({Slot.G}), HOME)
-    given = GoalieStart(player, StarterStatus.CONFIRMED, StarterSource.ESPN, AS_OF)
+    given = GoalieStart(
+        player, StarterStatus.CONFIRMED, StarterSource.ESPN, AS_OF - timedelta(hours=1)
+    )
     row = build_features(
         store,
         Game(100, HOME, AWAY, START, home_goalie=given),

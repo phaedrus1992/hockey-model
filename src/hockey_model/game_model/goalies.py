@@ -15,16 +15,19 @@ from hockey_model.game import (
 )
 from hockey_model.game_model.names import matching_players, name_key
 from hockey_model.identity import Catalog
+from hockey_model.store.membership import goalie_membership_before
 from hockey_model.store.reads import (
     StarterReadRow,
     franchise_codes,
     goalie_starts_before,
     injury_reads_before,
+    injury_snapshot_before,
     player_catalog,
     starter_reads_before,
 )
-from hockey_model.store.timestamps import parse_iso_utc
-from hockey_model.types import Player, Slot
+from hockey_model.store.source_reads import LIVE_FEED_MAX_AGE
+from hockey_model.store.timestamps import iso_utc, parse_iso_utc
+from hockey_model.types import HockeyModelError, Player, Slot
 
 # The guess counts starts in this many of the newest games of the team.
 STARTER_WINDOW = 10
@@ -122,6 +125,11 @@ def _injured_goalies(
     """Return the ids of the team's goalies who are out, and a note for each unclear name."""
     out: set[int | None] = set()
     notes: list[MissingInput] = []
+    snapshot = injury_snapshot_before(conn, as_of)
+    if snapshot is not None and as_of - snapshot > LIVE_FEED_MAX_AGE:
+        # An old list could still name a goalie who has healed, so no one is left out.
+        note = f"the injury list was read at {iso_utc(snapshot)}, which is too old to use"
+        notes.append(_unknown(team, note))
     for injury in injury_reads_before(conn, as_of):
         if not injury.is_out or injury.team not in franchise_codes(team):
             continue
@@ -135,21 +143,68 @@ def _injured_goalies(
     return out, notes
 
 
+def _eligible(
+    conn: sqlite3.Connection, goalies: _Goalies, team: str, as_of: datetime, ids: set[int]
+) -> tuple[set[int], list[MissingInput]]:
+    """Return the candidates that have not left the team, and a note for each unclear one.
+
+    Only a guess is filtered. A source that names a goalie may know of a trade that the
+    games do not show yet.
+    """
+    membership = goalie_membership_before(conn, team, ids, as_of)
+    notes = [
+        _unknown(
+            team,
+            f"{goalies.catalog.resolve(nhl_id).full_name} has conflicting teams at one start "
+            "time; the guess may be wrong",
+        )
+        for nhl_id in sorted(membership.conflicting)
+    ]
+    return ids - membership.departed, notes
+
+
 def _guess(
     conn: sqlite3.Connection, goalies: _Goalies, team: str, as_of: datetime
 ) -> tuple[GoalieStart | None, list[MissingInput]]:
     starts = goalie_starts_before(conn, team, as_of, STARTER_WINDOW)
     counts = Counter(nhl_id for _, nhl_id in starts)
     out, notes = _injured_goalies(conn, goalies, team, as_of)
+    here, member_notes = _eligible(conn, goalies, team, as_of, set(counts) - out)
     order = {nhl_id: rank for rank, (_, nhl_id) in enumerate(reversed(starts))}
-    ranked = sorted(
-        (nhl_id for nhl_id in counts if nhl_id not in out),
-        key=lambda nhl_id: (-counts[nhl_id], -order[nhl_id]),
-    )
+    ranked = sorted(here, key=lambda nhl_id: (-counts[nhl_id], -order[nhl_id]))
+    notes = [*notes, *member_notes]
     if not ranked:
+        if counts:
+            notes.append(_unknown(team, "every goalie with a recent start is out or has left"))
         return None, notes
     player = goalies.catalog.resolve(ranked[0])
     return GoalieStart(player, StarterStatus.UNKNOWN, StarterSource.MODEL_GUESS, as_of), notes
+
+
+def _given_goalie(
+    game: Game, team: str, given: GoalieStart, as_of: datetime
+) -> tuple[GoalieStart, tuple[MissingInput, ...]]:
+    """Check a goalie that the caller put on ``game``, as a stored read is checked.
+
+    The read must come before ``min(as_of, game.start)``. The comparison is strict, as in
+    ``starter_reads_before``, so a read made at the cutoff is not known yet. The note is the
+    one that a stored read of the same status would give.
+    """
+    cutoff = min(as_of, game.start)
+    if given.read_at >= cutoff:
+        side = "home" if team == game.home else "away"
+        raise HockeyModelError(
+            f"the {side} goalie for game {game.game_id} was read at {iso_utc(given.read_at)}, "
+            f"which is not before the cutoff {iso_utc(cutoff)}; "
+            "give a start that was read before as_of and before the game began"
+        )
+    name = given.player.full_name
+    if given.status is StarterStatus.LIKELY:
+        note = f"{name} is likely, not confirmed"
+        return given, (MissingInput(MissingKind.GOALIE_UNCONFIRMED, team, note),)
+    if given.status is StarterStatus.UNKNOWN:
+        return given, (_unknown(team, f"{name} was supplied with an unknown status"),)
+    return given, ()
 
 
 def resolve_goalie(
@@ -164,16 +219,17 @@ def resolve_goalie(
 ) -> tuple[GoalieStart | None, tuple[MissingInput, ...]]:
     """Return the goalie for ``team`` in ``game`` at ``as_of``, and what was missing.
 
-    The order is: a goalie on ``game``; the boxscore starter when the game has started;
-    the earliest confirmed read; the newest likely read; the goalie with the most starts
-    in the last ``STARTER_WINDOW`` games. With ``use_reads`` false, only the first two
-    and the last apply. With ``use_boxscore`` false, the boxscore of a game that has
-    started is ignored, so a backtest can ask what a morning guess would have been.
+    The order is: a goalie on ``game``, which must have been read before the cutoff; the
+    boxscore starter when the game has started; the earliest confirmed read; the newest
+    likely read; the goalie with the most starts in the last ``STARTER_WINDOW`` games.
+    With ``use_reads`` false, only the first two and the last apply.
+    With ``use_boxscore`` false, the boxscore of a game that has started is ignored,
+    so a backtest can ask what a morning guess would have been.
     A caller that resolves many games passes one ``catalog`` to reuse.
     """
     given = game.home_goalie if team == game.home else game.away_goalie
     if given is not None:
-        return given, ()
+        return _given_goalie(game, team, given, as_of)
     catalog = player_catalog(conn) if catalog is None else catalog
     if use_boxscore and as_of >= game.start:
         started = boxscore_starter(conn, game, team, catalog)

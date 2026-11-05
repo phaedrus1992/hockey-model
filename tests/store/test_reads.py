@@ -160,7 +160,7 @@ def test_injury_reads_use_the_newest_list_before_as_of(store: sqlite3.Connection
     add_injury(store, "TOR", "New Name", "Out", "2026-01-05T00:00")
     add_injury(store, "BOS", "Other", "Day-To-Day", "2026-01-05T00:00")
     add_injury(store, "TOR", "Future", "Out", "2026-01-09T00:00")
-    names = {i.player_name for i in injury_reads_before(store, utc("2026-01-07T00:00"))}
+    names = {i.player_name for i in injury_reads_before(store, utc("2026-01-05T12:00"))}
     assert names == {"New Name", "Other"}
     assert injury_reads_before(store, utc("2025-12-01T00:00")) == []
 
@@ -180,8 +180,8 @@ def test_player_catalog_uses_newest_row_and_maps_positions(store: sqlite3.Connec
 def test_an_empty_injury_list_clears_the_earlier_one(store: sqlite3.Connection) -> None:
     add_injury(store, "TOR", "Hurt Player", "Out", "2026-01-01T00:00")
     record_injury_snapshot(store, "2026-01-05T00:00")
-    assert injury_reads_before(store, utc("2026-01-07T00:00")) == []
-    assert [i.player_name for i in injury_reads_before(store, utc("2026-01-03T00:00"))] == [
+    assert injury_reads_before(store, utc("2026-01-05T12:00")) == []
+    assert [i.player_name for i in injury_reads_before(store, utc("2026-01-01T12:00"))] == [
         "Hurt Player"
     ]
 

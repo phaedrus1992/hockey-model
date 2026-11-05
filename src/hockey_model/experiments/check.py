@@ -350,9 +350,10 @@ def record_with_result(
     """
     model = next((run for run in report.runs if run.name == MODEL_ACTUAL), None)
     if model is None or model.diff_vs_elo_ci is None:
+        why = "; ".join(report.ineligible_reasons) or "the model run is missing"
         raise HockeyModelError(
-            f"experiment {record.id!r}: the run produced no interval, so there is no result "
-            "to record; the record is unchanged. Refresh the store and run again"
+            f"experiment {record.id!r}: the run produced no interval ({why}), so there is no "
+            "result to record; the record is unchanged. Refresh the store and run again"
         )
     data = record.to_dict()
     data["status"] = _confirmation_status(record, report)

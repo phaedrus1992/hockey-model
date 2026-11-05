@@ -1,6 +1,7 @@
 -- Source tables are append-only: each read carries fetched_at as ISO UTC, and a later
 -- read adds a row. The exceptions are skater_games and goalie_games, which are written
--- once per game from a final boxscore and keyed on the game.
+-- from a final boxscore and keyed on the game. A row stays as first written, and a later
+-- boxscore adds only the rows that are missing.
 
 CREATE TABLE schema_version (
     version INTEGER NOT NULL
@@ -38,7 +39,7 @@ CREATE TABLE players (
     PRIMARY KEY (nhl_id, fetched_at)
 );
 
--- Written once from a final boxscore, so keyed on the game only.
+-- Written from a final boxscore, so keyed on the game only. An existing row is kept.
 CREATE TABLE skater_games (
     game_id INTEGER,
     team TEXT,

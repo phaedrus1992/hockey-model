@@ -103,11 +103,14 @@ def test_write_boxscore_adds_player_row_only_on_change(conn: sqlite3.Connection)
     assert count == len(rows.players) + 1
 
 
-def test_write_boxscore_twice_is_an_error(conn: sqlite3.Connection) -> None:
+def test_writing_the_same_boxscore_twice_adds_nothing_and_keeps_the_first_read(
+    conn: sqlite3.Connection,
+) -> None:
     rows = parse_boxscore(json.loads((FIXTURES / "boxscore_2025020709.json").read_text()))
     write_boxscore(conn, 2025020709, rows, T0)
-    with pytest.raises(sqlite3.IntegrityError):
-        write_boxscore(conn, 2025020709, rows, T0 + timedelta(days=1))
+    before = conn.execute("SELECT * FROM skater_games ORDER BY nhl_id").fetchall()
+    write_boxscore(conn, 2025020709, rows, T0 + timedelta(days=1))
+    assert conn.execute("SELECT * FROM skater_games ORDER BY nhl_id").fetchall() == before
 
 
 def test_write_games_skips_a_game_that_did_not_change(conn: sqlite3.Connection) -> None:
@@ -123,3 +126,74 @@ def test_write_games_appends_a_changed_start_time(conn: sqlite3.Connection) -> N
         replace(r, start=r.start + timedelta(hours=1)) for r in day_rows("score_2026-11-05.json")
     ]
     assert write_games(conn, moved, T0 + timedelta(hours=1)) == len(moved)
+
+
+def _full_rows():
+    return parse_boxscore(json.loads((FIXTURES / "boxscore_2025020709.json").read_text()))
+
+
+def _one_side(rows, team: str):
+    """The rows of one team only, as an old partial boxscore stored them."""
+    return replace(
+        rows,
+        players=[p for p in rows.players if p.team == team],
+        skaters=[s for s in rows.skaters if s.team == team],
+        goalies=[g for g in rows.goalies if g.team == team],
+    )
+
+
+def _stored_game(conn: sqlite3.Connection, rows) -> int:
+    """Store a final game whose teams are the boxscore's, and return its id."""
+    game = replace(
+        next(r for r in day_rows() if r.game_id == 2025020697),
+        game_id=rows.game_id,
+        home=rows.home,
+        away=rows.away,
+    )
+    write_games(conn, [game], T0)
+    return rows.game_id
+
+
+def test_a_game_with_only_one_side_stored_is_queued_again(conn: sqlite3.Connection) -> None:
+    rows = _full_rows()
+    game_id = _stored_game(conn, rows)
+    write_boxscore(conn, game_id, _one_side(rows, rows.home), T0)
+    assert game_id in games_missing_boxscore(conn)
+
+
+def test_a_game_with_goalies_but_no_skaters_on_a_side_is_queued_again(
+    conn: sqlite3.Connection,
+) -> None:
+    rows = _full_rows()
+    game_id = _stored_game(conn, rows)
+    no_away_skaters = replace(rows, skaters=[s for s in rows.skaters if s.team == rows.home])
+    write_boxscore(conn, game_id, no_away_skaters, T0)
+    assert game_id in games_missing_boxscore(conn)
+
+
+def test_a_game_with_both_sides_stored_is_not_queued(conn: sqlite3.Connection) -> None:
+    rows = _full_rows()
+    game_id = _stored_game(conn, rows)
+    write_boxscore(conn, game_id, rows, T0)
+    assert game_id not in games_missing_boxscore(conn)
+
+
+def test_repairing_a_partial_game_keeps_the_original_rows(conn: sqlite3.Connection) -> None:
+    rows = _full_rows()
+    game_id = _stored_game(conn, rows)
+    write_boxscore(conn, game_id, _one_side(rows, rows.home), T0)
+    later = T0 + timedelta(days=2)
+    write_boxscore(conn, game_id, rows, later)
+    stamps = dict(
+        conn.execute(
+            "SELECT team, MIN(fetched_at) FROM skater_games WHERE game_id = ? GROUP BY team",
+            (game_id,),
+        ).fetchall()
+    )
+    assert stamps[rows.home].startswith("2026-01-11")
+    assert stamps[rows.away].startswith("2026-01-13")
+    assert game_id not in games_missing_boxscore(conn)
+    (home_rows,) = conn.execute(
+        "SELECT COUNT(*) FROM skater_games WHERE game_id = ? AND team = ?", (game_id, rows.home)
+    ).fetchone()
+    assert home_rows == len(_one_side(rows, rows.home).skaters)
