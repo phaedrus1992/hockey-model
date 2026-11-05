@@ -416,3 +416,15 @@ def test_prepare_stops_when_live_features_holds_a_value_that_is_not_a_name(
     assert result.returncode == 1
     assert "no live_features list of names" in result.stderr
     assert not any("hockey-model fit" in line for line in _calls(tmp_path))
+
+
+def test_prepare_stops_when_live_features_is_an_object_of_names(
+    fakes: Path, tmp_path: Path
+) -> None:
+    """An object of strings would iterate as a list of names, so only an array may pass."""
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    env["FAKE_BACKTEST_JSON"] = json.dumps({"live_features": {"a": "rest"}})
+    result = _run("daily-prepare.sh", env, "--date", DAY)
+    assert result.returncode == 1
+    assert "no live_features list of names" in result.stderr
+    assert not any("hockey-model fit" in line for line in _calls(tmp_path))

@@ -66,7 +66,7 @@ if ! command -v jq >/dev/null; then
   echo "daily-prepare: jq is not installed; it reads live_features from $backtest_json" >&2
   exit 1
 fi
-if ! live_features="$(jq -er '.live_features | if all(type == "string") then join(",") else error("not names") end' "$backtest_json")"; then
+if ! live_features="$(jq -er '.live_features | if type == "array" and all(type == "string") then join(",") else error("not names") end' "$backtest_json")"; then
   echo "daily-prepare: $backtest_json has no live_features list of names; the fit needs it" >&2
   exit 1
 fi
