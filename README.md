@@ -159,6 +159,9 @@ The run refuses when the cohort holds fewer games than the record requires.
 A run whose interval is wider than the effect the record expected is
 inconclusive, not rejected.
 
+Run the registry commands from the repository root.
+The registry directory and its schema are read relative to the working directory.
+
 ```text
 hockey-model experiments check
 hockey-model experiments run 0001-v1-forward-test --games-out games.csv

@@ -184,7 +184,10 @@ def validate_against_schema(
     Raises ``HockeyModelError`` when the record does not match.
     """
     if not schema_path.exists():
-        raise HockeyModelError(f"schema not found: {schema_path}")
+        raise HockeyModelError(
+            f"schema not found: {schema_path}. The registry is relative to the working "
+            "directory, so run the command from the repository root."
+        )
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

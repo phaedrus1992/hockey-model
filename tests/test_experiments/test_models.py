@@ -160,9 +160,9 @@ class TestSchemaValidation:
         with pytest.raises(HockeyModelError, match="missing required field"):
             validate_against_schema(data, _write_schema(tmp_path, _MINIMAL_SCHEMA))
 
-    def test_missing_schema_file_fails(self, tmp_path: Path):
-        """A missing schema file raises HockeyModelError."""
-        with pytest.raises(HockeyModelError, match="schema not found"):
+    def test_missing_schema_file_names_the_working_directory_fix(self, tmp_path: Path):
+        """A missing schema file raises an error that names the fix."""
+        with pytest.raises(HockeyModelError, match="repository root"):
             validate_against_schema(_make_record(), tmp_path / "nonexistent.json")
 
     def test_invalid_enum_value_fails(self, tmp_path: Path):
