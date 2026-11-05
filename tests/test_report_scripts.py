@@ -428,3 +428,24 @@ def test_prepare_stops_when_live_features_is_an_object_of_names(
     assert result.returncode == 1
     assert "no live_features list of names" in result.stderr
     assert not any("hockey-model fit" in line for line in _calls(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("script", "flag", "message"),
+    [
+        ("daily-prepare.sh", "--date", "--date needs a value"),
+        ("daily-report.sh", "--date", "--date needs a value"),
+        ("daily-report.sh", "--out-dir", "--out-dir needs a directory"),
+        ("publish-daily-report.sh", "--date", "--date needs a value"),
+        ("publish-daily-report.sh", "--report-dir", "--report-dir needs a directory"),
+    ],
+)
+def test_a_flag_without_its_value_is_a_usage_error(
+    fakes: Path, tmp_path: Path, script: str, flag: str, message: str
+) -> None:
+    """The check is explicit, so the semgrep bash parser reads the script, and the exit is 2."""
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    result = _run(script, env, flag)
+    assert result.returncode == 2
+    assert message in result.stderr
+    assert script.removesuffix(".sh") in result.stderr
