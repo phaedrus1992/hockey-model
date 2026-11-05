@@ -49,7 +49,9 @@ def kinds(missing) -> list[MissingKind]:
 
 def test_game_goalie_wins(season: sqlite3.Connection) -> None:
     player = Player("x", None, None, "Given Goalie", frozenset({Slot.G}), "TOR")
-    given = GoalieStart(player, StarterStatus.CONFIRMED, StarterSource.ESPN, AS_OF)
+    given = GoalieStart(
+        player, StarterStatus.CONFIRMED, StarterSource.ESPN, AS_OF - timedelta(hours=1)
+    )
     chosen = Game(100, "TOR", "BOS", START, home_goalie=given)
     start, missing = resolve_goalie(season, chosen, "TOR", AS_OF, use_reads=True)
     assert start is given

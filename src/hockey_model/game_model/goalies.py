@@ -23,8 +23,8 @@ from hockey_model.store.reads import (
     player_catalog,
     starter_reads_before,
 )
-from hockey_model.store.timestamps import parse_iso_utc
-from hockey_model.types import Player, Slot
+from hockey_model.store.timestamps import iso_utc, parse_iso_utc
+from hockey_model.types import HockeyModelError, Player, Slot
 
 # The guess counts starts in this many of the newest games of the team.
 STARTER_WINDOW = 10
@@ -152,6 +152,32 @@ def _guess(
     return GoalieStart(player, StarterStatus.UNKNOWN, StarterSource.MODEL_GUESS, as_of), notes
 
 
+def _given_goalie(
+    game: Game, team: str, given: GoalieStart, as_of: datetime
+) -> tuple[GoalieStart, tuple[MissingInput, ...]]:
+    """Check a goalie that the caller put on ``game``, as a stored read is checked.
+
+    The read must come before ``min(as_of, game.start)``. The comparison is strict, as in
+    ``starter_reads_before``, so a read made at the cutoff is not known yet. The note is the
+    one that a stored read of the same status would give.
+    """
+    cutoff = min(as_of, game.start)
+    if given.read_at >= cutoff:
+        side = "home" if team == game.home else "away"
+        raise HockeyModelError(
+            f"the {side} goalie for game {game.game_id} was read at {iso_utc(given.read_at)}, "
+            f"which is not before the cutoff {iso_utc(cutoff)}; "
+            "give a start that was read before as_of and before the game began"
+        )
+    name = given.player.full_name
+    if given.status is StarterStatus.LIKELY:
+        note = f"{name} is likely, not confirmed"
+        return given, (MissingInput(MissingKind.GOALIE_UNCONFIRMED, team, note),)
+    if given.status is StarterStatus.UNKNOWN:
+        return given, (_unknown(team, f"{name} was supplied with an unknown status"),)
+    return given, ()
+
+
 def resolve_goalie(
     conn: sqlite3.Connection,
     game: Game,
@@ -164,16 +190,17 @@ def resolve_goalie(
 ) -> tuple[GoalieStart | None, tuple[MissingInput, ...]]:
     """Return the goalie for ``team`` in ``game`` at ``as_of``, and what was missing.
 
-    The order is: a goalie on ``game``; the boxscore starter when the game has started;
-    the earliest confirmed read; the newest likely read; the goalie with the most starts
-    in the last ``STARTER_WINDOW`` games. With ``use_reads`` false, only the first two
-    and the last apply. With ``use_boxscore`` false, the boxscore of a game that has
-    started is ignored, so a backtest can ask what a morning guess would have been.
+    The order is: a goalie on ``game``, which must have been read before the cutoff; the
+    boxscore starter when the game has started; the earliest confirmed read; the newest
+    likely read; the goalie with the most starts in the last ``STARTER_WINDOW`` games.
+    With ``use_reads`` false, only the first two and the last apply.
+    With ``use_boxscore`` false, the boxscore of a game that has started is ignored,
+    so a backtest can ask what a morning guess would have been.
     A caller that resolves many games passes one ``catalog`` to reuse.
     """
     given = game.home_goalie if team == game.home else game.away_goalie
     if given is not None:
-        return given, ()
+        return _given_goalie(game, team, given, as_of)
     catalog = player_catalog(conn) if catalog is None else catalog
     if use_boxscore and as_of >= game.start:
         started = boxscore_starter(conn, game, team, catalog)
