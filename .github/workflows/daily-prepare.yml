@@ -37,7 +37,8 @@ jobs:
       - env:
           HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
         run: bash scripts/daily-prepare.sh
-      # Saved even after a failure, so a partial backfill resumes on the next run.
+      # Saved even after a failure or an early stop (exit code 75), so a partial backfill resumes
+      # on the next run.
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: always()
         with:

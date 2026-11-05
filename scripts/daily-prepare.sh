@@ -6,8 +6,10 @@
 #   --date  Eastern game day to prepare. Default: today in Eastern time.
 #
 # Reads the store path from HOCKEY_MODEL_DB. The first backfill runs until a marker file
-# next to the store says it finished. An interrupted backfill resumes on the next run,
-# because refresh skips what it already read. The backtest files and a prepared-DATE
+# next to the store says it finished. The backfill reads one year at a time, newest year
+# first, and stops after BACKFILL_BUDGET_S seconds (default 1800). A stopped backfill
+# writes no marker and exits with code 75. It resumes on the next run, because refresh
+# skips what it already read. The backtest files and a prepared-DATE
 # marker go next to the store, where daily-report.sh finds them. Any failed step stops
 # the script with its exit code, so a failed run writes no marker.
 set -euo pipefail
@@ -48,8 +50,19 @@ mkdir -p "$store_dir"
 marker="$HOCKEY_MODEL_DB.backfilled"
 if [[ ! -f "$marker" ]]; then
   echo "daily-prepare: the store has no finished backfill; backfilling from 2014-10-01." >&2
-  echo "daily-prepare: a full backfill takes hours and can outlast the job time limit." >&2
-  uv run hockey-model refresh --backfill-from 2014-10-01
+  echo "daily-prepare: the backfill reads one year per window, newest first." >&2
+  report="$store_dir/refresh-report.json"
+  uv run hockey-model refresh --backfill-from 2014-10-01 \
+    --budget-seconds "${BACKFILL_BUDGET_S:-1800}" >"$report"
+  cat "$report"
+  if ! complete="$(jq -er '.backfill_complete | if type == "boolean" then tostring else error("not a boolean") end' "$report")"; then
+    echo "daily-prepare: $report has no backfill_complete flag; the marker needs it" >&2
+    exit 1
+  fi
+  if [[ "$complete" != "true" ]]; then
+    echo "daily-prepare: the backfill stopped before it reached 2014-10-01; run it again." >&2
+    exit 75
+  fi
   touch "$marker"
 else
   uv run hockey-model refresh
