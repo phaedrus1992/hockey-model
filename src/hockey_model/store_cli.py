@@ -4,7 +4,7 @@ import argparse
 import os
 from collections.abc import Callable
 from dataclasses import asdict, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from hockey_model.backtest.runner import run_backtest, write_game_records
@@ -46,6 +46,14 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         type=date.fromisoformat,
         metavar="YYYY-MM-DD",
         help="read score days from this date; days already read after they ended are skipped",
+    )
+    parser.add_argument(
+        "--budget-seconds",
+        type=int,
+        default=None,
+        metavar="N",
+        help="stop reading score days and boxscores after N seconds; a backfill then reports"
+        " backfill_complete false and the next run continues it",
     )
     parser.add_argument(
         "--starters-only",
@@ -122,12 +130,17 @@ def _report_json(report: RefreshReport) -> dict[str, object]:
         "errors": [{"type": type(e).__name__, "message": str(e)} for e in report.errors],
         "notes": list(report.notes),
         "credits": list(report.credits),
+        "backfill_complete": report.backfill_complete,
     }
 
 
 def _refresh(args: argparse.Namespace) -> tuple[object, int]:
     if args.starters_only and args.backfill_from is not None:
         raise HockeyModelError("refresh: a backfill reads every source; drop --starters-only")
+    if args.budget_seconds is not None and args.budget_seconds <= 0:
+        raise HockeyModelError(
+            f"refresh: --budget-seconds is {args.budget_seconds}; give a number above 0"
+        )
     conn = connect(db_path_from_env(os.environ))
     try:
         if args.starters_only:
@@ -141,6 +154,9 @@ def _refresh(args: argparse.Namespace) -> tuple[object, int]:
                 now=datetime.now(UTC),
                 backfill_from=args.backfill_from,
                 clock=lambda: datetime.now(UTC),
+                budget=None
+                if args.budget_seconds is None
+                else timedelta(seconds=args.budget_seconds),
             )
     finally:
         conn.close()

@@ -2,8 +2,9 @@
 
 import sqlite3
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 
+from hockey_model.game_day import game_day_window
 from hockey_model.sources.nhl import FINAL_STATES, BoxscoreRows, GameRow
 from hockey_model.store.timestamps import iso_utc
 
@@ -80,14 +81,26 @@ def write_boxscore(
     )
 
 
-def games_missing_boxscore(conn: sqlite3.Connection) -> list[int]:
-    """Return the ids of final games that have no goalie rows yet, oldest first."""
+def games_missing_boxscore(
+    conn: sqlite3.Connection, first_day: date | None = None, last_day: date | None = None
+) -> list[int]:
+    """Return the ids of final games that have no goalie rows yet, oldest first.
+
+    ``first_day`` and ``last_day`` are Eastern game days, both included. Either may be None.
+    """
     marks = ",".join("?" for _ in FINAL_STATES)
+    bounds: list[str] = []
+    if first_day is not None:
+        bounds.append(iso_utc(game_day_window(first_day)[0]))
+    if last_day is not None:
+        bounds.append(iso_utc(game_day_window(last_day)[1]))
     cursor = conn.execute(
         "SELECT DISTINCT g.game_id FROM games g"
         f" WHERE g.state IN ({marks})"
         " AND NOT EXISTS (SELECT 1 FROM goalie_games w WHERE w.game_id = g.game_id)"
-        " ORDER BY g.start_utc, g.game_id",
-        sorted(FINAL_STATES),
+        + (" AND g.start_utc >= ?" if first_day is not None else "")
+        + (" AND g.start_utc < ?" if last_day is not None else "")
+        + " ORDER BY g.start_utc, g.game_id",
+        [*sorted(FINAL_STATES), *bounds],
     )
     return [row[0] for row in cursor]

@@ -3,8 +3,9 @@
 import copy
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
+from itertools import count as count_from
 from pathlib import Path
 
 import pytest
@@ -299,6 +300,53 @@ def test_an_evening_refresh_reads_the_eastern_game_day(conn: sqlite3.Connection)
     assert espn_days == ["20260110", "20260111"]
     assert f"{SCORE_URL}2026-01-12" in client.urls
     assert f"{SCORE_URL}2026-01-13" not in client.urls
+
+
+def test_a_finished_backfill_says_it_is_complete(conn: sqlite3.Connection) -> None:
+    report = refresh(conn, FakeClient(), now=NOW, backfill_from=date(2026, 1, 10))
+    assert report.backfill_complete is True
+    assert refresh(conn, FakeClient(), now=NOW).backfill_complete is None
+
+
+def _minute_clock() -> Callable[[], datetime]:
+    ticks = count_from(0)
+    return lambda: NOW + timedelta(minutes=next(ticks))
+
+
+def test_a_backfill_that_spends_its_budget_stops_and_the_next_run_continues(
+    conn: sqlite3.Connection,
+) -> None:
+    start = date(2024, 6, 1)
+    first = FakeClient()
+    report = refresh(
+        conn,
+        first,
+        now=NOW,
+        backfill_from=start,
+        clock=_minute_clock(),
+        budget=timedelta(minutes=5),
+    )
+    assert report.backfill_complete is False
+    assert report.errors == ()
+    assert any("time ran out" in n for n in report.notes)
+    assert any("backfill: stopped in the window" in n for n in report.notes)
+    assert "2024-06-01" not in _score_requests(first)
+
+    second = FakeClient()
+    done = refresh(conn, second, now=NOW + timedelta(hours=1), backfill_from=start)
+    assert done.backfill_complete is True
+    assert "2024-06-01" in _score_requests(second)
+
+
+def test_a_backfill_with_a_failed_day_is_not_complete(conn: sqlite3.Connection) -> None:
+    report = refresh(
+        conn,
+        FakeClient(_failing_days("2026-01-05")),
+        now=NOW,
+        backfill_from=date(2026, 1, 1),
+    )
+    assert report.backfill_complete is False
+    assert len(report.errors) == 1
 
 
 def test_a_stopped_source_says_how_much_it_left(conn: sqlite3.Connection) -> None:
