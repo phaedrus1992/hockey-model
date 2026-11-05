@@ -356,6 +356,19 @@ def test_a_failed_score_day_older_than_the_window_is_left_alone(conn: sqlite3.Co
     assert "2025-11-01" not in _score_requests(client)
 
 
+def test_a_backfill_skips_a_score_day_that_failed_before_the_window(
+    conn: sqlite3.Connection,
+) -> None:
+    failing = _failing_days("2025-11-01")
+    first = refresh(conn, FakeClient(failing), now=NOW, backfill_from=date(2025, 11, 1))
+    assert len(first.errors) == 1
+    client = FakeClient(failing)
+    report = refresh(conn, client, now=NOW + timedelta(hours=1), backfill_from=date(2025, 11, 1))
+    assert "2025-11-01" not in _score_requests(client)
+    assert report.errors == ()
+    assert any("nhl_scores: 1 old failed days skipped" in n for n in report.notes)
+
+
 def test_failed_days_apart_do_not_stop_the_refresh_before_today(conn: sqlite3.Connection) -> None:
     days = ("2026-01-02", "2026-01-04", "2026-01-06")
     refresh(conn, FakeClient(_failing_days(*days)), now=NOW, backfill_from=date(2026, 1, 1))

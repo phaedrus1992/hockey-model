@@ -42,6 +42,13 @@ def _failed_days(run: RefreshRun) -> list[date]:
     return [day for day in days if day >= oldest]
 
 
+def _abandoned_days(run: RefreshRun) -> set[date]:
+    """Return the score days whose newest read failed and that are older than the retry window."""
+    oldest = game_day_of(run.now - FAILED_DAY_RETRY_WINDOW)
+    days = (date.fromisoformat(url.rsplit("/", 1)[1]) for url in failed_urls(run.conn, SCORES))
+    return {day for day in days if day < oldest}
+
+
 def _first_day(run: RefreshRun) -> date:
     if run.backfill_from is not None:
         return run.backfill_from
@@ -68,12 +75,17 @@ def score_days(run: RefreshRun) -> None:
     last_day = game_day_of(run.now) + timedelta(days=SCHEDULE_DAYS_AHEAD)
     day = _first_day(run)
     failures = 0
+    # A backfill starts before the window, so it would read a broken day again in every run
+    # and never finish. The first failure of the day was already reported.
+    abandoned = _abandoned_days(run) if run.backfill_from is not None else set()
+    if abandoned:
+        run.notes.append(f"{SCORES}: {len(abandoned)} old failed days skipped")
     while day <= last_day:
         if failures >= MAX_UNIT_FAILURES:
             left = (last_day - day).days + 1
             run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
             return
-        if _day_complete(run, day):
+        if day in abandoned or _day_complete(run, day):
             failures = 0
         else:
             current = day
