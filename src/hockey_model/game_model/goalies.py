@@ -15,6 +15,7 @@ from hockey_model.game import (
 )
 from hockey_model.game_model.names import matching_players, name_key
 from hockey_model.identity import Catalog
+from hockey_model.store.membership import goalie_membership_before
 from hockey_model.store.reads import (
     StarterReadRow,
     franchise_codes,
@@ -135,18 +136,39 @@ def _injured_goalies(
     return out, notes
 
 
+def _eligible(
+    conn: sqlite3.Connection, goalies: _Goalies, team: str, as_of: datetime, ids: set[int]
+) -> tuple[set[int], list[MissingInput]]:
+    """Return the candidates that have not left the team, and a note for each unclear one.
+
+    Only a guess is filtered. A source that names a goalie may know of a trade that the
+    games do not show yet.
+    """
+    membership = goalie_membership_before(conn, team, ids, as_of)
+    notes = [
+        _unknown(
+            team,
+            f"{goalies.catalog.resolve(nhl_id).full_name} has conflicting teams at one start "
+            "time; the guess may be wrong",
+        )
+        for nhl_id in sorted(membership.conflicting)
+    ]
+    return ids - membership.departed, notes
+
+
 def _guess(
     conn: sqlite3.Connection, goalies: _Goalies, team: str, as_of: datetime
 ) -> tuple[GoalieStart | None, list[MissingInput]]:
     starts = goalie_starts_before(conn, team, as_of, STARTER_WINDOW)
     counts = Counter(nhl_id for _, nhl_id in starts)
     out, notes = _injured_goalies(conn, goalies, team, as_of)
+    here, member_notes = _eligible(conn, goalies, team, as_of, set(counts) - out)
     order = {nhl_id: rank for rank, (_, nhl_id) in enumerate(reversed(starts))}
-    ranked = sorted(
-        (nhl_id for nhl_id in counts if nhl_id not in out),
-        key=lambda nhl_id: (-counts[nhl_id], -order[nhl_id]),
-    )
+    ranked = sorted(here, key=lambda nhl_id: (-counts[nhl_id], -order[nhl_id]))
+    notes = [*notes, *member_notes]
     if not ranked:
+        if counts:
+            notes.append(_unknown(team, "every goalie with a recent start is out or has left"))
         return None, notes
     player = goalies.catalog.resolve(ranked[0])
     return GoalieStart(player, StarterStatus.UNKNOWN, StarterSource.MODEL_GUESS, as_of), notes
