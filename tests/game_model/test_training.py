@@ -82,6 +82,10 @@ def test_guess_rows_use_the_guessed_goalie_not_the_boxscore(store: sqlite3.Conne
     add_goalie_form(store, 3, 12, 0.0, 3)
     add_game(store, 4, "2015-11-04T00:00", season=20152016)
     add_goalie(store, 4, "TOR", 12, "J. Woll")
+    # The away side has a neutral form in every game, so the differential is the home goalie.
+    for number in (1, 2, 3, 4):
+        add_goalie(store, number, "BOS", 21, "B. Away")
+        add_goalie_form(store, number, 21, 0.0, 0)
     guess = training_rows(store, 20152016, 20152016, GoalieMode.GUESS, names=FEATURES)[-1]
     actual = training_rows(store, 20152016, 20152016, GoalieMode.ACTUAL, names=FEATURES)[-1]
     assert guess.game.game_id == actual.game.game_id == 4

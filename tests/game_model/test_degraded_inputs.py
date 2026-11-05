@@ -4,7 +4,7 @@ import math
 import sqlite3
 
 import pytest
-from seeding import add_game, add_goalie, add_team_form, utc
+from seeding import add_game, add_goalie, add_goalie_form, add_team_form, utc
 
 from hockey_model.game import DegradedInput, Game, MissingKind
 from hockey_model.game_model.elo import EloBook
@@ -118,3 +118,15 @@ def test_rest_does_not_use_a_result_after_the_cutoff(store: sqlite3.Connection) 
     row = _row(store, names=("rest",))
     # TOR rested the cap from the 15th, BOS has no game: both count as fully rested.
     assert row.values["rest"] == pytest.approx(0.0)
+
+
+def test_a_one_sided_goalie_form_gives_the_neutral_differential(store: sqlite3.Connection) -> None:
+    # Only the home goalie has MoneyPuck games. The home value must not pass through alone.
+    for number, team, nhl_id in ((10, HOME, 11), (20, AWAY, 21)):
+        home, away = (team, "MTL") if team == HOME else ("MTL", team)
+        add_game(store, number, "2026-01-18T00:00", home=home, away=away)
+        add_goalie(store, number, team, nhl_id, f"Goalie {nhl_id}")
+    add_goalie_form(store, 10, 11, 3.0, 1)
+    row = _row(store, names=("goalie_gsax",))
+    assert row.values["goalie_gsax"] == NEUTRAL_FORM
+    assert row.imputed == (DegradedInput("goalie_gsax", MissingKind.GOALIE_FORM, (AWAY,)),)

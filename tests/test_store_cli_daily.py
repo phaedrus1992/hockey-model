@@ -134,7 +134,7 @@ def test_daily_names_the_fit_and_the_commit(
 ) -> None:
     db = tmp_path / "store.db"
     conn = connect(db)
-    save_fit(conn, ELO_ONLY, 20252026, datetime(2026, 11, 1, tzinfo=UTC))
+    save_fit(conn, ELO_ONLY, 20252026, datetime(2026, 11, 1, tzinfo=UTC), [])
     conn.close()
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
     monkeypatch.setenv("GITHUB_SHA", "c0ffee")

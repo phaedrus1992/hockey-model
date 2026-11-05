@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from seeding import add_game
+from seeding import add_game, add_goalie, add_goalie_form, add_team_form
 
 from hockey_model.backtest.metrics import MIN_BLOCK_LENGTH, MIN_INDEPENDENT_BLOCKS
 from hockey_model.backtest.runner import BacktestReport
@@ -119,6 +119,13 @@ def _seed(store, seasons, *, game_type: int = 2, first_id: int = 1, games: int =
             add_game(
                 store, game_id, start.strftime("%Y-%m-%dT%H:%M"), season=season, game_type=game_type
             )
+            # Form and a starter for both teams, so the features are measured, not imputed.
+            add_team_form(store, game_id, "TOR", 2.6, 2.5)
+            add_team_form(store, game_id, "BOS", 2.5, 2.6)
+            add_goalie(store, game_id, "TOR", 11, "G TOR")
+            add_goalie(store, game_id, "BOS", 21, "G BOS")
+            add_goalie_form(store, game_id, 11, 2.5, 2)
+            add_goalie_form(store, game_id, 21, 2.5, 2)
     return game_id
 
 

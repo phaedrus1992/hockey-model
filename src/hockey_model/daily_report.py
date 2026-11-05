@@ -1,4 +1,4 @@
-"""Daily prediction report: every game that starts on one UTC day, as Markdown and JSON.
+"""Daily prediction report: every game of one Eastern game day, as Markdown and JSON.
 
 A game that started before the run is still predicted. Its inputs are taken as of the game
 start, and the report marks it as a late run. A game that is over or postponed gets no

@@ -2,7 +2,7 @@
 # Publish the daily report as a GitHub release tagged reports-DATE.
 #
 # Usage: publish-daily-report.sh --date YYYY-MM-DD --report-dir DIR [--help]
-#   --date        UTC day of the report.
+#   --date        Eastern game day of the report.
 #   --report-dir  Directory with report-DATE.md, report-DATE.json, backtest-DATE.json,
 #                 and backtest-games-DATE.csv.
 #

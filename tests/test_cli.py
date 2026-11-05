@@ -3,13 +3,13 @@
 import json
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from seeding import add_game
+from seeding import add_game, add_goalie, add_goalie_form, add_team_form
 
 from hockey_model import cli
 from hockey_model.backtest.metrics import calibration
@@ -243,11 +243,25 @@ def test_cli_refresh_rejects_a_budget_without_a_backfill(
     assert "--budget-seconds needs --backfill-from" in capsys.readouterr().err
 
 
+# A fit refuses a feature imputed in more than the limit of rows. The first game of each team
+# has no earlier form or rest, so the store needs enough games and form for every game.
+STORE_GAMES = 43
+
+
 def _store_with_games(path: Path) -> None:
     conn = connect(path)
     add_game(conn, 2015020001, "2015-11-01T00:00", season=20152016)
     add_game(conn, 2015020002, "2015-11-03T00:00", season=20152016, home="BOS", away="TOR")
     add_game(conn, 2015020003, "2015-11-05T00:00", season=20152016, score=(1, 4))
+    history = range(2015020010, 2015020010 + STORE_GAMES - 3)
+    for n, game_id in enumerate(history):
+        start = datetime(2015, 11, 6, tzinfo=UTC) + timedelta(days=n)
+        home, away = ("TOR", "BOS") if n % 2 else ("BOS", "TOR")
+        stamp = start.strftime("%Y-%m-%dT%H:%M")
+        add_game(conn, game_id, stamp, season=20152016, home=home, away=away)
+    for game_id in (2015020001, 2015020002, 2015020003, *history):
+        add_team_form(conn, game_id, "TOR", 2.6, 2.5)
+        add_team_form(conn, game_id, "BOS", 2.5, 2.6)
     add_game(conn, 2025020001, "2026-12-01T00:00", state="FUT", season=20262027)
     conn.commit()
     conn.close()
@@ -284,11 +298,30 @@ def test_cli_fit_saves_a_fit(
     code = cli.main(["fit", "--through-season", "20152016", "--features", "rest"])
     out = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert out["games"] == 3
+    assert out["games"] == STORE_GAMES
     assert out["features"] == ["rest"]
     assert out["through_season"] == 20152016
     assert out["diagnostics"]["gradient_norm"] < 1e-6
     assert out["diagnostics"]["stop_reason"].startswith("converged")
+
+
+def test_cli_fit_above_the_imputation_limit_exits_two_and_saves_no_fit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    db = tmp_path / "store.db"
+    conn = connect(db)
+    add_game(conn, 2015020001, "2015-11-01T00:00", season=20152016)
+    add_game(conn, 2015020002, "2015-11-03T00:00", season=20152016, home="BOS", away="TOR")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    code = cli.main(["fit", "--through-season", "20152016", "--features", "xg_form"])
+    assert code == 2
+    assert "feature refused" in capsys.readouterr().err
+    conn = connect(db)
+    saved = conn.execute("SELECT COUNT(*) FROM model_fits").fetchone()[0]
+    conn.close()
+    assert saved == 0
 
 
 def test_cli_fit_with_empty_features_saves_the_elo_alone(
@@ -551,13 +584,19 @@ def _write_record(registry: Path, data: dict) -> Path:
 
 
 def _seed_seasons(conn, seasons: range) -> None:
-    """Put 20 final games in each season, so a walk-forward fit has earlier games."""
+    """Put 20 final games in each season, with form and a starter, so a fit measures them."""
     game_id = 0
     for season in seasons:
         for day in range(1, 21):
             game_id += 1
             start = f"{season // 10000:04d}-11-{day:02d}T00:00"
             add_game(conn, game_id, start, season=season)
+            add_team_form(conn, game_id, "TOR", 2.6, 2.5)
+            add_team_form(conn, game_id, "BOS", 2.5, 2.6)
+            add_goalie(conn, game_id, "TOR", 11, "G TOR")
+            add_goalie(conn, game_id, "BOS", 21, "G BOS")
+            add_goalie_form(conn, game_id, 11, 2.5, 2)
+            add_goalie_form(conn, game_id, 21, 2.5, 2)
     conn.commit()
 
 
@@ -688,11 +727,16 @@ def test_cli_game_reports_a_degraded_form_input(
 ) -> None:
     db = tmp_path / "store.db"
     _store_with_games(db)
+    # MTL has no earlier game, so only its form is missing for this game.
+    conn = connect(db)
+    add_game(
+        conn, 2025020002, "2026-12-02T00:00", state="FUT", season=20262027, home="MTL", away="TOR"
+    )
+    conn.commit()
+    conn.close()
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
     assert cli.main(["fit", "--through-season", "20152016", "--features", "xg_form"]) == 0
     capsys.readouterr()
-    assert cli.main(["game", "2025020001"]) == 0
+    assert cli.main(["game", "2025020002"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["degraded_inputs"] == [
-        {"feature": "xg_form", "kind": "xg_form", "teams": ["TOR", "BOS"]}
-    ]
+    assert out["degraded_inputs"] == [{"feature": "xg_form", "kind": "xg_form", "teams": ["MTL"]}]

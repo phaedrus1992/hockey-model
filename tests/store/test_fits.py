@@ -24,21 +24,21 @@ def test_newest_fit_missing_raises(store: sqlite3.Connection) -> None:
 
 def test_save_and_load_a_fit(store: sqlite3.Connection) -> None:
     fit = LogisticFit(("xg_form", "rest"), 0.1, 0.9, {"xg_form": 2.5, "rest": -0.05})
-    save_fit(store, fit, 20252026, T0)
+    save_fit(store, fit, 20252026, T0, [])
     assert newest_fit(store) == fit
 
 
 def test_the_newest_fit_wins(store: sqlite3.Connection) -> None:
     old = LogisticFit((), 0.0, 1.0, {})
     new = LogisticFit(("rest",), 0.2, 1.1, {"rest": 0.01})
-    save_fit(store, new, 20252026, T0 + timedelta(days=1))
-    save_fit(store, old, 20242025, T0)
+    save_fit(store, new, 20252026, T0 + timedelta(days=1), [])
+    save_fit(store, old, 20242025, T0, [])
     assert newest_fit(store) == new
 
 
 def test_save_fit_returns_increasing_ids(store: sqlite3.Connection) -> None:
     fit = LogisticFit((), 0.0, 1.0, {})
-    assert save_fit(store, fit, 20252026, T0) < save_fit(store, fit, 20252026, T0)
+    assert save_fit(store, fit, 20252026, T0, []) < save_fit(store, fit, 20252026, T0, [])
 
 
 @pytest.mark.parametrize(
@@ -85,7 +85,7 @@ _INSERT = (
 
 def test_diagnostics_survive_a_save_and_load(store: sqlite3.Connection) -> None:
     fit = LogisticFit(("rest",), 0.1, 0.9, {"rest": 0.02}, DIAGNOSTICS)
-    save_fit(store, fit, 20252026, T0)
+    save_fit(store, fit, 20252026, T0, [])
     assert newest_fit(store) == fit
 
 
@@ -117,7 +117,7 @@ def test_any_diagnostics_round_trip_through_the_store(
         iterations, objective, gradient_norm, condition, l2, scaling, dict(scaling), "stop"
     )
     fit = LogisticFit((), 0.0, 1.0, {}, diagnostics)
-    save_fit(store, fit, 20252026, T0)
+    save_fit(store, fit, 20252026, T0, [])
     assert newest_fit(store) == fit
 
 
@@ -178,7 +178,7 @@ def test_any_fit_round_trips_through_the_store(
 ) -> None:
     weights = {name: data.draw(_WEIGHT) for name in features}
     fit = LogisticFit(tuple(features), intercept, elo_weight, weights)
-    save_fit(store, fit, 20252026, T0)
+    save_fit(store, fit, 20252026, T0, [])
     assert newest_fit(store) == fit
 
 
@@ -200,7 +200,7 @@ def test_save_fit_refuses_an_invalid_fit_and_leaves_no_row(
     store: sqlite3.Connection, fit: LogisticFit, reason: str
 ) -> None:
     with pytest.raises(StoreError, match=f"save the model fit.*{reason}"):
-        save_fit(store, fit, 20252026, T0)
+        save_fit(store, fit, 20252026, T0, [])
     assert _row_count(store) == 0
 
 
@@ -247,11 +247,11 @@ def test_save_fit_accepts_a_fit_exactly_when_it_follows_the_four_rules(
     )
     before = _row_count(store)
     if valid:
-        save_fit(store, fit, 20252026, T0)
+        save_fit(store, fit, 20252026, T0, [])
         assert _row_count(store) == before + 1
     else:
         with pytest.raises(StoreError):
-            save_fit(store, fit, 20252026, T0)
+            save_fit(store, fit, 20252026, T0, [])
         assert _row_count(store) == before
 
 

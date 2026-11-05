@@ -3,7 +3,7 @@
 import sqlite3
 
 import pytest
-from seeding import add_game
+from seeding import add_game, add_goalie, add_goalie_form, add_team_form
 
 from hockey_model.backtest.runner import run_backtest
 from hockey_model.game_model.features import ATTEMPT_FEATURES, FEATURES
@@ -15,10 +15,14 @@ PLAN = SeasonPlan(
 )
 
 
-def seed(store: sqlite3.Connection, seasons: range) -> None:
+GOALIE = {"TOR": 11, "BOS": 21}
+
+
+def seed(store: sqlite3.Connection, seasons: range, *, short: frozenset[int] = frozenset()) -> None:
     game_id = 0
     for season in seasons:
-        for day in range(1, 21):
+        # A short season has few games, so the first game of each team is a large share.
+        for day in range(1, 6 if season in short else 21):
             game_id += 1
             score = (3, 2) if (game_id * 7) % 5 < 3 else (1, 2)
             home, away = ("TOR", "BOS") if day % 2 else ("BOS", "TOR")
@@ -31,6 +35,13 @@ def seed(store: sqlite3.Connection, seasons: range) -> None:
                 season=season,
                 score=score,
             )
+            # Form and a starting goalie for both teams in every game, so the features are
+            # measured, not imputed.
+            add_team_form(store, game_id, home, 2.6, 2.5)
+            add_team_form(store, game_id, away, 2.5, 2.6)
+            for team, nhl_id in ((home, GOALIE[home]), (away, GOALIE[away])):
+                add_goalie(store, game_id, team, nhl_id, f"Goalie {team}")
+                add_goalie_form(store, game_id, nhl_id, 2.5, 2)
 
 
 def test_the_report_from_a_small_store(store: sqlite3.Connection) -> None:
@@ -68,3 +79,17 @@ def test_an_attempt_run_ships_nothing_and_says_so(store: sqlite3.Connection) -> 
     assert report.live_features == ()
     assert any("Nothing ships from it" in note for note in report.notes)
     assert not any(kind.startswith("xg_form") for kind in report.missing_inputs)
+
+
+def test_a_candidate_over_the_limit_only_in_a_walk_forward_window_is_vetoed(
+    store: sqlite3.Connection,
+) -> None:
+    # Season 2 has five games, so the first game is a fifth of its rows. Selection trains on
+    # seasons 2 to 4, where the share is small. The first scoring fit uses season 2 alone.
+    plan = SeasonPlan(
+        burn_in=2, fit_first=2, select_train=(2, 4), select_validate=(5, 5), scored=(3, 7)
+    )
+    seed(store, range(2, 8), short=frozenset({2}))
+    report, _ = run_backtest(store, plan, candidates=FEATURES)
+    assert {"xg_form", "rest"} <= set(report.vetoed)
+    assert not {"xg_form", "rest"} & set(report.tested_features)
