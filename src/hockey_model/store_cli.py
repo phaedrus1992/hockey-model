@@ -138,6 +138,11 @@ def _refresh(args: argparse.Namespace) -> tuple[object, int]:
         raise HockeyModelError("refresh: a backfill reads every source; drop --starters-only")
     if args.starters_only and args.budget_seconds is not None:
         raise HockeyModelError("refresh: --starters-only has no budget; drop --budget-seconds")
+    if args.budget_seconds is not None and args.backfill_from is None:
+        raise HockeyModelError(
+            "refresh: --budget-seconds needs --backfill-from; a plain refresh that stops early "
+            "would exit 0 and report nothing"
+        )
     if args.budget_seconds is not None and args.budget_seconds <= 0:
         raise HockeyModelError(
             f"refresh: --budget-seconds is {args.budget_seconds}; give a number above 0"
