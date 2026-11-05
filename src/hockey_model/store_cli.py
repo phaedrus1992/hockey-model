@@ -102,7 +102,9 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         metavar="PATH",
         help="write one CSV row per predicted game, in addition to the record's result CSV",
     )
-    daily = add_parser("daily", help="predict every game of one UTC day; write Markdown and JSON")
+    daily = add_parser(
+        "daily", help="predict every game of one Eastern game day; write Markdown and JSON"
+    )
     daily.add_argument(
         "--date",
         type=date.fromisoformat,
