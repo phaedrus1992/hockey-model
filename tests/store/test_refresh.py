@@ -14,7 +14,6 @@ from hockey_model.sources.http import HttpClient
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT, TEAM_GAMES_URL, goalie_games_url
 from hockey_model.store.db import connect
 from hockey_model.store.refresh import refresh, refresh_starters
-from hockey_model.store.refresh_other import current_season_start
 from hockey_model.store.source_reads import record_read
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -250,19 +249,6 @@ def test_refresh_uses_clock_for_each_read(conn: sqlite3.Connection) -> None:
     assert len(stamps) > 1
 
 
-@pytest.mark.parametrize(
-    ("moment", "season"),
-    [
-        (datetime(2026, 1, 10, tzinfo=UTC), 2025),
-        (datetime(2026, 6, 30, tzinfo=UTC), 2025),
-        (datetime(2026, 7, 1, tzinfo=UTC), 2026),
-        (datetime(2026, 11, 3, tzinfo=UTC), 2026),
-    ],
-)
-def test_current_season_start(moment: datetime, season: int) -> None:
-    assert current_season_start(moment) == season
-
-
 def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
     conn: sqlite3.Connection,
 ) -> None:
@@ -272,7 +258,7 @@ def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
         record_read(conn, "moneypuck", goalie_games_url(season), mid_season)
     conn.commit()
     client = FakeClient()
-    refresh(conn, client, now=datetime(2026, 7, 2, tzinfo=UTC), backfill_from=date(2026, 7, 1))
+    refresh(conn, client, now=datetime(2026, 12, 1, tzinfo=UTC), backfill_from=date(2026, 12, 1))
     requested = [url for url in client.urls if "peter-tanner" in url]
     assert goalie_games_url(2025) in requested
     assert goalie_games_url(2026) in requested
@@ -280,7 +266,7 @@ def test_a_finished_season_is_read_again_when_the_last_read_was_mid_season(
 
 
 def test_a_season_read_after_it_ended_is_not_read_again(conn: sqlite3.Connection) -> None:
-    after_season = datetime(2026, 7, 2, tzinfo=UTC)
+    after_season = datetime(2026, 9, 2, tzinfo=UTC)
     record_read(conn, "moneypuck", TEAM_GAMES_URL, after_season)
     for season in range(2014, 2027):
         record_read(conn, "moneypuck", goalie_games_url(season), after_season)
@@ -362,3 +348,29 @@ def test_failed_days_apart_do_not_stop_the_refresh_before_today(conn: sqlite3.Co
     client = FakeClient(_failing_days(*days))
     refresh(conn, client, now=NOW + timedelta(hours=1))
     assert "2026-01-10" in _score_requests(client)
+
+
+def _fresh_moneypuck(conn: sqlite3.Connection, now: datetime, last_season: int) -> None:
+    """Record fresh reads of the team file and every goalie file through ``last_season``."""
+    record_read(conn, "moneypuck", TEAM_GAMES_URL, now - timedelta(days=1))
+    for season in range(2014, last_season + 1):
+        record_read(conn, "moneypuck", goalie_games_url(season), now - timedelta(days=1))
+    conn.commit()
+
+
+@pytest.mark.parametrize(
+    ("moment", "new_season_requested"),
+    [
+        (datetime(2026, 7, 15, tzinfo=UTC), False),
+        (datetime(2026, 8, 31, tzinfo=UTC), False),
+        (datetime(2026, 9, 1, tzinfo=UTC), True),
+    ],
+)
+def test_the_new_goalie_file_is_read_from_the_shared_season_boundary(
+    conn: sqlite3.Connection, moment: datetime, new_season_requested: bool
+) -> None:
+    """Refresh counts the new season from the same boundary as the cohorts and the fit."""
+    _fresh_moneypuck(conn, moment, 2025)
+    client = FakeClient()
+    refresh(conn, client, now=moment, backfill_from=date(2026, 1, 10))
+    assert (goalie_games_url(2026) in client.urls) is new_season_requested

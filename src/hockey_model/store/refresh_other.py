@@ -3,6 +3,7 @@
 from datetime import UTC, date, datetime, timedelta
 
 from hockey_model.game_day import game_day_of
+from hockey_model.game_model.seasons import SEASON_START_MONTH, season_start_year
 from hockey_model.sources.daily_faceoff import STARTERS_URL, fetch_starters
 from hockey_model.sources.espn import ESPN_BASE, fetch_injuries, fetch_scoreboard_starters
 from hockey_model.sources.moneypuck import (
@@ -27,14 +28,7 @@ from hockey_model.store.starter_writes import write_starter_reads
 MONEYPUCK = "moneypuck"
 ESPN_STARTERS = "espn_starters"
 DAILY_FACEOFF = "daily_faceoff"
-# NHL seasons start in the fall, so July is a safe month to count the new season from.
-_SEASON_STARTS_IN_MONTH = 7
 _UNMATCHED_SHOWN = 5
-
-
-def current_season_start(now: datetime) -> int:
-    """Return the first year of the season that ``now`` falls in."""
-    return now.year if now.month >= _SEASON_STARTS_IN_MONTH else now.year - 1
 
 
 def _stale(run: RefreshRun, url: str) -> bool:
@@ -53,7 +47,7 @@ def _goalie_file_stale(run: RefreshRun, season: int, current: int) -> bool:
     if season == current:
         return _stale(run, url)
     last = last_ok_read(run.conn, MONEYPUCK, url)
-    season_over = datetime(season + 1, _SEASON_STARTS_IN_MONTH, 1, tzinfo=UTC)
+    season_over = datetime(season + 1, SEASON_START_MONTH, 1, tzinfo=UTC)
     return last is None or last < season_over
 
 
@@ -66,7 +60,7 @@ def _note_credit(run: RefreshRun, rows_written: int) -> int:
 def moneypuck(run: RefreshRun) -> None:
     """Read the team file and each goalie file that is missing or, for the team file and the
     current season, older than a week. A finished season is read once."""
-    current = current_season_start(run.now)
+    current = season_start_year(run.now.date())
     if _stale(run, TEAM_GAMES_URL):
         run.attempt(
             MONEYPUCK,

@@ -33,13 +33,24 @@ REGULAR_SEASON_TYPE = 2
 OPEN_END = 99_999_999
 
 
-def season_of(day: date) -> int:
-    """Return the NHL season id that a date falls in.
+# A season is counted from this month of its first year until the same month a year later.
+# The fit, the cohorts, and the MoneyPuck refresh all use it, so they agree in July and August.
+SEASON_START_MONTH = 9
 
-    A season runs from September of its first year through the end of the next year.
-    """
-    first_year = day.year if day.month >= 9 else day.year - 1
-    return first_year * 10000 + first_year + 1
+
+def season_start_year(day: date) -> int:
+    """Return the first calendar year of the season that a date falls in."""
+    return day.year if day.month >= SEASON_START_MONTH else day.year - 1
+
+
+def season_code(start_year: int) -> int:
+    """Return the season id, such as 20262027, of the season that starts in ``start_year``."""
+    return start_year * 10000 + start_year + 1
+
+
+def season_of(day: date) -> int:
+    """Return the NHL season id that a date falls in."""
+    return season_code(season_start_year(day))
 
 
 @dataclass(frozen=True, slots=True)

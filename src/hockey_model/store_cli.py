@@ -19,7 +19,7 @@ from hockey_model.game_model.features import (
 )
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
-from hockey_model.game_model.seasons import FIT_FIRST
+from hockey_model.game_model.seasons import FIT_FIRST, season_of
 from hockey_model.game_model.training import game_input, training_rows
 from hockey_model.report_trigger import first_puck_drop, is_due
 from hockey_model.sources.http import HttpClient
@@ -28,7 +28,6 @@ from hockey_model.store.db import connect, db_path_from_env
 from hockey_model.store.fits import newest_fit, save_fit
 from hockey_model.store.reads import game_row
 from hockey_model.store.refresh import RefreshReport, refresh, refresh_starters
-from hockey_model.store.refresh_other import current_season_start
 from hockey_model.store.timestamps import iso_utc
 from hockey_model.types import HockeyModelError
 
@@ -178,7 +177,7 @@ def _fit(args: argparse.Namespace) -> tuple[object, int]:
     features = parse_features(args.features)
     through = args.through_season
     if through is None:
-        through = _season_code(datetime.now(UTC))
+        through = season_of(datetime.now(UTC).date())
     conn = connect(db_path_from_env(os.environ))
     try:
         if features:
@@ -260,12 +259,6 @@ def _report_due(args: argparse.Namespace) -> tuple[object, int]:
         "first_puck_drop_utc": iso_utc(first),
         "due": args.force or is_due(now, first),
     }, 0
-
-
-def _season_code(now: datetime) -> int:
-    """Return the season code, such as 20262027, of the season that holds ``now``."""
-    start = current_season_start(now)
-    return start * 10000 + start + 1
 
 
 def _backtest(args: argparse.Namespace) -> tuple[object, int]:
