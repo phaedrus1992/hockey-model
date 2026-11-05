@@ -140,6 +140,9 @@ For a game that has already started, the model uses the actual starter from the 
 It does not raise an error and does not stop.
 The result notes what was missing, and its `made_after_start` field is true.
 A score or a stat from a game in progress is never stored as final.
+A morning run of `daily-prepare` that did not happen is a different case.
+The report run does not do that work, because it takes about an hour and the report must finish in minutes.
+It fails with exit code 1 and names the fix: run the `daily-prepare` workflow with the date of the day, then run the report again.
 
 ### Source failure
 

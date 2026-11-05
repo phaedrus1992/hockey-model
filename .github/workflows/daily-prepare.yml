@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: "0 8 * * *"
   workflow_dispatch:
+    inputs:
+      date:
+        description: "Eastern game day to prepare, YYYY-MM-DD. Empty means today in Eastern time."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -36,7 +41,13 @@ jobs:
             hockey-model-store-
       - env:
           HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
-        run: bash scripts/daily-prepare.sh
+          DISPATCH_DATE: ${{ inputs.date }}
+        run: |
+          args=()
+          if [[ -n "$DISPATCH_DATE" ]]; then
+            args+=(--date "$DISPATCH_DATE")
+          fi
+          bash scripts/daily-prepare.sh ${args[@]+"${args[@]}"}
       # Saved even after a failure or an early stop (exit code 75), so a partial backfill resumes
       # on the next run.
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

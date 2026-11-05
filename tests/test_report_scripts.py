@@ -355,6 +355,37 @@ def test_prepare_prints_the_refresh_report_when_the_refresh_fails(
     assert not (tmp_path / "store" / "store.db.backfilled").exists()
 
 
+BAD_DAYS = ["../2026-11-04", "2026-13-45", "2026-02-30", "2025-02-29", "2026-00-10", "2026-4-5"]
+
+
+@pytest.mark.parametrize("bad", BAD_DAYS)
+def test_prepare_refuses_a_date_that_is_not_a_real_date(
+    fakes: Path, tmp_path: Path, bad: str
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    result = _run("daily-prepare.sh", env, "--date", bad)
+    assert result.returncode == 2
+    assert "not a real date" in result.stderr
+    assert _calls(tmp_path) == []
+
+
+@pytest.mark.parametrize("bad", BAD_DAYS)
+def test_report_refuses_a_date_that_is_not_a_real_date(
+    fakes: Path, tmp_path: Path, bad: str
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    result = _run("daily-report.sh", env, "--date", bad, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 2
+    assert "not a real date" in result.stderr
+    assert _calls(tmp_path) == []
+
+
+@pytest.mark.parametrize("good", ["2024-02-29", "2000-02-29", "2026-12-31", "2026-11-05"])
+def test_prepare_accepts_a_real_date(fakes: Path, tmp_path: Path, good: str) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", good).returncode == 0
+
+
 def test_prepare_passes_the_budget_from_the_environment(fakes: Path, tmp_path: Path) -> None:
     env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)), BACKFILL_BUDGET_S="60")
     _run("daily-prepare.sh", env, "--date", DAY)
@@ -461,16 +492,16 @@ def test_daily_run_after_the_morning_refreshes_only_the_starters(
     assert (out / f"backtest-games-{DAY}.csv").exists()
 
 
-def test_daily_run_without_the_morning_prepares_first(fakes: Path, tmp_path: Path) -> None:
+def test_daily_run_without_the_morning_fails_and_runs_nothing(fakes: Path, tmp_path: Path) -> None:
     env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
     out = tmp_path / "out"
     result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out))
-    assert result.returncode == 0, result.stderr
-    assert f"no morning preparation for {DAY}" in result.stderr
-    calls = _calls(tmp_path)
-    assert "uv run hockey-model fit --features xg_form,rest" in calls
-    assert "uv run hockey-model refresh --starters-only" not in calls
-    assert (out / f"backtest-{DAY}.json").exists()
+    assert result.returncode == 1
+    assert f"no preparation for {DAY}" in result.stderr
+    assert f"daily-prepare workflow with date {DAY}" in result.stderr
+    assert "came back from the cache" in result.stderr
+    assert _calls(tmp_path) == []
+    assert not (out / f"backtest-{DAY}.json").exists()
 
 
 def test_prepare_and_daily_help_document_the_split(fakes: Path, tmp_path: Path) -> None:
@@ -478,7 +509,7 @@ def test_prepare_and_daily_help_document_the_split(fakes: Path, tmp_path: Path) 
     daily = _run("daily-report.sh", _env(fakes, tmp_path), "--help")
     assert prepare.returncode == daily.returncode == 0
     assert "resumes on the next run" in prepare.stdout
-    assert "late or failed morning run" in daily.stdout
+    assert "daily-prepare workflow" in daily.stdout
 
 
 def test_prepare_stops_when_live_features_holds_a_value_that_is_not_a_name(

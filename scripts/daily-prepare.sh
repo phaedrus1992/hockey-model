@@ -41,6 +41,13 @@ while (($# > 0)); do
   esac
 done
 
+# The day names files next to the store, so only a real date may pass.
+# shellcheck source=scripts/valid-day.sh
+source "$(dirname "$0")/valid-day.sh"
+if [[ -n "$day" ]] && ! is_valid_day "$day"; then
+  echo "daily-prepare: --date '$day' is not a real date YYYY-MM-DD; give an Eastern game day" >&2
+  exit 2
+fi
 if [[ -z "${HOCKEY_MODEL_DB:-}" ]]; then
   echo "daily-prepare: HOCKEY_MODEL_DB must name the store file; see --help" >&2
   exit 2
