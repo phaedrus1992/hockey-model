@@ -61,7 +61,8 @@ store_dir="$(dirname "$HOCKEY_MODEL_DB")"
 mkdir -p "$out_dir"
 if [[ ! -f "$store_dir/prepared-$day" ]]; then
   echo "daily-report: no preparation for $day in $store_dir." >&2
-  echo "daily-report: run the daily-prepare workflow for $day, then run this again." >&2
+  echo "daily-report: run the daily-prepare workflow with date $day, then run this again." >&2
+  echo "daily-report: if it ran, check that it passed and that the store came back from the cache." >&2
   exit 1
 fi
 uv run hockey-model refresh --starters-only

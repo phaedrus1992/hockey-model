@@ -41,6 +41,11 @@ while (($# > 0)); do
   esac
 done
 
+# The day names files next to the store, so only the shape of a date may pass.
+if [[ -n "$day" && ! "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "daily-prepare: --date '$day' is not YYYY-MM-DD; give an Eastern game day" >&2
+  exit 2
+fi
 if [[ -z "${HOCKEY_MODEL_DB:-}" ]]; then
   echo "daily-prepare: HOCKEY_MODEL_DB must name the store file; see --help" >&2
   exit 2

@@ -355,6 +355,14 @@ def test_prepare_prints_the_refresh_report_when_the_refresh_fails(
     assert not (tmp_path / "store" / "store.db.backfilled").exists()
 
 
+def test_prepare_refuses_a_date_that_is_not_a_date_shape(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    result = _run("daily-prepare.sh", env, "--date", "../2026-11-04")
+    assert result.returncode == 2
+    assert "not YYYY-MM-DD" in result.stderr
+    assert _calls(tmp_path) == []
+
+
 def test_prepare_passes_the_budget_from_the_environment(fakes: Path, tmp_path: Path) -> None:
     env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)), BACKFILL_BUDGET_S="60")
     _run("daily-prepare.sh", env, "--date", DAY)
@@ -467,7 +475,8 @@ def test_daily_run_without_the_morning_fails_and_runs_nothing(fakes: Path, tmp_p
     result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out))
     assert result.returncode == 1
     assert f"no preparation for {DAY}" in result.stderr
-    assert "run the daily-prepare workflow" in result.stderr
+    assert f"daily-prepare workflow with date {DAY}" in result.stderr
+    assert "came back from the cache" in result.stderr
     assert _calls(tmp_path) == []
     assert not (out / f"backtest-{DAY}.json").exists()
 

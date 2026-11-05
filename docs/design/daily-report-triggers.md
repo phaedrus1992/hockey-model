@@ -50,8 +50,8 @@ The fit and the backtest each take minutes or more on a full store.
 2. `daily-report.yml` runs at each trigger. When the trigger is due, it refreshes only the schedule, the goalie sources, and the injuries, then predicts and publishes.
 
 When the morning run did not finish, the report run fails and says so.
-It does not do the morning work itself, because that work takes about an hour and the report run must finish in minutes before the puck drop.
-The operator runs the `daily-prepare` workflow for the day, then runs the report again.
+It does not do the morning work itself, because that work is too long to fit before the puck drop and the report run must finish in minutes.
+The operator runs the `daily-prepare` workflow with that date, then runs the report again.
 Both workflows share one concurrency group, because both write the cached store.
 
 ## Actions cost

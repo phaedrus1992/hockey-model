@@ -77,7 +77,8 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked
       # The store is restored from the newest save and saved again after the run. A cache
-      # miss starts a backfill in daily-report.sh.
+      # miss, or a store without the prepared marker of the day, fails the run: run the
+      # daily-prepare workflow for the day first.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/hockey-model
