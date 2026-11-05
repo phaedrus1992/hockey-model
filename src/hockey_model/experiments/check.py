@@ -1,183 +1,276 @@
 """Experiment checker: validate records and enforce immutability.
 
-``hockey-model experiments check`` prints JSON validated against the
-schema. It fails when a record is invalid, when a field other than
-``status`` and ``result`` changed since the registration commit, or
-when a confirmation record has a result without a registration commit
-before the run.
+``hockey-model experiments check`` prints JSON validated against
+``experiments/check_output.schema.json``. It fails when a record is invalid, when
+a field other than ``status`` and ``result`` changed since the commit that
+registered the record, or when a result names a per-game CSV whose hash no longer
+matches the file.
+
+``hockey-model experiments run`` scores one record. A confirmation record scores
+only its cohort and runs once.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
+from hockey_model.backtest.runner import (
+    MODEL_ACTUAL,
+    BacktestReport,
+    GameRecord,
+    run_backtest,
+    write_game_records,
+)
 from hockey_model.experiments.models import (
+    IMMUTABLE_FIELDS,
     STATUS_INCONCLUSIVE,
     STATUS_PROMOTED,
     STATUS_REGISTERED,
     STATUS_REJECTED,
     ExperimentRecord,
+    record_from_text,
     validate_against_schema,
 )
-from hockey_model.experiments.registry import SCHEMA_PATH, list_records
+from hockey_model.experiments.registry import (
+    CHECK_OUTPUT_SCHEMA_PATH,
+    REGISTRY_DIR,
+    RESULTS_DIR,
+    SCHEMA_PATH,
+    get_record,
+    list_records,
+)
+from hockey_model.game_model.seasons import (
+    SeasonPlan,
+    confirmation_plan,
+    exploration_plan,
+    in_cohort,
+    scored_label,
+)
+from hockey_model.store.reads import LATEST_GAME, final_games_before
+from hockey_model.store.timestamps import iso_utc
 from hockey_model.types import HockeyModelError
 
 
-def check_all() -> dict[str, object]:
+class CheckEntry(TypedDict, total=False):
+    """One record's check result, as the checker prints it."""
+
+    id: str
+    status: str
+    valid: bool
+    error: str
+    immutability: str
+    registration_commit: str
+    has_result: bool
+
+
+class CheckOutput(TypedDict):
+    """The whole check run: whether every record passed, and each record's entry."""
+
+    ok: bool
+    records: list[CheckEntry]
+    errors: list[str]
+
+
+class ExperimentCheck(TypedDict, total=False):
+    """The result of checking one record."""
+
+    ok: bool
+    record: CheckEntry
+    error: str
+
+
+class RunPayload(TypedDict, total=False):
+    """What one experiment run reports."""
+
+    ok: bool
+    record_id: str
+    status: str
+    cohort: str
+    scored: str
+    notes: list[str]
+    games_out: str
+
+
+class GameExport(TypedDict):
+    """One scored game, for the per-game export."""
+
+    game_id: int
+    start: str
+    home: str
+    away: str
+    run: str
+    home_win_prob: float
+    home_won: bool
+
+
+def check_all(repo_root: Path | None = None) -> CheckOutput:
     """Check every record in the registry.
 
-    Returns a dict with ``ok`` (bool), ``records`` (list of check results),
-    and ``errors`` (list of error messages).
+    Returns ``ok``, the entry for every record, and the error messages.
     """
-    results: list[dict[str, object]] = []
+    root = repo_root or Path.cwd()
+    results: list[CheckEntry] = []
     errors: list[str] = []
-
-    from hockey_model.experiments.registry import REGISTRY_DIR
 
     for record_id in list_records():
         try:
-            path = REGISTRY_DIR / f"{record_id}.json"
-            record = ExperimentRecord.load(path)
-            validate_against_schema(record, SCHEMA_PATH)
-            result_entry: dict[str, object] = {
-                "id": record.id,
-                "status": record.status,
-                "valid": True,
-            }
-            if record.result is not None:
-                result_entry["has_result"] = True
-            results.append(result_entry)
+            results.append(_check_one(record_id, root))
         except HockeyModelError as exc:
             errors.append(f"{record_id}: {exc}")
             results.append({"id": record_id, "valid": False, "error": str(exc)})
 
-    return {
-        "ok": len(errors) == 0,
-        "records": results,
-        "errors": errors,
-    }
+    output: CheckOutput = {"ok": len(errors) == 0, "records": results, "errors": errors}
+    validate_against_schema(output, CHECK_OUTPUT_SCHEMA_PATH)
+    return output
 
 
-def check_experiment(record_id: str) -> dict[str, object]:
-    """Check a single record by ID. Returns the same format as check_all."""
-    from hockey_model.experiments.registry import REGISTRY_DIR
-
+def check_experiment(record_id: str, repo_root: Path | None = None) -> ExperimentCheck:
+    """Check one record. Return ``{"ok": True, "record": ...}`` or an error."""
     try:
-        path = REGISTRY_DIR / f"{record_id}.json"
-        record = ExperimentRecord.load(path)
-        validate_against_schema(record, SCHEMA_PATH)
-        return {
-            "ok": True,
-            "record": {
-                "id": record.id,
-                "status": record.status,
-                "has_result": record.result is not None,
-            },
-        }
-    except (HockeyModelError, FileNotFoundError) as exc:
+        return {"ok": True, "record": _check_one(record_id, repo_root or Path.cwd())}
+    except HockeyModelError as exc:
         return {"ok": False, "error": str(exc)}
 
 
 def run_experiment(
     record_id: str,
     conn: sqlite3.Connection,
-    fit_first: int,
-    through_season: int,
-    candidate_features: tuple[str, ...],
-) -> tuple[dict[str, object], list[dict[str, object]]]:
-    """Run a backtest for one experiment record.
+    games_out: Path | None = None,
+) -> tuple[RunPayload, list[GameExport]]:
+    """Run one backtest for one experiment record.
 
-    For a confirmation record it refuses when the status is not registered,
-    when the cohort has fewer than min_games, or when the record already
-    has a result. It scores games, writes the result back to the record,
-    and writes the per-game CSV.
+    A confirmation record refuses when its status is not registered, when its
+    cohort holds fewer than ``min_games`` games, or when it already has a result.
+    It scores only cohort games, writes the status and the result back to the
+    record, and writes the per-game CSV.
 
-    For an exploration record it may run again and again.
-
-    Returns a JSON-serializable dict and a list of per-game records.
+    An exploration record may run again and again, and its notes say the run is
+    exploratory.
     """
-    from hockey_model.experiments.registry import REGISTRY_DIR
-
-    path = REGISTRY_DIR / f"{record_id}.json"
-    record = ExperimentRecord.load(path)
+    record = get_record(record_id)
+    validate_against_schema(record, SCHEMA_PATH)
 
     if record.cohort == "confirmation":
         _check_confirmation_can_run(record)
+        plan = confirmation_plan(_cutoff_instant(record))
+        _require_cohort_size(conn, record, plan)
+    else:
+        plan = exploration_plan()
 
-    # Import the backtest runner here to avoid circular imports.
-    from dataclasses import replace
+    report, game_records = run_backtest(conn, plan, record.candidate_features)
 
-    from hockey_model.backtest.runner import run_backtest, write_game_records
-    from hockey_model.game_model.seasons import _confirmation_plan
-    from hockey_model.store.timestamps import iso_utc
-
-    # Extract confirmation start from the record's data_cutoff year.
-    cutoff_year = int(record.data_cutoff[:4]) + 1
-    plan = _confirmation_plan(cutoff_year)
-    report, game_records = run_backtest(conn, plan, candidate_features)
-
-    # Build per-game export entries.
-    export_entries: list[dict[str, object]] = []
-    for gr in game_records:
-        export_entries.append(
-            {
-                "game_id": gr.game_id,
-                "start": iso_utc(gr.start),
-                "home": gr.home,
-                "away": gr.away,
-                "run": gr.run,
-                "home_win_prob": gr.home_win_prob,
-                "home_won": gr.home_won,
-            }
-        )
-
-    # Update the record with the result.
-    new_status = record.status
-    new_result = record.result
     if record.cohort == "confirmation":
-        # Compute result fields from the report.
-        model_run = next((r for r in report.runs if r.name == "model_actual"), None)
-        if model_run is None or model_run.diff_vs_elo_ci is None:
-            new_status = STATUS_INCONCLUSIVE
-        elif model_run.diff_vs_elo_ci[1] < 0.0:
-            new_status = STATUS_PROMOTED
-        else:
-            new_status = STATUS_REJECTED
-
-        # Write per-game CSV to a temp path and compute hash.
-        csv_path = Path(".tmp", f"{record_id}-games.csv")
+        csv_path = RESULTS_DIR / f"{record.id}-games.csv"
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         write_game_records(csv_path, game_records)
-        csv_hash = _file_hash(csv_path)
+        updated = _record_with_result(record, report, csv_path)
+        updated.save(REGISTRY_DIR / f"{updated.id}.json")
+        notes = report.notes
+    else:
+        updated = record
+        notes = report.notes + ("This run is exploratory: it cannot promote a feature.",)
 
-        from hockey_model.experiments.models import _Result
-
-        if model_run is not None and model_run.diff_vs_elo_ci is not None:
-            ci = model_run.diff_vs_elo_ci
-            new_result = _Result(
-                games=len(game_records),
-                difference=ci[0],
-                interval=ci,
-                csv_path=str(csv_path),
-                csv_hash=csv_hash,
-            )
-
-    updated = replace(record, status=new_status, result=new_result)
-    updated.save(REGISTRY_DIR / f"{updated.id}.json")
-
-    return {
+    payload: RunPayload = {
         "ok": True,
         "record_id": updated.id,
         "status": updated.status,
-        "notes": report.notes,
-    }, export_entries
+        "cohort": updated.cohort,
+        "scored": scored_label(plan),
+        "notes": list(notes),
+    }
+    if games_out is not None:
+        write_game_records(games_out, game_records)
+        payload["games_out"] = str(games_out)
+    return payload, [_export_entry(record) for record in game_records]
+
+
+def registration_commit(path: Path, repo_root: Path) -> str | None:
+    """Return the commit that first added the record, or None when git does not track it."""
+    relative = _repo_relative(path, repo_root)
+    if relative is None or not _is_work_tree(repo_root):
+        return None
+    commits = _git(["log", "--format=%H", "--", relative], repo_root).split()
+    return commits[-1] if commits else None
+
+
+def check_immutable_fields(
+    record: ExperimentRecord,
+    registration_commit: str,
+    repo_root: Path,
+) -> None:
+    """Raise when a field that the record carried at registration changed after it.
+
+    A field the record did not carry at registration is a schema addition, not a
+    broken promise, so it is not compared.
+    """
+    path = REGISTRY_DIR / f"{record.id}.json"
+    relative = _repo_relative(path, repo_root)
+    if relative is None:
+        raise HockeyModelError(
+            f"check {record.id!r}: the record is outside the repository {repo_root}"
+        )
+    text = _git(["show", f"{registration_commit}:{relative}"], repo_root)
+    prior = record_from_text(text, f"commit {registration_commit} of {relative}")
+    registered = json.loads(text)
+    current = record.to_dict()
+    before = prior.to_dict()
+    changed = [
+        name for name in IMMUTABLE_FIELDS if name in registered and current[name] != before[name]
+    ]
+    if changed:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: immutable field(s) {', '.join(changed)} changed "
+            f"after registration commit {registration_commit}"
+        )
+
+
+def _check_one(record_id: str, repo_root: Path) -> CheckEntry:
+    """Validate one record, then check its immutability and its result hash."""
+    path = REGISTRY_DIR / f"{record_id}.json"
+    record = get_record(record_id)
+    validate_against_schema(record, SCHEMA_PATH)
+    entry: CheckEntry = {"id": record.id, "status": record.status, "valid": True}
+
+    commit = registration_commit(path, repo_root)
+    if commit is None:
+        entry["immutability"] = "not checked: git does not track the record"
+    else:
+        check_immutable_fields(record, commit, repo_root)
+        entry["registration_commit"] = commit
+
+    if record.result is not None:
+        entry["has_result"] = True
+        _verify_result_hash(record)
+
+    return entry
+
+
+def _verify_result_hash(record: ExperimentRecord) -> None:
+    """Check that the per-game CSV named by the result still matches its recorded hash."""
+    result = record.result
+    if result is None:
+        return
+    path = Path(result.csv_path)
+    if not path.exists():
+        raise HockeyModelError(
+            f"experiment {record.id!r}: the result names {result.csv_path!r}, which is not "
+            "in the repository; commit the per-game CSV with the result"
+        )
+    if _file_hash(path) != result.csv_hash:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: {result.csv_path!r} does not match the hash "
+            f"{result.csv_hash!r} recorded with the result"
+        )
 
 
 def _check_confirmation_can_run(record: ExperimentRecord) -> None:
-    """Check that a confirmation record can be run."""
+    """Check that a confirmation record may run."""
     if record.status != STATUS_REGISTERED:
         raise HockeyModelError(
             f"experiment {record.id!r}: confirmation status is {record.status!r}, "
@@ -190,12 +283,124 @@ def _check_confirmation_can_run(record: ExperimentRecord) -> None:
         )
 
 
+def _cutoff_instant(record: ExperimentRecord) -> datetime:
+    """Return the instant the candidate was frozen, from the record's data_cutoff.
+
+    Game starts are stored in UTC, so a bare date cutoff needs a UTC zone to compare.
+    """
+    try:
+        cutoff = datetime.fromisoformat(record.data_cutoff)
+    except ValueError as exc:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: data_cutoff {record.data_cutoff!r} is not a YYYY-MM-DD date"
+        ) from exc
+    return cutoff if cutoff.tzinfo is not None else cutoff.replace(tzinfo=UTC)
+
+
+def _require_cohort_size(
+    conn: sqlite3.Connection, record: ExperimentRecord, plan: SeasonPlan
+) -> None:
+    """Refuse a confirmation run before the cohort holds enough games."""
+    games = [g for g in final_games_before(conn, LATEST_GAME) if in_cohort(g, plan)]
+    if len(games) < record.min_games:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: the confirmation cohort has {len(games)} games, "
+            f"below the registered minimum of {record.min_games}; run "
+            "`hockey-model refresh` and try again after more cohort games finish"
+        )
+
+
+def _confirmation_status(record: ExperimentRecord, report: BacktestReport) -> str:
+    """Return the status a confirmation run earns.
+
+    Promotion needs the whole 95th-percentile interval below zero. A run whose
+    interval is wider than the effect the record expects is underpowered, so it is
+    inconclusive rather than rejected.
+    """
+    model = next((run for run in report.runs if run.name == MODEL_ACTUAL), None)
+    if model is None or model.diff_vs_elo_ci is None:
+        return STATUS_INCONCLUSIVE
+    low, high = model.diff_vs_elo_ci
+    if record.expected_effect is not None and (high - low) / 2 > abs(record.expected_effect):
+        return STATUS_INCONCLUSIVE
+    return STATUS_PROMOTED if high < 0.0 else STATUS_REJECTED
+
+
+def _record_with_result(
+    record: ExperimentRecord, report: BacktestReport, csv_path: Path
+) -> ExperimentRecord:
+    """Return a copy of the record with the run's status and result written in."""
+    model = next((run for run in report.runs if run.name == MODEL_ACTUAL), None)
+    data = record.to_dict()
+    data["status"] = _confirmation_status(record, report)
+    if model is not None and model.diff_vs_elo_ci is not None:
+        data["result"] = {
+            "games": model.games,
+            "difference": model.mean_diff_vs_elo,
+            "interval": list(model.diff_vs_elo_ci),
+            "csv_path": str(csv_path),
+            "csv_hash": _file_hash(csv_path),
+        }
+    else:
+        data["result"] = None
+    return ExperimentRecord.from_dict(data)
+
+
+def _export_entry(game: GameRecord) -> GameExport:
+    """Turn one backtest game record into an export row."""
+    return {
+        "game_id": game.game_id,
+        "start": iso_utc(game.start),
+        "home": game.home,
+        "away": game.away,
+        "run": game.run,
+        "home_win_prob": game.home_win_prob,
+        "home_won": game.home_won,
+    }
+
+
 def _file_hash(path: Path) -> str:
-    """Compute a simple hash of a file's contents."""
+    """Compute the SHA-256 hash of a file's contents."""
     import hashlib
 
-    data = path.read_bytes()
-    return hashlib.sha256(data).hexdigest()
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _repo_relative(path: Path, repo_root: Path) -> str | None:
+    """Return the path relative to the repository root, or None when it lies outside it."""
+    try:
+        return str(Path(path).resolve().relative_to(repo_root.resolve()))
+    except ValueError:
+        return None
+
+
+def _is_work_tree(repo_root: Path) -> bool:
+    """Return True when repo_root is inside a git work tree."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _git(args: list[str], repo_root: Path) -> str:
+    """Run git in the repository and return its standard output."""
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise HockeyModelError(f"run git in {repo_root}: git is not installed") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.strip() or exc.stdout.strip()
+        raise HockeyModelError(f"git {' '.join(args)} in {repo_root} failed: {detail}") from exc
+    return result.stdout
 
 
 def main() -> None:

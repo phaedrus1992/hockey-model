@@ -23,7 +23,7 @@ from hockey_model.backtest.metrics import (
 )
 from hockey_model.game_model.features import FEATURES, GoalieMode
 from hockey_model.game_model.logistic import LogisticFit, fit_logistic, predict_logistic
-from hockey_model.game_model.seasons import DEFAULT_PLAN, SeasonPlan
+from hockey_model.game_model.seasons import DEFAULT_PLAN, SeasonPlan, in_cohort, scored_label
 from hockey_model.game_model.training import TrainingRow, training_rows
 from hockey_model.sources.moneypuck import MONEYPUCK_CREDIT
 from hockey_model.store.timestamps import iso_utc
@@ -64,6 +64,8 @@ class ScoredRun:
     brier: float
     calibration: tuple[CalibrationBin, ...]
     diff_vs_elo_ci: tuple[float, float] | None
+    # The mean per-game log-loss difference against the Elo. None for the Elo run.
+    mean_diff_vs_elo: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +165,8 @@ def _score_seasons(
     """Fit before each scored season on all earlier seasons, then score that season once."""
     by_game = {r.game.game_id: r for r in guess}
     scored: list[_Scored] = []
-    for season in sorted({r.game.season for r in _in(actual, *plan.scored)}):
+    cohort = [r for r in actual if in_cohort(r.game, plan)]
+    for season in sorted({r.game.season for r in cohort}):
         fit_rows = _in(actual, plan.fit_first, season - 1)
         if not fit_rows:
             raise HockeyModelError(
@@ -172,7 +175,7 @@ def _score_seasons(
             )
         fit = _fit(fit_rows, tested)
         home_rate = sum(_wins(fit_rows)) / len(fit_rows)
-        for row in _in(actual, season, season):
+        for row in [r for r in cohort if r.game.season == season]:
             scored.append(
                 _Scored(
                     row,
@@ -191,11 +194,19 @@ def _scored_run(name: str, games: Sequence[_Scored], elo_losses: Sequence[float]
     probs = [g.by_run[name] for g in games]
     wins = [g.row.home_won for g in games]
     ci = None
+    mean_diff = None
     if name != ELO:
         diffs = [a - b for a, b in zip(per_game_log_loss(probs, wins), elo_losses, strict=True)]
         ci = block_bootstrap_mean_ci(diffs)
+        mean_diff = sum(diffs) / len(diffs)
     return ScoredRun(
-        name, len(games), log_loss(probs, wins), brier(probs, wins), calibration(probs, wins), ci
+        name,
+        len(games),
+        log_loss(probs, wins),
+        brier(probs, wins),
+        calibration(probs, wins),
+        ci,
+        mean_diff,
     )
 
 
@@ -271,7 +282,7 @@ def run_backtest(
     games = _score_seasons(actual, guess, tested, plan)
     if not games:
         raise HockeyModelError(
-            f"backtest: no games in the scored seasons {plan.scored}; "
+            f"backtest: no games in the scored {scored_label(plan)}; "
             "run `hockey-model refresh --backfill-from 2014-10-01`"
         )
     wins = [g.row.home_won for g in games]

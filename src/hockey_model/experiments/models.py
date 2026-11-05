@@ -7,7 +7,10 @@ and the criteria for promoting or rejecting it.
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +37,39 @@ IMMUTABLE_FIELDS = (
     "expected_effect",
     "promotion_criterion",
     "failure_outcome",
+    "candidate_features",
+    "look_number",
 )
+
+# Schema keywords this validator implements. Any other keyword raises, so a record
+# never passes on a rule the validator quietly ignores.
+_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$schema",
+        "type",
+        "enum",
+        "pattern",
+        "format",
+        "items",
+        "minItems",
+        "maxItems",
+        "minimum",
+        "maximum",
+        "required",
+        "properties",
+    }
+)
+_DATE_FORMATS = frozenset({"date"})
+# Each JSON Schema type in the words an error message uses.
+_TYPE_WORDS = {
+    "string": "a string",
+    "integer": "an integer",
+    "number": "a number",
+    "boolean": "a boolean",
+    "object": "an object",
+    "array": "an array",
+    "null": "null",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +112,8 @@ class ExperimentRecord:
     promotion_criterion: str
     failure_outcome: str
     status: str
+    candidate_features: tuple[str, ...] = ()
+    look_number: int = 1
     result: _Result | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -98,7 +135,13 @@ class ExperimentRecord:
         folds = work.get("selection_folds")
         if folds is not None:
             work["selection_folds"] = [tuple(f) for f in folds]
-        return cls(**work)
+        features = work.get("candidate_features")
+        if features is not None:
+            work["candidate_features"] = tuple(features)
+        try:
+            return cls(**work)
+        except TypeError as exc:
+            raise HockeyModelError(f"cannot build a record from {data!r}: {exc}") from exc
 
     @classmethod
     def load(cls, path: Path) -> ExperimentRecord:
@@ -107,11 +150,7 @@ class ExperimentRecord:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             raise HockeyModelError(f"cannot read {path}: {exc}") from exc
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise HockeyModelError(f"invalid JSON in {path}: {exc}") from exc
-        return cls.from_dict(data)
+        return record_from_text(text, str(path))
 
     def save(self, path: Path) -> None:
         """Save this record to a JSON file."""
@@ -121,146 +160,171 @@ class ExperimentRecord:
 
     def immutable_fields(self) -> dict[str, Any]:
         """Return the immutable fields for comparison."""
-        result: dict[str, Any] = {}
-        for name in IMMUTABLE_FIELDS:
-            result[name] = getattr(self, name)
-        return result
+        return {name: getattr(self, name) for name in IMMUTABLE_FIELDS}
 
 
-def record_path(record_id: str) -> Path:
-    """Return the expected path for a record by its ID.
+def record_from_text(text: str, source: str) -> ExperimentRecord:
+    """Build a record from JSON text. ``source`` names where the text came from."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise HockeyModelError(f"invalid JSON in {source}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HockeyModelError(
+            f"read {source}: a record must be a JSON object, got a {type(data).__name__}"
+        )
+    return ExperimentRecord.from_dict(data)
 
-    Records live at ``experiments/NNNN-<slug>.json`` in the repository.
-    """
-    return Path("experiments", f"{record_id}.json")
 
-
-def load_record(record_id: str) -> ExperimentRecord:
-    """Load a record by ID from the repository."""
-    path = record_path(record_id)
-    return ExperimentRecord.load(path)
-
-
-def validate_against_schema(record: ExperimentRecord | dict[str, Any], schema_path: Path) -> None:
+def validate_against_schema(
+    record: ExperimentRecord | Mapping[str, Any], schema_path: Path
+) -> None:
     """Validate a record against a JSON Schema.
 
     Raises ``HockeyModelError`` when the record does not match.
     """
     if not schema_path.exists():
         raise HockeyModelError(f"schema not found: {schema_path}")
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    if isinstance(record, ExperimentRecord):
-        data = record.to_dict()
-    else:
-        data = record
-    _validate_object(data, schema, schema_path)
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HockeyModelError(f"cannot read schema {schema_path}: {exc}") from exc
+    data = record.to_dict() if isinstance(record, ExperimentRecord) else record
+    _validate_value(data, schema, schema_path, "$")
 
 
-def _validate_object(data: dict[str, Any], schema: dict[str, Any], schema_path: Path) -> None:
-    """Validate a dict against a JSON Schema object definition."""
-    properties = schema.get("properties", {})
-    required = schema.get("required", [])
-
-    for prop_name in required:
-        if prop_name not in data:
-            raise HockeyModelError(
-                f"missing required field {prop_name!r} in {schema_path}: {_field_path(prop_name)}"
-            )
-
-    for prop_name, prop_schema in properties.items():
-        if prop_name not in data:
-            continue
-        _validate_value(data[prop_name], prop_schema, schema_path, prop_name)
-
-
-def _validate_value(value: Any, schema: dict[str, Any], schema_path: Path, field_name: str) -> None:
-    """Validate a single value against a schema property."""
-    expected_type = schema.get("type")
-    path = _field_path(field_name)
-
-    if expected_type == "string":
-        _check_string(value, schema, schema_path, path)
-    elif expected_type == "integer":
-        _check_integer(value, schema_path, path)
-    elif expected_type == "number":
-        _check_number(value, schema_path, path)
-    elif expected_type == "boolean":
-        _check_boolean(value, schema_path, path)
-    elif expected_type == "object":
-        _check_object(value, schema, schema_path, field_name, path)
-    elif expected_type == "array":
-        _check_array(value, schema, schema_path, field_name, path)
+def _validate_value(value: Any, schema: dict[str, Any], schema_path: Path, path: str) -> None:
+    """Validate one value against one schema node."""
+    unsupported = sorted(set(schema) - _SCHEMA_KEYWORDS)
+    if unsupported:
+        raise HockeyModelError(
+            f"{path} in {schema_path}: this validator does not implement the schema "
+            f"keyword(s) {', '.join(unsupported)}; add support or remove the keyword"
+        )
+    expected = schema.get("type")
+    if expected is not None and not _type_matches(value, expected):
+        names = expected if isinstance(expected, (list, tuple)) else [expected]
+        wanted = " or ".join(_TYPE_WORDS[name] for name in names)
+        raise HockeyModelError(f"{path}: expected {wanted}, got {type(value).__name__}")
+    _check_enum(value, schema, path)
+    _check_pattern(value, schema, path)
+    _check_format(value, schema, path)
+    _check_bound(value, schema, path)
+    if isinstance(value, (list, tuple)):
+        _check_array(value, schema, schema_path, path)
+    elif isinstance(value, dict):
+        _check_object(value, schema, schema_path, path)
 
 
-def _check_string(value: Any, schema: dict[str, Any], schema_path: Path, path: str) -> None:
-    """Check that a value is a string, optionally from an enum."""
-    if not isinstance(value, str):
-        raise HockeyModelError(f"{path}: expected a string, got {type(value).__name__}")
+def _type_matches(value: Any, expected: str | list[str]) -> bool:
+    """Return True when the value is one of the schema types."""
+    names = expected if isinstance(expected, (list, tuple)) else [expected]
+    return any(_matches_one(value, name) for name in names)
+
+
+def _matches_one(value: Any, name: str) -> bool:
+    """Return True when the value is of one JSON Schema type."""
+    if name == "string":
+        return isinstance(value, str)
+    if name == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if name == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if name == "boolean":
+        return isinstance(value, bool)
+    if name == "object":
+        return isinstance(value, dict)
+    if name == "array":
+        return isinstance(value, (list, tuple))
+    if name == "null":
+        return value is None
+    raise HockeyModelError(f"unknown schema type {name!r}")
+
+
+def _check_enum(value: Any, schema: dict[str, Any], path: str) -> None:
+    """Check that a value is one of the enum values."""
     enum_values = schema.get("enum")
-    if enum_values and value not in enum_values:
-        raise HockeyModelError(f"{path}: value {value!r} not in {enum_values}")
+    if enum_values is not None and value not in enum_values:
+        raise HockeyModelError(f"{path}: value {value!r} not in {list(enum_values)}")
 
 
-def _check_integer(value: Any, schema_path: Path, path: str) -> None:
-    """Check that a value is an integer (not a bool)."""
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise HockeyModelError(f"{path}: expected an integer, got {type(value).__name__}")
+def _check_pattern(value: Any, schema: dict[str, Any], path: str) -> None:
+    """Check that a string matches the schema pattern."""
+    pattern = schema.get("pattern")
+    if pattern is None:
+        return
+    if not isinstance(value, str):
+        raise HockeyModelError(
+            f"{path}: pattern {pattern!r} needs a string, got {type(value).__name__}"
+        )
+    if not _matches_pattern(value, pattern):
+        raise HockeyModelError(f"{path}: {value!r} does not match pattern {pattern!r}")
 
 
-def _check_number(value: Any, schema_path: Path, path: str) -> None:
-    """Check that a value is a number (int or float, not a bool)."""
+def _matches_pattern(value: str, pattern: str) -> bool:
+    """Match a value against a pattern. A bad pattern is a schema bug, not a record bug."""
+    try:
+        return re.compile(pattern).fullmatch(value) is not None
+    except re.error as exc:
+        raise HockeyModelError(f"schema pattern {pattern!r} is not a valid regex: {exc}") from exc
+
+
+def _check_format(value: Any, schema: dict[str, Any], path: str) -> None:
+    """Check the declared string format. Only ``date`` is supported."""
+    fmt = schema.get("format")
+    if fmt is None:
+        return
+    if fmt not in _DATE_FORMATS:
+        raise HockeyModelError(f"{path}: this validator does not implement format {fmt!r}")
+    if not isinstance(value, str):
+        raise HockeyModelError(f"{path}: format {fmt!r} needs a string, got {type(value).__name__}")
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise HockeyModelError(f"{path}: {value!r} is not a YYYY-MM-DD date: {exc}") from exc
+
+
+def _check_bound(value: Any, schema: dict[str, Any], path: str) -> None:
+    """Check the numeric bounds the schema declares. A non-number reaches the type check first."""
     if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise HockeyModelError(f"{path}: expected a number, got {type(value).__name__}")
-
-
-def _check_boolean(value: Any, schema_path: Path, path: str) -> None:
-    """Check that a value is a boolean."""
-    if not isinstance(value, bool):
-        raise HockeyModelError(f"{path}: expected a boolean, got {type(value).__name__}")
-
-
-def _check_object(
-    value: Any,
-    schema: dict[str, Any],
-    schema_path: Path,
-    field_name: str,
-    path: str,
-) -> None:
-    """Check that a value is an object and validate its properties."""
-    if not isinstance(value, dict):
-        raise HockeyModelError(f"{path}: expected an object, got {type(value).__name__}")
-    _validate_object(value, schema, schema_path)
+        return
+    minimum = schema.get("minimum")
+    if minimum is not None and value < minimum:
+        raise HockeyModelError(f"{path}: {value} is below the minimum {minimum}")
+    maximum = schema.get("maximum")
+    if maximum is not None and value > maximum:
+        raise HockeyModelError(f"{path}: {value} is above the maximum {maximum}")
 
 
 def _check_array(
     value: Any,
     schema: dict[str, Any],
     schema_path: Path,
-    field_name: str,
     path: str,
 ) -> None:
-    """Check that a value is an array and validate its items."""
-    if not isinstance(value, (list, tuple)):
-        raise HockeyModelError(f"{path}: expected an array, got {type(value).__name__}")
+    """Check the length bounds of an array and validate its items."""
+    minimum = schema.get("minItems")
+    if minimum is not None and len(value) < minimum:
+        raise HockeyModelError(f"{path}: expected at least {minimum} items, got {len(value)}")
+    maximum = schema.get("maxItems")
+    if maximum is not None and len(value) > maximum:
+        raise HockeyModelError(f"{path}: expected at most {maximum} items, got {len(value)}")
     items_schema = schema.get("items")
-    if items_schema:
-        for i, item in enumerate(value):
-            _validate_value(item, items_schema, schema_path, f"{field_name}[{i}]")
+    if items_schema is not None:
+        for index, item in enumerate(value):
+            _validate_value(item, items_schema, schema_path, f"{path}[{index}]")
 
 
-def _field_path(name: str) -> str:
-    """Format a field name for error messages."""
-    return f"$.{name}"
-
-
-def check_immutable_fields(record: ExperimentRecord, registration_commit: str) -> None:
-    """Check that immutable fields have not changed since registration.
-
-    Raises ``HockeyModelError`` when a field other than ``status`` or
-    ``result`` has been modified since the registration commit.
-    """
-    # This is a no-op when we have no prior state to compare against.
-    # The full check loads the record at the registration commit and
-    # compares immutable fields. Callers pass the registration commit
-    # so the check can load that version and diff.
-    pass
+def _check_object(
+    value: Any,
+    schema: dict[str, Any],
+    schema_path: Path,
+    path: str,
+) -> None:
+    """Check the required keys of an object and validate its properties."""
+    for name in schema.get("required", []):
+        if name not in value:
+            raise HockeyModelError(f"{path}: missing required field {name!r} in {schema_path}")
+    for name, prop_schema in schema.get("properties", {}).items():
+        if name in value:
+            _validate_value(value[name], prop_schema, schema_path, f"{path}.{name}")

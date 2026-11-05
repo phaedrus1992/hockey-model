@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft/2020-12/schema",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": [
     "id",
@@ -10,6 +10,8 @@
     "primary_metric",
     "baseline",
     "min_games",
+    "candidate_features",
+    "look_number",
     "promotion_criterion",
     "failure_outcome",
     "status"
@@ -17,7 +19,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^[0-9]+-.*$"
+      "pattern": "^[0-9]{4}-[a-z0-9][a-z0-9-]*$"
     },
     "title": {
       "type": "string"
@@ -49,7 +51,7 @@
       }
     },
     "selection_folds": {
-      "type": "array",
+      "type": ["array", "null"],
       "items": {
         "type": "array",
         "items": {
@@ -60,10 +62,21 @@
       }
     },
     "min_games": {
-      "type": "integer"
+      "type": "integer",
+      "minimum": 1
+    },
+    "candidate_features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "look_number": {
+      "type": "integer",
+      "minimum": 1
     },
     "expected_effect": {
-      "type": "number"
+      "type": ["number", "null"]
     },
     "promotion_criterion": {
       "type": "string"
@@ -79,7 +92,8 @@
       "type": ["object", "null"],
       "properties": {
         "games": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0
         },
         "difference": {
           "type": "number"
@@ -96,7 +110,8 @@
           "type": "string"
         },
         "csv_hash": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     }

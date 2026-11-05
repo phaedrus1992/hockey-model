@@ -11,6 +11,8 @@
   },
   "selection_folds": null,
   "min_games": 1000,
+  "candidate_features": ["xg_form", "rest"],
+  "look_number": 1,
   "expected_effect": -0.003,
   "promotion_criterion": "95th percentile of block_bootstrap_mean_ci (16-game blocks) of the paired difference, candidate minus Elo, must be below zero",
   "failure_outcome": "ship Elo alone",

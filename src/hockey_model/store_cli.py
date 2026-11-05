@@ -62,6 +62,12 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         help="run a backtest for one experiment record",
     )
     exp_run.add_argument("record_id", type=str)
+    exp_run.add_argument(
+        "--games-out",
+        type=Path,
+        metavar="PATH",
+        help="write one CSV row per predicted game, in addition to the record's result CSV",
+    )
 
 
 def _report_json(report: RefreshReport) -> dict[str, object]:
@@ -163,13 +169,7 @@ def _experiments(args: argparse.Namespace) -> tuple[object, int]:
         try:
             from hockey_model.experiments.check import run_experiment
 
-            result, _ = run_experiment(
-                args.record_id,
-                conn,
-                FIT_FIRST,
-                args.through_season if hasattr(args, "through_season") else 20252026,
-                _CANDIDATE_SETS[args.candidates if hasattr(args, "candidates") else "xg"],
-            )
+            result, _ = run_experiment(args.record_id, conn, args.games_out)
             return result, 0 if result.get("ok") else 1
         finally:
             conn.close()

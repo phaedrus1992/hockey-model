@@ -1,10 +1,10 @@
 """Tests for the experiment registry module.
 
 Covers:
-- list_records (empty, with records)
+- list_records (empty, with records, schema files skipped)
 - get_record (valid, not found)
-- find_record_by_id (valid, not found)
-- register_record (new, duplicate)
+- find_record_by_id (valid, not found, corrupt file)
+- register_record (new, duplicate id, duplicate number, bad id, invalid record)
 """
 
 from pathlib import Path
@@ -13,7 +13,6 @@ import pytest
 
 from hockey_model.experiments.models import ExperimentRecord, HockeyModelError
 from hockey_model.experiments.registry import (
-    REGISTRY_DIR,
     find_record_by_id,
     get_record,
     list_records,
@@ -30,6 +29,8 @@ _VALID_RECORD_DATA = {
     "baseline": {"fit_id": 1, "commit": "abc123"},
     "selection_folds": [[20152016, 20212022]],
     "min_games": 1000,
+    "candidate_features": ["xg_form"],
+    "look_number": 1,
     "expected_effect": -0.003,
     "promotion_criterion": "95th percentile below zero",
     "failure_outcome": "ship Elo alone",
@@ -46,113 +47,84 @@ def _make_record(data: dict | None = None) -> ExperimentRecord:
 class TestListRecords:
     """Test list_records."""
 
-    def test_list_records_empty(self, tmp_path: Path):
-        """List returns an empty list when the registry does not exist."""
-        old_dir = REGISTRY_DIR
-        try:
-            import hockey_model.experiments.registry as reg
+    def test_list_records_empty(self, registry_dir: Path):
+        """List returns an empty list when no records are registered."""
+        assert list_records() == []
 
-            reg.REGISTRY_DIR = tmp_path / "nonexistent"
-            assert list_records() == []
-        finally:
-            import hockey_model.experiments.registry as reg2
+    def test_list_records_sorted(self, registry_dir: Path):
+        """List returns record IDs sorted by name."""
+        (registry_dir / "0002-second.json").write_text("{}", encoding="utf-8")
+        (registry_dir / "0001-first.json").write_text("{}", encoding="utf-8")
+        assert list_records() == ["0001-first", "0002-second"]
 
-            reg2.REGISTRY_DIR = old_dir
-
-    def test_list_records_with_files(self, tmp_path: Path):
-        """List returns record IDs sorted from registry files."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
-
-            reg.REGISTRY_DIR = reg_dir
-            reg_dir.mkdir(parents=True)
-            # Write two record files.
-            (reg_dir / "0002-second.json").write_text("{}", encoding="utf-8")
-            (reg_dir / "0001-first.json").write_text("{}", encoding="utf-8")
-            # Schema file is skipped.
-            (reg_dir / "schema.json").write_text("{}", encoding="utf-8")
-            assert list_records() == ["0001-first", "0002-second"]
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
+    def test_list_records_skips_schema_files(self, registry_dir: Path):
+        """Schema files in the registry are not records."""
+        (registry_dir / "0001-first.json").write_text("{}", encoding="utf-8")
+        (registry_dir / "schema.json").write_text("{}", encoding="utf-8")
+        (registry_dir / "check_output.schema.json").write_text("{}", encoding="utf-8")
+        assert list_records() == ["0001-first"]
 
 
 class TestGetRecord:
     """Test get_record."""
 
-    def test_get_record_not_found(self, tmp_path: Path):
-        """get_record raises when the record does not exist."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+    def test_get_record_returns_the_record(self, registry_dir: Path):
+        """get_record loads a registered record."""
+        record = _make_record()
+        register_record(record)
+        loaded = get_record(record.id)
+        assert loaded.id == record.id
+        assert loaded.candidate_features == ("xg_form",)
 
-            reg.REGISTRY_DIR = reg_dir
-            with pytest.raises(HockeyModelError, match="cannot read"):
-                get_record("0001-missing")
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
+    def test_get_record_not_found(self, registry_dir: Path):
+        """get_record says the record is not found, not that the file cannot be read."""
+        with pytest.raises(HockeyModelError, match="not found"):
+            get_record("0001-missing")
 
 
 class TestFindRecordById:
     """Test find_record_by_id."""
 
-    def test_find_record_not_found(self, tmp_path: Path):
+    def test_find_record_not_found(self, registry_dir: Path):
         """find_record_by_id returns None when the record does not exist."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+        assert find_record_by_id("0001-missing") is None
 
-            reg.REGISTRY_DIR = reg_dir
-            assert find_record_by_id("0001-missing") is None
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
+    def test_find_record_corrupt_raises(self, registry_dir: Path):
+        """find_record_by_id raises when the record file is not valid JSON."""
+        (registry_dir / "0007-broken.json").write_text("{not json", encoding="utf-8")
+        with pytest.raises(HockeyModelError, match="invalid JSON"):
+            find_record_by_id("0007-broken")
 
 
 class TestRegisterRecord:
     """Test register_record."""
 
-    def test_register_new_record(self, tmp_path: Path):
+    def test_register_new_record(self, registry_dir: Path):
         """Registering a new record writes the file."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+        record = _make_record()
+        register_record(record)
+        assert (registry_dir / f"{record.id}.json").exists()
 
-            reg.REGISTRY_DIR = reg_dir
-            reg_dir.mkdir(parents=True)
-            record = _make_record()
-            register_record(record)
-            expected = reg_dir / f"{record.id}.json"
-            assert expected.exists()
-        finally:
-            import hockey_model.experiments.registry as reg2
+    def test_register_duplicate_id_fails(self, registry_dir: Path):
+        """Registering the same id twice raises HockeyModelError."""
+        register_record(_make_record({"id": "0099-first"}))
+        second = _make_record({"id": "0099-first", "title": "duplicate"})
+        with pytest.raises(HockeyModelError, match="already exists"):
+            register_record(second)
 
-            reg2.REGISTRY_DIR = old_dir
+    def test_register_duplicate_number_fails(self, registry_dir: Path):
+        """Two records cannot share the registry number."""
+        register_record(_make_record({"id": "0099-first"}))
+        with pytest.raises(HockeyModelError, match="number 0099 is taken"):
+            register_record(_make_record({"id": "0099-second"}))
 
-    def test_register_duplicate_fails(self, tmp_path: Path):
-        """Registering a duplicate record raises HockeyModelError."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+    def test_register_bad_id_fails(self, registry_dir: Path):
+        """An id without the NNNN-slug shape is refused."""
+        with pytest.raises(HockeyModelError, match="invalid experiment id"):
+            register_record(_make_record({"id": "test-record"}))
 
-            reg.REGISTRY_DIR = reg_dir
-            reg_dir.mkdir(parents=True)
-            record = _make_record({"id": "0099-first"})
-            register_record(record)
-            second = _make_record({"id": "0099-first", "title": "duplicate"})
-            with pytest.raises(HockeyModelError, match="already exists"):
-                register_record(second)
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
+    def test_register_invalid_record_fails(self, registry_dir: Path):
+        """A record that fails the schema is refused before it is written."""
+        with pytest.raises(HockeyModelError, match="not in"):
+            register_record(_make_record({"status": "maybe"}))
+        assert list_records() == []

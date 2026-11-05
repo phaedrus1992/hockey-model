@@ -1,30 +1,29 @@
 """Tests for the experiment checker module.
 
 Covers:
-- check_all (valid records, invalid records, empty)
-- check_experiment (single record)
-- Schema validation
-- Immutable field checking
+- check_all and check_experiment on a temporary registry and on the real registry
+- registration commit lookup and immutability in a real git repository
+- confirmation run rules: status, the one-shot guard, cohort size, cohort membership
+- what a confirmation run writes: status, mean difference, per-game CSV, hash
 """
 
+import hashlib
 import json
+import subprocess
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
+from seeding import add_game
 
 from hockey_model.experiments.check import (
     check_all,
     check_experiment,
+    check_immutable_fields,
+    registration_commit,
+    run_experiment,
 )
-from hockey_model.experiments.models import (
-    ExperimentRecord,
-    _Result,
-)
-from hockey_model.experiments.registry import (
-    REGISTRY_DIR,
-    register_record,
-)
+from hockey_model.experiments.models import ExperimentRecord, HockeyModelError
+from hockey_model.experiments.registry import register_record
 
 _VALID_RECORD_DATA = {
     "id": "0001-valid",
@@ -35,12 +34,18 @@ _VALID_RECORD_DATA = {
     "primary_metric": "mean_per_game_log_loss",
     "baseline": {"fit_id": 1, "commit": "abc123"},
     "selection_folds": [[20152016, 20212022]],
-    "min_games": 1000,
-    "expected_effect": -0.003,
+    "min_games": 10,
+    "candidate_features": ["xg_form", "rest"],
+    "look_number": 1,
+    "expected_effect": None,
     "promotion_criterion": "95th percentile below zero",
     "failure_outcome": "ship Elo alone",
     "status": "registered",
 }
+
+# Seasons a confirmation run needs: selection seasons, validation seasons, and
+# seasons to fit on before the scored cohort.
+FIT_SEASONS = range(20152016, 20262027, 10001)
 
 
 def _make_record(data: dict | None = None) -> ExperimentRecord:
@@ -49,417 +54,370 @@ def _make_record(data: dict | None = None) -> ExperimentRecord:
     return ExperimentRecord.from_dict(merged)
 
 
-def _write_schema(tmp_path: Path, schema: dict) -> Path:
-    """Write a schema file and return its path."""
-    schema_path = tmp_path / "experiments" / "schema.json"
-    schema_path.parent.mkdir(parents=True)
-    schema_path.write_text(json.dumps(schema), encoding="utf-8")
-    return schema_path
+def _register(data: dict | None = None) -> ExperimentRecord:
+    """Register a record in the fixture registry and return it."""
+    record = _make_record(data)
+    register_record(record)
+    return record
+
+
+def _git(root: Path, *args: str) -> str:
+    """Run git in the fixture repository and return its standard output."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def _init_repo(root: Path) -> None:
+    """Make a git repository with an identity and no signing, so commits work anywhere."""
+    _git(root, "init")
+    _git(root, "config", "user.name", "Fixture")
+    _git(root, "config", "user.email", "fixture@example.com")
+    _git(root, "config", "commit.gpgsign", "false")
+
+
+def _seed(store, seasons, *, game_type: int = 2, first_id: int = 1) -> int:
+    """Put 20 final games in each season and return the last game id used."""
+    game_id = first_id - 1
+    for season in seasons:
+        for day in range(1, 21):
+            game_id += 1
+            start = f"{season // 10000:04d}-11-{day:02d}T00:00"
+            add_game(store, game_id, start, season=season, game_type=game_type)
+    return game_id
 
 
 class TestCheckAll:
-    """Test check_all."""
+    """Test check_all on a temporary registry."""
 
-    def test_check_all_empty(self, tmp_path: Path):
+    def test_check_all_empty(self, registry_dir: Path):
         """check_all returns ok when the registry is empty."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is True
+        assert result["records"] == []
+        assert result["errors"] == []
 
-            reg.REGISTRY_DIR = reg_dir
-            _write_schema(reg_dir.parent, {"type": "object", "properties": {}})
-            result = check_all()
-            assert result["ok"] is True
-            assert result["records"] == []
-            assert result["errors"] == []
-        finally:
-            import hockey_model.experiments.registry as reg2
+    def test_check_all_valid_record(self, registry_dir: Path):
+        """A valid record passes, and immutability is reported as unchecked outside git."""
+        _register()
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is True
+        entry = result["records"][0]
+        assert entry["id"] == "0001-valid"
+        assert entry["valid"] is True
+        assert "git does not track" in entry["immutability"]
 
-            reg2.REGISTRY_DIR = old_dir
+    def test_check_all_invalid_record(self, registry_dir: Path):
+        """A record with a status the schema rejects makes check_all fail."""
+        bad = _make_record({"status": "invalid_status"})
+        bad.save(registry_dir / f"{bad.id}.json")
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "not in" in result["errors"][0]
 
-    def test_check_all_with_valid_record(self, tmp_path: Path):
-        """check_all returns ok when all records are valid."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+    def test_check_all_fails_when_a_result_csv_is_missing(self, registry_dir: Path):
+        """A result that names a CSV the repository does not hold is an error."""
+        record = _register(
+            {
+                "result": {
+                    "games": 100,
+                    "difference": -0.005,
+                    "interval": [-0.010, -0.001],
+                    "csv_path": str(registry_dir / "results" / "0001-valid-games.csv"),
+                    "csv_hash": "0" * 64,
+                }
+            }
+        )
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "not in the repository" in result["errors"][0]
+        assert record.status == "registered"
 
-            reg.REGISTRY_DIR = reg_dir
-            _write_schema(
-                reg_dir.parent,
-                {
-                    "type": "object",
-                    "required": ["id", "title", "cohort", "status"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "cohort": {"type": "string", "enum": ["exploration", "confirmation"]},
-                        "status": {
-                            "type": "string",
-                            "enum": ["registered", "rejected", "inconclusive", "promoted"],
-                        },
-                    },
-                },
-            )
-            record = _make_record()
-            register_record(record)
-            result = cast(dict[str, list[dict[str, Any]]], check_all())
-            assert result["ok"] is True
-            assert len(result["records"]) == 1
-            assert result["records"][0]["id"] == "0001-valid"
-        finally:
-            import hockey_model.experiments.registry as reg2
+    def test_check_all_fails_when_a_result_csv_hash_does_not_match(self, registry_dir: Path):
+        """A per-game CSV that changed after the run fails the hash check."""
+        csv_path = registry_dir / "results" / "0001-valid-games.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        csv_path.write_text("game_id,run\n1,elo\n", encoding="utf-8")
+        _register(
+            {
+                "result": {
+                    "games": 1,
+                    "difference": -0.001,
+                    "interval": [-0.002, 0.000],
+                    "csv_path": str(csv_path),
+                    "csv_hash": "0" * 64,
+                }
+            }
+        )
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "does not match the hash" in result["errors"][0]
 
-            reg2.REGISTRY_DIR = old_dir
+    def test_check_all_accepts_a_result_csv_whose_hash_matches(self, registry_dir: Path):
+        """A result whose CSV still matches its hash passes."""
+        csv_path = registry_dir / "results" / "0001-valid-games.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        text = "game_id,run\n1,elo\n"
+        csv_path.write_text(text, encoding="utf-8")
+        _register(
+            {
+                "result": {
+                    "games": 1,
+                    "difference": -0.001,
+                    "interval": [-0.002, 0.000],
+                    "csv_path": str(csv_path),
+                    "csv_hash": hashlib.sha256(text.encode()).hexdigest(),
+                }
+            }
+        )
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is True
+        assert result["records"][0]["has_result"] is True
 
-    def test_check_all_with_invalid_record(self, tmp_path: Path):
-        """check_all returns not ok when a record is invalid."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
-
-            reg.REGISTRY_DIR = reg_dir
-            _write_schema(
-                reg_dir.parent,
-                {
-                    "type": "object",
-                    "required": ["id", "title", "cohort", "status"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "cohort": {"type": "string", "enum": ["exploration", "confirmation"]},
-                        "status": {
-                            "type": "string",
-                            "enum": ["registered", "rejected", "inconclusive", "promoted"],
-                        },
-                    },
-                },
-            )
-            # Write an invalid record directly.
-            bad = {**_VALID_RECORD_DATA, "status": "invalid_status"}
-            bad_record = ExperimentRecord.from_dict(bad)
-            bad_record.save(reg_dir / f"{bad_record.id}.json")
-            result = cast(dict[str, list[str]], check_all())
-            assert result["ok"] is False
-            assert len(result["errors"]) > 0
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
+    def test_check_all_accepts_the_real_registry(self):
+        """The records committed in the repository pass their own checker."""
+        result = check_all(repo_root=Path.cwd())
+        assert result["ok"] is True, result["errors"]
+        ids = [entry["id"] for entry in result["records"]]
+        assert "0001-v1-forward-test" in ids
 
 
 class TestCheckExperiment:
     """Test check_experiment for a single record."""
 
-    def test_check_experiment_valid(self, tmp_path: Path):
+    def test_check_experiment_valid(self, registry_dir: Path):
         """check_experiment returns ok for a valid record."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+        _register()
+        result = check_experiment("0001-valid", repo_root=registry_dir.parent)
+        assert result["ok"] is True
+        assert result["record"]["id"] == "0001-valid"
 
-            reg.REGISTRY_DIR = reg_dir
-            _write_schema(
-                reg_dir.parent,
-                {
-                    "type": "object",
-                    "required": ["id", "title", "cohort", "status"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "cohort": {"type": "string", "enum": ["exploration", "confirmation"]},
-                        "status": {
-                            "type": "string",
-                            "enum": ["registered", "rejected", "inconclusive", "promoted"],
-                        },
-                    },
-                },
-            )
-            record = _make_record()
-            register_record(record)
-            result = cast(dict[str, dict[str, Any]], check_experiment("0001-valid"))
-            assert result["ok"] is True
-            assert result["record"]["id"] == "0001-valid"
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
-
-    def test_check_experiment_not_found(self, tmp_path: Path):
-        """check_experiment returns not ok when the record does not exist."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
-
-            reg.REGISTRY_DIR = reg_dir
-            result = cast(dict[str, dict[str, Any]], check_experiment("0001-missing"))
-            assert result["ok"] is False
-            assert "error" in result
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
+    def test_check_experiment_not_found(self, registry_dir: Path):
+        """check_experiment reports a missing record."""
+        result = check_experiment("0001-missing", repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "not found" in result["error"]
 
 
-class TestResultDataclass:
-    """Test the _Result dataclass."""
+class TestRegistrationCommit:
+    """Test the git lookup of the commit that registered a record."""
 
-    def test_result_serializes(self):
-        """A _Result serializes to a dict correctly."""
-        result = _Result(
-            games=100,
-            difference=-0.005,
-            interval=(-0.010, -0.001),
-            csv_path="results.csv",
-            csv_hash="abc123",
-        )
-        assert result.games == 100
-        assert result.difference == -0.005
-        assert result.interval == (-0.010, -0.001)
+    def test_registration_commit_is_none_without_git(self, registry_dir: Path):
+        """A registry that git does not track has no registration commit."""
+        _register()
+        assert registration_commit(registry_dir / "0001-valid.json", registry_dir.parent) is None
 
-    def test_result_in_record(self):
-        """A record with a result serializes and deserializes correctly."""
-        record = _make_record(
-            {
-                "result": {
-                    "games": 100,
-                    "difference": -0.005,
-                    "interval": [-0.010, -0.001],
-                    "csv_path": "results.csv",
-                    "csv_hash": "abc123",
-                },
-            }
-        )
-        data = record.to_dict()
-        assert data["result"] is not None
-        assert data["result"]["games"] == 100
+    def test_registration_commit_is_the_first_commit(self, tmp_path: Path, registry_dir: Path):
+        """The registration commit is the oldest commit that touched the record."""
+        root = tmp_path
+        _init_repo(root)
+        _register()
+        _git(root, "add", "experiments")
+        _git(root, "commit", "-m", "register the record")
+        first = _git(root, "rev-parse", "HEAD").strip()
+        _git(root, "commit", "--allow-empty", "-m", "an unrelated commit")
+        assert registration_commit(registry_dir / "0001-valid.json", root) == first
 
 
-class TestCheckAllHasResult:
-    """Test check_all with a record that has a result."""
+class TestImmutableFields:
+    """Test the immutability check against a real git repository."""
 
-    def test_check_all_with_result_sets_has_result(self, tmp_path: Path):
-        """check_all sets has_result when the record has a result."""
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+    def test_immutable_fields_pass_when_nothing_changed(self, tmp_path: Path, registry_dir: Path):
+        """A record identical to its registered version passes."""
+        root = tmp_path
+        _init_repo(root)
+        record = _register()
+        _git(root, "add", "experiments")
+        _git(root, "commit", "-m", "register the record")
+        commit = registration_commit(registry_dir / "0001-valid.json", root)
+        assert commit is not None
+        check_immutable_fields(record, commit, root)
 
-            reg.REGISTRY_DIR = reg_dir
-            _write_schema(
-                reg_dir.parent,
-                {
-                    "type": "object",
-                    "required": ["id", "title", "cohort", "status"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "cohort": {"type": "string", "enum": ["exploration", "confirmation"]},
-                        "status": {
-                            "type": "string",
-                            "enum": ["registered", "rejected", "inconclusive", "promoted"],
-                        },
-                    },
-                },
-            )
-            record = _make_record(
-                {
-                    "result": {
-                        "games": 100,
-                        "difference": -0.005,
-                        "interval": [-0.010, -0.001],
-                        "csv_path": "results.csv",
-                        "csv_hash": "abc123",
-                    },
-                }
-            )
-            from hockey_model.experiments.registry import register_record
-
-            register_record(record)
-            from hockey_model.experiments.check import check_all
-
-            result = cast(dict[str, list[dict[str, Any]]], check_all())
-            assert result["ok"] is True
-            assert len(result["records"]) == 1
-            assert result["records"][0]["has_result"] is True
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
-
-
-class TestCheckConfirmationCanRun:
-    """Test _check_confirmation_can_run."""
-
-    def test_check_confirmation_can_run_wrong_status(self, tmp_path: Path):
-        """_check_confirmation_can_run raises when status is not registered."""
-        from hockey_model.experiments.check import _check_confirmation_can_run
-        from hockey_model.experiments.models import STATUS_PROMOTED
-
-        record = _make_record({"status": STATUS_PROMOTED})
-        with pytest.raises(Exception, match="confirmation status is 'promoted'"):
-            _check_confirmation_can_run(record)
-
-    def test_check_confirmation_can_run_has_result(self, tmp_path: Path):
-        """_check_confirmation_can_run raises when the record already has a result."""
-        from hockey_model.experiments.check import _check_confirmation_can_run
-
-        record = _make_record(
-            {
-                "status": "registered",
-                "result": {
-                    "games": 100,
-                    "difference": -0.005,
-                    "interval": [-0.010, -0.001],
-                    "csv_path": "results.csv",
-                    "csv_hash": "abc123",
-                },
-            }
-        )
-        with pytest.raises(Exception, match="already has a result"):
-            _check_confirmation_can_run(record)
-
-
-class TestFileHash:
-    """Test _file_hash."""
-
-    def test_file_hash_deterministic(self, tmp_path: Path):
-        """_file_hash returns the same hash for the same content."""
-        from hockey_model.experiments.check import _file_hash
-
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("hello world", encoding="utf-8")
-        h1 = _file_hash(test_file)
-        h2 = _file_hash(test_file)
-        assert h1 == h2
-        assert len(h1) == 64  # SHA-256 hex digest
-
-
-class TestMain:
-    """Test the main CLI entry point."""
-
-    def test_main_exits_zero_on_valid(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    def test_immutable_fields_raise_when_min_games_changed(
+        self, tmp_path: Path, registry_dir: Path
     ):
-        """main prints JSON and exits zero when all records are valid."""
-        exited: list[bool] = []
+        """Editing min_games after registration fails the check."""
+        root = tmp_path
+        _init_repo(root)
+        registered = _register()
+        _git(root, "add", "experiments")
+        _git(root, "commit", "-m", "register the record")
+        commit = registration_commit(registry_dir / "0001-valid.json", root)
+        assert commit is not None
+        edited = _make_record({"min_games": 5000})
+        edited.save(registry_dir / "0001-valid.json")
+        _git(root, "commit", "-am", "quietly change min_games")
+        with pytest.raises(HockeyModelError, match="immutable field\\(s\\) min_games changed"):
+            check_immutable_fields(edited, commit, root)
+        assert registered.status == "registered"
 
-        def fake_exit(code: int | None = None) -> None:
-            exited.append(True)
-            raise SystemExit(code)
+    def test_a_field_added_after_registration_may_gain_a_value(
+        self, tmp_path: Path, registry_dir: Path
+    ):
+        """A field the record did not carry at registration is a schema addition, not a change."""
+        root = tmp_path
+        _init_repo(root)
+        first = {k: v for k, v in _VALID_RECORD_DATA.items() if k != "candidate_features"}
+        (registry_dir / "0001-valid.json").write_text(json.dumps(first), encoding="utf-8")
+        _git(root, "add", "experiments")
+        _git(root, "commit", "-m", "register the record")
+        commit = registration_commit(registry_dir / "0001-valid.json", root)
+        assert commit is not None
+        current = _make_record({"candidate_features": ["xg_form", "rest"]})
+        check_immutable_fields(current, commit, root)
 
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
-
-            reg.REGISTRY_DIR = reg_dir
-            _write_schema(
-                reg_dir.parent,
-                {
-                    "type": "object",
-                    "required": ["id", "title", "cohort", "status"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "cohort": {"type": "string", "enum": ["exploration", "confirmation"]},
-                        "status": {
-                            "type": "string",
-                            "enum": ["registered", "rejected", "inconclusive", "promoted"],
-                        },
-                    },
-                },
-            )
-            record = _make_record()
-            from hockey_model.experiments.registry import register_record
-
-            register_record(record)
-            monkeypatch.setattr("sys.exit", fake_exit)
-            try:
-                from hockey_model.experiments.check import main
-
-                main()
-            except SystemExit:
-                pass
-            assert len(exited) == 1
-        finally:
-            import hockey_model.experiments.registry as reg2
-
-            reg2.REGISTRY_DIR = old_dir
+    def test_immutable_fields_raise_when_the_record_is_outside_the_repository(
+        self, tmp_path: Path, registry_dir: Path
+    ):
+        """The check names the repository when the record file is not inside it."""
+        inner = tmp_path / "inner"
+        inner.mkdir()
+        _init_repo(inner)
+        _git(inner, "commit", "--allow-empty", "-m", "an empty commit")
+        commit = _git(inner, "rev-parse", "HEAD").strip()
+        record = _register()
+        with pytest.raises(HockeyModelError, match="outside the repository"):
+            check_immutable_fields(record, commit, inner)
 
 
 class TestRunExperiment:
-    """Test run_experiment with mocked dependencies."""
+    """Test run_experiment against a small made-up store."""
 
-    def test_run_experiment_exploration(self, tmp_path: Path):
-        """run_experiment returns ok for an exploration record."""
-        import sqlite3
-        from unittest.mock import MagicMock, patch
+    def test_confirmation_run_scores_the_cohort_and_writes_a_result(
+        self, registry_dir: Path, store
+    ):
+        """A confirmation run scores only cohort games and saves status, result, and CSV."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        record = _register({"id": "0002-forward"})
+        payload, entries = run_experiment(record.id, store)
+        assert payload["ok"] is True
+        assert payload["scored"] == "seasons from 20262027 onward"
+        assert payload["status"] in {"promoted", "rejected", "inconclusive"}
+        assert len(entries) == 3 * 20
 
-        from hockey_model.experiments.check import run_experiment
-        from hockey_model.experiments.registry import register_record
+        saved = ExperimentRecord.load(registry_dir / "0002-forward.json")
+        assert saved.status != "registered"
+        assert saved.result is not None
+        assert saved.result.games == 20
+        assert saved.result.interval[0] <= saved.result.difference <= saved.result.interval[1]
+        csv_path = registry_dir / "results" / "0002-forward-games.csv"
+        assert csv_path.exists()
+        assert saved.result.csv_hash == hashlib.sha256(csv_path.read_bytes()).hexdigest()
+        checked = check_all(repo_root=registry_dir.parent)
+        assert checked["ok"] is True
+        assert checked["records"][0]["has_result"] is True
 
-        old_dir = REGISTRY_DIR
-        reg_dir = tmp_path / "experiments"
-        try:
-            import hockey_model.experiments.registry as reg
+    def test_run_experiment_writes_the_named_games_file(self, registry_dir: Path, store):
+        """A run writes the per-game file the caller names, one row per exported game."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        record = _register({"id": "0009-games"})
+        out = registry_dir / "scratch-games.csv"
+        payload, entries = run_experiment(record.id, store, games_out=out)
+        assert payload["games_out"] == str(out)
+        assert out.read_text(encoding="utf-8").count("\n") == len(entries) + 1
 
-            reg.REGISTRY_DIR = reg_dir
-            _write_schema(
-                reg_dir.parent,
-                {
-                    "type": "object",
-                    "required": ["id", "title", "cohort", "status"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "cohort": {"type": "string", "enum": ["exploration", "confirmation"]},
-                        "status": {
-                            "type": "string",
-                            "enum": ["registered", "rejected", "inconclusive", "promoted"],
-                        },
-                    },
+    def test_confirmation_run_refuses_when_already_run(self, registry_dir: Path, store):
+        """The second confirmation run of a record is refused."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        record = _register({"id": "0002-forward"})
+        run_experiment(record.id, store)
+        with pytest.raises(HockeyModelError, match="expected registered"):
+            run_experiment(record.id, store)
+
+    def test_confirmation_run_refuses_when_a_result_is_already_recorded(
+        self, registry_dir: Path, store
+    ):
+        """A registered record that already holds a result cannot run again."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        _register(
+            {
+                "id": "0008-spent",
+                "result": {
+                    "games": 20,
+                    "difference": -0.001,
+                    "interval": [-0.002, 0.000],
+                    "csv_path": "experiments/results/0008-spent-games.csv",
+                    "csv_hash": "0" * 64,
                 },
-            )
-            record = _make_record({"cohort": "exploration"})
-            register_record(record)
-            conn = sqlite3.connect(str(tmp_path / "test.db"))
-            mock_report = MagicMock()
-            mock_report.runs = []
-            mock_report.notes = []
-            mock_game = MagicMock()
-            mock_game.game_id = 1
-            mock_game.start = MagicMock()
-            mock_game.home = "BOS"
-            mock_game.away = "NYR"
-            mock_game.run = 1
-            mock_game.home_win_prob = 0.55
-            mock_game.home_won = True
-            with patch(
-                "hockey_model.backtest.runner.run_backtest",
-                return_value=(mock_report, [mock_game]),
-            ):
-                with patch(
-                    "hockey_model.backtest.runner.write_game_records",
-                ):
-                    result, entries = run_experiment(
-                        record.id,
-                        conn,
-                        fit_first=2020,
-                        through_season=2025,
-                        candidate_features=("xg",),
-                    )
-                    assert result["ok"] is True
-                    assert result["record_id"] == record.id
-                    assert isinstance(entries, list)
-                    assert len(entries) == 1
-            conn.close()
-        finally:
-            import hockey_model.experiments.registry as reg2
+            }
+        )
+        with pytest.raises(HockeyModelError, match="already has a result"):
+            run_experiment("0008-spent", store)
 
-            reg2.REGISTRY_DIR = old_dir
+    def test_confirmation_run_refuses_when_not_registered(self, registry_dir: Path, store):
+        """A confirmation record with a status other than registered cannot run."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        record = _register({"id": "0003-spent", "status": "promoted"})
+        with pytest.raises(HockeyModelError, match="confirmation status is 'promoted'"):
+            run_experiment(record.id, store)
+
+    def test_confirmation_run_refuses_when_cohort_has_no_games(self, registry_dir: Path, store):
+        """A store with only exploration seasons cannot feed a confirmation cohort."""
+        _seed(store, FIT_SEASONS)
+        record = _register({"id": "0004-early"})
+        with pytest.raises(HockeyModelError, match="confirmation cohort has 0 games"):
+            run_experiment(record.id, store)
+
+    def test_confirmation_run_excludes_playoff_games(self, registry_dir: Path, store):
+        """Playoff games in the confirmation season are not part of the cohort."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], game_type=3, first_id=1000)
+        _seed(store, [20262027], game_type=2, first_id=2000)
+        record = _register({"id": "0005-playoffs", "min_games": 25})
+        with pytest.raises(HockeyModelError, match="cohort has 20 games"):
+            run_experiment(record.id, store)
+
+    def test_confirmation_run_scores_only_games_after_the_cutoff(self, registry_dir: Path, store):
+        """Games that started before the registered data_cutoff are not scored."""
+        _seed(store, FIT_SEASONS)
+        _seed(store, [20262027], first_id=1000)
+        for day in range(1, 11):
+            add_game(store, 3000 + day, f"2026-10-{day:02d}T00:00", season=20262027)
+        record = _register({"id": "0006-cutoff", "min_games": 15})
+        _, entries = run_experiment(record.id, store)
+        scored_ids = {entry["game_id"] for entry in entries}
+        assert scored_ids == set(range(1000, 1020))
+
+    def test_exploration_run_never_writes_a_result(self, registry_dir: Path, store):
+        """An exploration run reports its seasons and says it cannot promote anything."""
+        _seed(store, FIT_SEASONS)
+        record = _register({"id": "0007-explore", "cohort": "exploration"})
+        payload, _ = run_experiment(record.id, store)
+        assert payload["ok"] is True
+        assert payload["scored"] == "seasons 20162017 to 20252026"
+        assert any("exploratory" in note for note in payload["notes"])
+        saved = ExperimentRecord.load(registry_dir / "0007-explore.json")
+        assert saved.status == "registered"
+        assert saved.result is None
+
+
+class TestMain:
+    """Test the CLI entry point."""
+
+    def test_main_exits_zero_on_valid_records(self, registry_dir: Path, monkeypatch):
+        """main prints the check result and exits zero when every record is valid."""
+        exited: list[int] = []
+
+        def fake_exit(code: int | None = None) -> None:
+            exited.append(code if code is not None else 0)
+            raise SystemExit(code)
+
+        _register()
+        monkeypatch.setattr("sys.exit", fake_exit)
+        from hockey_model.experiments.check import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+        assert exited == [0]

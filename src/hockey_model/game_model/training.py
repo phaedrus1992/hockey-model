@@ -3,17 +3,13 @@
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from hockey_model.game import Game
 from hockey_model.game_model.elo import EloBook
 from hockey_model.game_model.features import FEATURES, FeatureRow, GoalieMode, build_features
 from hockey_model.game_model.seasons import ELO_BURN_IN
 from hockey_model.sources.nhl import GameRow
-from hockey_model.store.reads import final_games_before, player_catalog
-
-# Later than any game, so every final game in the store is read.
-_END_OF_TIME = datetime(9000, 1, 1, tzinfo=UTC)
+from hockey_model.store.reads import LATEST_GAME, final_games_before, player_catalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +45,7 @@ def training_rows(
     The Elo replays from the ``burn_in`` season. Each row uses the ratings before its own game
     and no data from after its start.
     """
-    games = [g for g in final_games_before(conn, _END_OF_TIME) if g.season >= burn_in]
+    games = [g for g in final_games_before(conn, LATEST_GAME) if g.season >= burn_in]
     catalog = player_catalog(conn)
     book = EloBook()
     rows: list[TrainingRow] = []

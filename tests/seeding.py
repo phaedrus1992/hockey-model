@@ -28,6 +28,7 @@ def add_game(
     state: str = "OFF",
     fetched_at: datetime = FETCHED,
     season: int = 20252026,
+    game_type: int = 2,
     score: tuple[int, int] = (3, 2),
 ) -> GameRow:
     """Store one game. A final game gets a 3-2 score unless ``score`` says otherwise."""
@@ -35,7 +36,7 @@ def add_game(
     row = GameRow(
         game_id,
         season,
-        2,
+        game_type,
         utc(start),
         home,
         away,

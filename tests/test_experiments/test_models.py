@@ -1,8 +1,7 @@
 """Tests for experiment registry models.
 
 Covers:
-- Schema validation (malformed schema, missing fields, wrong types)
-- Edited registration (immutable fields changed after save)
+- Schema validation (types, unions, patterns, bounds, formats, unknown keywords)
 - Record serialization and deserialization
 - File save and load round-trip
 """
@@ -11,16 +10,15 @@ import json
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from hockey_model.experiments.models import (
     ExperimentRecord,
     HockeyModelError,
-    _validate_value,
-    check_immutable_fields,
-    record_path,
+    record_from_text,
     validate_against_schema,
 )
-from hockey_model.experiments.registry import register_record
 
 # A valid record for testing.
 _VALID_RECORD_DATA = {
@@ -33,6 +31,8 @@ _VALID_RECORD_DATA = {
     "baseline": {"fit_id": 1, "commit": "abc123"},
     "selection_folds": [[20152016, 20212022]],
     "min_games": 1000,
+    "candidate_features": ["xg_form"],
+    "look_number": 1,
     "expected_effect": -0.003,
     "promotion_criterion": "95th percentile below zero",
     "failure_outcome": "ship Elo alone",
@@ -72,17 +72,14 @@ def _make_record(data: dict | None = None) -> ExperimentRecord:
 class TestRecordSerialization:
     """Test record to_dict and from_dict."""
 
-    def test_to_dict_round_trips(self, tmp_path: Path):
+    def test_to_dict_round_trips(self):
         """A record serializes and deserializes to the same values."""
         record = _make_record()
-        data = record.to_dict()
-        restored = ExperimentRecord.from_dict(data)
-        assert restored.id == record.id
-        assert restored.title == record.title
-        assert restored.baseline.fit_id == record.baseline.fit_id
+        restored = ExperimentRecord.from_dict(record.to_dict())
+        assert restored == record
 
-    def test_save_and_load_round_trip(self, tmp_path: Path):
-        """A record saves to JSON and loads back with the same values."""
+    def test_json_round_trip_keeps_values(self, tmp_path: Path):
+        """A record saved to JSON loads back with the same values."""
         record = _make_record()
         path = tmp_path / "0001-test.json"
         record.save(path)
@@ -90,168 +87,212 @@ class TestRecordSerialization:
         assert loaded.id == record.id
         assert loaded.hypothesis == record.hypothesis
         assert loaded.baseline.commit == record.baseline.commit
+        assert loaded.candidate_features == ("xg_form",)
+
+    def test_from_dict_rejects_an_unknown_key(self):
+        """An extra key raises HockeyModelError, not a bare TypeError."""
+        bad = {**_VALID_RECORD_DATA, "promoted": True}
+        with pytest.raises(HockeyModelError, match="cannot build a record"):
+            ExperimentRecord.from_dict(bad)
+
+    def test_result_interval_survives_json(self, tmp_path: Path):
+        """A result interval keeps its two bounds through JSON."""
+        record = _make_record(
+            {
+                "result": {
+                    "games": 100,
+                    "difference": -0.005,
+                    "interval": [-0.010, -0.001],
+                    "csv_path": "experiments/results/0001-test-games.csv",
+                    "csv_hash": "0" * 64,
+                }
+            }
+        )
+        path = tmp_path / "0001-test.json"
+        record.save(path)
+        loaded = ExperimentRecord.load(path)
+        assert loaded.result is not None
+        assert loaded.result.games == 100
+        assert list(loaded.result.interval) == [-0.010, -0.001]
+
+    def test_immutable_fields_lists_every_immutable_name(self):
+        """immutable_fields returns every field that may not change after registration."""
+        fields = _make_record().immutable_fields()
+        assert set(fields) == {
+            "id",
+            "title",
+            "hypothesis",
+            "cohort",
+            "data_cutoff",
+            "primary_metric",
+            "baseline",
+            "selection_folds",
+            "min_games",
+            "expected_effect",
+            "promotion_criterion",
+            "failure_outcome",
+            "candidate_features",
+            "look_number",
+        }
+
+    def test_record_from_text_rejects_a_non_object(self):
+        """A JSON array is not a record."""
+        with pytest.raises(HockeyModelError, match="must be a JSON object"):
+            record_from_text("[1, 2]", "test input")
+
+    def test_record_from_text_rejects_bad_json(self):
+        """Broken JSON names the source of the text."""
+        with pytest.raises(HockeyModelError, match="invalid JSON in test input"):
+            record_from_text("{", "test input")
 
 
 class TestSchemaValidation:
-    """Test validation against JSON Schema."""
+    """Test validation against a JSON Schema."""
 
     def test_valid_record_passes(self, tmp_path: Path):
         """A complete valid record passes schema validation."""
-        record = _make_record()
-        schema_path = _write_schema(tmp_path, _MINIMAL_SCHEMA)
-        validate_against_schema(record, schema_path)
+        validate_against_schema(_make_record(), _write_schema(tmp_path, _MINIMAL_SCHEMA))
 
     def test_missing_required_field_fails(self, tmp_path: Path):
         """A record missing a required field raises HockeyModelError."""
-        record = _make_record()
-        data = record.to_dict()
+        data = _make_record().to_dict()
         del data["status"]
-        schema_path = _write_schema(tmp_path, _MINIMAL_SCHEMA)
         with pytest.raises(HockeyModelError, match="missing required field"):
-            validate_against_schema(data, schema_path)
+            validate_against_schema(data, _write_schema(tmp_path, _MINIMAL_SCHEMA))
 
     def test_missing_schema_file_fails(self, tmp_path: Path):
         """A missing schema file raises HockeyModelError."""
-        record = _make_record()
-        missing = tmp_path / "nonexistent.json"
         with pytest.raises(HockeyModelError, match="schema not found"):
-            validate_against_schema(record, missing)
+            validate_against_schema(_make_record(), tmp_path / "nonexistent.json")
 
     def test_invalid_enum_value_fails(self, tmp_path: Path):
         """A record with an invalid enum value raises HockeyModelError."""
         record = _make_record({"cohort": "invalid_cohort"})
-        schema_path = _write_schema(tmp_path, _MINIMAL_SCHEMA)
         with pytest.raises(HockeyModelError, match="not in"):
-            validate_against_schema(record, schema_path)
+            validate_against_schema(record, _write_schema(tmp_path, _MINIMAL_SCHEMA))
 
     def test_wrong_type_fails(self, tmp_path: Path):
         """A string where an integer is expected raises HockeyModelError."""
         bad = {**_VALID_RECORD_DATA, "min_games": "one thousand"}
-        record = ExperimentRecord.from_dict(bad)
-        schema_path = _write_schema(tmp_path, _MINIMAL_SCHEMA)
-        with pytest.raises(HockeyModelError, match="expected"):
-            validate_against_schema(record, schema_path)
-
-
-class TestValidateValue:
-    """Test the _validate_value helper."""
-
-    def test_string_validates(self, tmp_path: Path):
-        """A string value passes when the schema expects a string."""
-        _validate_value("hello", {"type": "string"}, tmp_path, "$.field")
-
-    def test_string_rejects_non_string(self, tmp_path: Path):
-        """A non-string value fails when the schema expects a string."""
-        with pytest.raises(HockeyModelError, match="expected a string"):
-            _validate_value(42, {"type": "string"}, tmp_path, "$.field")
-
-    def test_integer_rejects_float(self, tmp_path: Path):
-        """A float value fails when the schema expects an integer."""
         with pytest.raises(HockeyModelError, match="expected an integer"):
-            _validate_value(3.14, {"type": "integer"}, tmp_path, "$.field")
+            validate_against_schema(bad, _write_schema(tmp_path, _MINIMAL_SCHEMA))
 
-    def test_integer_rejects_bool(self, tmp_path: Path):
-        """A bool value fails when the schema expects an integer."""
-        with pytest.raises(HockeyModelError, match="expected an integer"):
-            _validate_value(True, {"type": "integer"}, tmp_path, "$.field")
+    def test_unreadable_schema_fails(self, tmp_path: Path):
+        """A schema file that is not JSON names the file."""
+        schema_path = tmp_path / "schema.json"
+        schema_path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(HockeyModelError, match="cannot read schema"):
+            validate_against_schema(_make_record(), schema_path)
 
-    def test_boolean_validates(self, tmp_path: Path):
-        """A boolean value passes when the schema expects a boolean."""
-        _validate_value(True, {"type": "boolean"}, tmp_path, "$.field")
+    def test_union_type_accepts_null(self, tmp_path: Path):
+        """A field declared as object or null accepts null."""
+        schema = {"type": "object", "properties": {"result": {"type": ["object", "null"]}}}
+        validate_against_schema({"result": None}, _write_schema(tmp_path, schema))
 
-    def test_boolean_rejects_string(self, tmp_path: Path):
-        """A string value fails when the schema expects a boolean."""
-        with pytest.raises(HockeyModelError, match="expected a boolean"):
-            _validate_value("yes", {"type": "boolean"}, tmp_path, "$.field")
+    def test_union_type_rejects_a_string(self, tmp_path: Path):
+        """A field declared as object or null rejects a string."""
+        schema = {"type": "object", "properties": {"result": {"type": ["object", "null"]}}}
+        with pytest.raises(HockeyModelError, match="expected an object or null, got str"):
+            validate_against_schema(
+                {"result": "promoted, trust me"}, _write_schema(tmp_path, schema)
+            )
 
-    def test_array_validates_items(self, tmp_path: Path):
-        """An array of integers validates when the schema expects integer items."""
-        schema = {"type": "array", "items": {"type": "integer"}}
-        _validate_value([1, 2, 3], schema, tmp_path, "$.arr")
-
-    def test_array_rejects_wrong_item_type(self, tmp_path: Path):
-        """An array with a wrong item type fails."""
-        schema = {"type": "array", "items": {"type": "integer"}}
-        with pytest.raises(HockeyModelError, match="expected an integer"):
-            _validate_value([1, "two", 3], schema, tmp_path, "$.arr")
-
-    def test_object_validates_properties(self, tmp_path: Path):
-        """An object with required properties validates."""
+    def test_union_type_checks_object_properties(self, tmp_path: Path):
+        """A union type still validates the properties of an object value."""
         schema = {
             "type": "object",
-            "required": ["name"],
-            "properties": {"name": {"type": "string"}},
+            "properties": {
+                "result": {
+                    "type": ["object", "null"],
+                    "properties": {"games": {"type": "integer"}},
+                }
+            },
         }
-        _validate_value({"name": "test"}, schema, tmp_path, "$.obj")
+        with pytest.raises(HockeyModelError, match=r"\$\.result\.games: expected an integer"):
+            validate_against_schema({"result": {"games": "lots"}}, _write_schema(tmp_path, schema))
 
-    def test_object_rejects_missing_required(self, tmp_path: Path):
-        """An object missing a required property fails."""
+    def test_pattern_is_enforced(self, tmp_path: Path):
+        """A string that does not match the pattern fails."""
         schema = {
             "type": "object",
-            "required": ["name"],
-            "properties": {"name": {"type": "string"}},
+            "properties": {"id": {"type": "string", "pattern": "^[0-9]{4}-.*$"}},
         }
-        with pytest.raises(HockeyModelError, match="missing required field"):
-            _validate_value({}, schema, tmp_path, "$.obj")
+        with pytest.raises(HockeyModelError, match="does not match pattern"):
+            validate_against_schema({"id": "xyz"}, _write_schema(tmp_path, schema))
+
+    def test_array_bounds_are_enforced(self, tmp_path: Path):
+        """minItems and maxItems fail a fold with the wrong length."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "selection_folds": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 2,
+                        "maxItems": 2,
+                    },
+                }
+            },
+        }
+        with pytest.raises(HockeyModelError, match="expected at most 2 items"):
+            validate_against_schema(
+                {"selection_folds": [[1, 2, 3]]}, _write_schema(tmp_path, schema)
+            )
+        with pytest.raises(HockeyModelError, match="expected at least 2 items"):
+            validate_against_schema({"selection_folds": [[1]]}, _write_schema(tmp_path, schema))
+
+    def test_date_format_is_enforced(self, tmp_path: Path):
+        """A data_cutoff that is not a date fails."""
+        schema = {
+            "type": "object",
+            "properties": {"data_cutoff": {"type": "string", "format": "date"}},
+        }
+        with pytest.raises(HockeyModelError, match="is not a YYYY-MM-DD date"):
+            validate_against_schema({"data_cutoff": "whenever"}, _write_schema(tmp_path, schema))
+
+    def test_numeric_minimum_is_enforced(self, tmp_path: Path):
+        """A min_games of zero fails a minimum of one."""
+        schema = {"type": "object", "properties": {"min_games": {"type": "integer", "minimum": 1}}}
+        with pytest.raises(HockeyModelError, match="below the minimum"):
+            validate_against_schema({"min_games": 0}, _write_schema(tmp_path, schema))
+
+    def test_unknown_keyword_raises(self, tmp_path: Path):
+        """A schema keyword the validator does not implement fails instead of passing quietly."""
+        schema = {"type": "object", "properties": {"id": {"type": "string", "const": "0001-test"}}}
+        with pytest.raises(HockeyModelError, match="does not implement the schema keyword"):
+            validate_against_schema({"id": "anything"}, _write_schema(tmp_path, schema))
+
+    def test_nested_paths_are_named(self, tmp_path: Path):
+        """An error names the full path of the failing field."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "baseline": {"type": "object", "properties": {"fit_id": {"type": "integer"}}}
+            },
+        }
+        with pytest.raises(HockeyModelError, match=r"\$\.baseline\.fit_id"):
+            validate_against_schema({"baseline": {"fit_id": 1.5}}, _write_schema(tmp_path, schema))
 
 
-class TestImmutableFields:
-    """Test immutability checking."""
+class TestSchemaRoundTrip:
+    """Property test: every record built from valid parts validates against the real schema."""
 
-    def test_immutable_fields_returns_correct_fields(self):
-        """immutable_fields returns all immutable fields."""
-        record = _make_record()
-        fields = record.immutable_fields()
-        assert "id" in fields
-        assert "hypothesis" in fields
-        assert "cohort" in fields
-        assert "baseline" in fields
-
-    def test_check_immutable_fields_no_prior_state(self):
-        """check_immutable_fields is a no-op when there is no prior state."""
-        record = _make_record()
-        # Should not raise when called with no registration_commit comparison
-        check_immutable_fields(record, "abc123")
-
-
-class TestRecordPath:
-    """Test the record_path helper."""
-
-    def test_record_path_format(self):
-        """record_path returns the expected path."""
-        path = record_path("0001-test")
-        assert str(path) == "experiments/0001-test.json"
-
-
-class TestRegisterRecord:
-    """Test the register_record function."""
-
-    def test_register_new_record(self, tmp_path: Path):
-        """Registering a new record writes the file."""
-        import hockey_model.experiments.registry as reg
-
-        old_dir = reg.REGISTRY_DIR
-        reg.REGISTRY_DIR = tmp_path / "experiments"
-        try:
-            record = _make_record()
-            register_record(record)
-            expected = tmp_path / "experiments" / f"{record.id}.json"
-            assert expected.exists()
-        finally:
-            reg.REGISTRY_DIR = old_dir
-
-    def test_register_duplicate_fails(self, tmp_path: Path):
-        """Registering a duplicate record raises HockeyModelError."""
-        import hockey_model.experiments.registry as reg
-
-        old_dir = reg.REGISTRY_DIR
-        reg.REGISTRY_DIR = tmp_path / "experiments"
-        try:
-            record = _make_record({"id": "0099-first"})
-            register_record(record)
-            # Create a second record with the same ID.
-            second = _make_record({"id": "0099-first", "title": "duplicate"})
-            with pytest.raises(HockeyModelError, match="already exists"):
-                register_record(second)
-        finally:
-            reg.REGISTRY_DIR = old_dir
+    @given(
+        number=st.integers(min_value=1, max_value=9999),
+        slug=st.from_regex(r"[a-z][a-z0-9-]{0,20}", fullmatch=True),
+        min_games=st.integers(min_value=1, max_value=100000),
+        looks=st.integers(min_value=1, max_value=50),
+    )
+    def test_a_well_formed_record_passes_the_registry_schema(self, number, slug, min_games, looks):
+        """Any record with valid parts passes the registry schema."""
+        record = _make_record(
+            {
+                "id": f"{number:04d}-{slug}",
+                "min_games": min_games,
+                "look_number": looks,
+                "selection_folds": None,
+            }
+        )
+        validate_against_schema(record, Path("experiments/schema.json"))
