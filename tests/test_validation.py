@@ -106,19 +106,6 @@ class TestValidateProjection:
         neg = Projection(-1.0, -3.0, 1.0, LEVEL)
         assert validate_projection(neg, LEVEL, "op", None) is neg
 
-    @given(
-        low=st.floats(0, 100, allow_nan=False),
-        width=st.floats(0, 100, allow_nan=False),
-        frac=st.floats(0, 1, allow_nan=False),
-    )
-    def test_a_valid_nonnegative_projection_always_passes(
-        self, low: float, width: float, frac: float
-    ) -> None:
-        high = low + width
-        point = min(max(low + frac * width, low), high)
-        projection = Projection(point, low, high, LEVEL)
-        assert validate_projection(projection, LEVEL, "op", Domain.NONNEGATIVE) is projection
-
 
 class TestStatDomain:
     @pytest.mark.parametrize("stat", ["save_pct", "shooting_pct"])
@@ -327,3 +314,17 @@ def test_a_probability_is_valid_exactly_when_it_is_finite_and_in_range(value: fl
     else:
         with pytest.raises(ProbabilityError):
             validate_probability(value, "op", "p")
+
+
+@given(
+    low=st.floats(0, 100, allow_nan=False),
+    width=st.floats(0, 100, allow_nan=False),
+    frac=st.floats(0, 1, allow_nan=False),
+)
+def test_a_valid_nonnegative_projection_always_passes(
+    low: float, width: float, frac: float
+) -> None:
+    high = low + width
+    point = min(max(low + frac * width, low), high)
+    projection = Projection(point, low, high, LEVEL)
+    assert validate_projection(projection, LEVEL, "op", Domain.NONNEGATIVE) is projection
