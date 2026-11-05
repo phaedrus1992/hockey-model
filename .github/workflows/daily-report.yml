@@ -1,0 +1,107 @@
+# Publishes the daily NHL prediction report as a dated GitHub release.
+#
+# The schedule fires at each trigger slot. The gate job publishes only at the last slot
+# before the day's first puck drop, and skips every later slot once the release exists.
+# The cron minute and hours MUST match TRIGGER_MINUTE_UTC and TRIGGER_HOURS_UTC in
+# report_trigger.py.
+name: daily-report
+
+on:
+  schedule:
+    - cron: "44 0,11,15-23 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Publish now, even outside the trigger slot. A published day is still skipped."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# The same group as daily-prepare, so only one run writes the cached store at a time.
+concurrency:
+  group: hockey-model-store
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      due: ${{ steps.gate.outputs.due }}
+      day: ${{ steps.gate.outputs.day }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_FORCE: ${{ inputs.force }}
+        run: |
+          args=()
+          if [[ "$DISPATCH_FORCE" == "true" ]]; then
+            args+=(--force)
+          fi
+          bash scripts/report-gate.sh "${args[@]}" > gate.json
+          cat gate.json
+          echo "due=$(jq -r '.due' gate.json)" >> "$GITHUB_OUTPUT"
+          echo "day=$(jq -r '.date' gate.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    if: needs.gate.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DAY: ${{ needs.gate.outputs.day }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      # The store is restored from the newest save and saved again after the run. A cache
+      # miss starts a backfill in daily-report.sh.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/hockey-model
+          key: hockey-model-store-${{ github.run_id }}
+          restore-keys: |
+            hockey-model-store-
+      - env:
+          HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
+        run: bash scripts/daily-report.sh --date "$DAY" --out-dir "$RUNNER_TEMP/report"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: daily-report
+          if-no-files-found: error
+          path: ${{ runner.temp }}/report
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always()
+        with:
+          path: ${{ runner.temp }}/hockey-model
+          key: hockey-model-store-${{ github.run_id }}
+
+  publish:
+    needs: [gate, build]
+    if: needs.gate.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      DAY: ${{ needs.gate.outputs.day }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: daily-report
+          path: ${{ runner.temp }}/report
+      - run: bash scripts/publish-daily-report.sh --date "$DAY" --report-dir "$RUNNER_TEMP/report"

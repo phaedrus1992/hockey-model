@@ -1,13 +1,14 @@
 """Public input and output types for the NHL game win probability model."""
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from hockey_model.matchup import check_win_pair
 from hockey_model.models import GameModel
 from hockey_model.team_codes import NHL_TEAM_CODES
 from hockey_model.types import HockeyModelError, Player, Projection
+from hockey_model.utc import require_utc
 
 
 class StarterStatus(StrEnum):
@@ -50,7 +51,7 @@ class GoalieStart:
     read_at: datetime
 
     def __post_init__(self) -> None:
-        _require_utc(self.read_at, "read_at")
+        require_utc(self.read_at, "read_at")
 
 
 def _require_team_code(role: str, code: str) -> None:
@@ -83,7 +84,7 @@ class Game:
             raise HockeyModelError(f"home and away must differ, both are {home!r}")
         _require_team_code("home", self.home)
         _require_team_code("away", self.away)
-        _require_utc(self.start, "start")
+        require_utc(self.start, "start")
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +120,7 @@ def game_win_probability(
     if not 0.0 < level < 1.0:
         raise HockeyModelError(f"level must be inside the open interval (0, 1), got {level}")
     moment = datetime.now(UTC) if as_of is None else as_of
-    _require_utc(moment, "as_of")
+    require_utc(moment, "as_of")
     result = model.predict(game, moment, level)
     label = f"predict game {game.game_id} ({game.away} at {game.home})"
     check_win_pair((result.home_win, result.away_win), label)
@@ -133,10 +134,3 @@ def game_win_probability(
         )
         missing = (*result.missing, late)
     return replace(result, missing=missing, made_after_start=made_after_start)
-
-
-def _require_utc(value: datetime, field: str) -> None:
-    if value.tzinfo is None or value.utcoffset() != timedelta(0):
-        raise HockeyModelError(
-            f"{field} must be a timezone-aware UTC datetime (offset +00:00), got {value!r}"
-        )
