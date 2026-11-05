@@ -1,4 +1,4 @@
-"""Experiment checker: validate records and enforce immutability.
+"""Experiment checker: validate records and enforce the registry rules.
 
 ``hockey-model experiments check`` prints JSON validated against
 ``CHECK_OUTPUT_SCHEMA`` in ``schemas.py``. It fails when a record is invalid, when
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,18 +26,20 @@ from hockey_model.backtest.runner import (
     run_backtest,
     write_game_records,
 )
+from hockey_model.experiments.history import (
+    check_immutable_fields,
+    check_one_shot,
+    registration_commit,
+)
 from hockey_model.experiments.models import (
-    IMMUTABLE_FIELDS,
     STATUS_INCONCLUSIVE,
     STATUS_PROMOTED,
     STATUS_REGISTERED,
     STATUS_REJECTED,
     ExperimentRecord,
-    record_from_text,
     validate_against_schema,
 )
 from hockey_model.experiments.registry import (
-    REGISTRY_DIR_NAME,
     get_record,
     list_records,
     registry_dir,
@@ -197,53 +198,19 @@ def run_experiment(
     return payload, [_export_entry(record) for record in game_records]
 
 
-def registration_commit(path: Path, repo_root: Path) -> str | None:
-    """Return the commit that first added the record, or None when git does not track it."""
-    relative = _repo_relative(path, repo_root)
-    if relative is None or not _is_work_tree(repo_root):
-        return None
-    commits = _git(["log", "--format=%H", "--", relative], repo_root).split()
-    return commits[-1] if commits else None
-
-
-def check_immutable_fields(
-    record: ExperimentRecord,
-    registration_commit: str,
-    repo_root: Path,
-) -> None:
-    """Raise when a field that the record carried at registration changed after it.
-
-    A field the record did not carry at registration is a schema addition, not a
-    broken promise, so it is not compared.
-    """
-    relative = f"{REGISTRY_DIR_NAME}/{record.id}.json"
-    text = _git(["show", f"{registration_commit}:{relative}"], repo_root)
-    prior = record_from_text(text, f"commit {registration_commit} of {relative}")
-    registered = json.loads(text)
-    current = record.to_dict()
-    before = prior.to_dict()
-    changed = [
-        name for name in IMMUTABLE_FIELDS if name in registered and current[name] != before[name]
-    ]
-    if changed:
-        raise HockeyModelError(
-            f"experiment {record.id!r}: immutable field(s) {', '.join(changed)} changed "
-            f"after registration commit {registration_commit}"
-        )
-
-
 def _check_one(record_id: str, repo_root: Path) -> CheckEntry:
-    """Validate one record, then check its immutability and its result hash."""
-    path = registry_dir(repo_root) / f"{record_id}.json"
+    """Validate one record, then check its status, immutability, and result."""
     record = get_record(record_id, repo_root)
     validate_against_schema(record, EXPERIMENT_SCHEMA)
+    _check_status_matches_result(record)
     entry: CheckEntry = {"id": record.id, "status": record.status, "valid": True}
 
-    commit = registration_commit(path, repo_root)
+    commit = registration_commit(record.id, repo_root)
     if commit is None:
         entry["immutability"] = "not checked: git does not track the record"
     else:
         check_immutable_fields(record, commit, repo_root)
+        check_one_shot(record, repo_root)
         entry["registration_commit"] = commit
 
     if record.result is not None:
@@ -251,6 +218,23 @@ def _check_one(record_id: str, repo_root: Path) -> CheckEntry:
         _verify_result_hash(record)
 
     return entry
+
+
+def _check_status_matches_result(record: ExperimentRecord) -> None:
+    """Raise when the status and the result disagree.
+
+    A registered record holds no result. A promoted or rejected record holds one.
+    An inconclusive record may lack one, because a run without an interval writes none.
+    """
+    has_result = record.result is not None
+    if record.status == STATUS_REGISTERED and has_result:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: status is 'registered' but the record holds a result"
+        )
+    if record.status in {STATUS_PROMOTED, STATUS_REJECTED} and not has_result:
+        raise HockeyModelError(
+            f"experiment {record.id!r}: status is {record.status!r} but the record holds no result"
+        )
 
 
 def _verify_result_hash(record: ExperimentRecord) -> None:
@@ -366,43 +350,6 @@ def _file_hash(path: Path) -> str:
     import hashlib
 
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _repo_relative(path: Path, repo_root: Path) -> str | None:
-    """Return the path relative to the repository root, or None when it lies outside it."""
-    try:
-        return str(Path(path).resolve().relative_to(repo_root.resolve()))
-    except ValueError:
-        return None
-
-
-def _is_work_tree(repo_root: Path) -> bool:
-    """Return True when repo_root is inside a git work tree."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0 and result.stdout.strip() == "true"
-
-
-def _git(args: list[str], repo_root: Path) -> str:
-    """Run git in the repository and return its standard output."""
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except FileNotFoundError as exc:
-        raise HockeyModelError(f"run git in {repo_root}: git is not installed") from exc
-    except subprocess.CalledProcessError as exc:
-        detail = exc.stderr.strip() or exc.stdout.strip()
-        raise HockeyModelError(f"git {' '.join(args)} in {repo_root} failed: {detail}") from exc
-    return result.stdout
 
 
 def main() -> None:

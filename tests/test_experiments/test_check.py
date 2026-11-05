@@ -18,9 +18,12 @@ from seeding import add_game
 from hockey_model.experiments.check import (
     check_all,
     check_experiment,
-    check_immutable_fields,
-    registration_commit,
     run_experiment,
+)
+from hockey_model.experiments.history import (
+    check_immutable_fields,
+    check_one_shot,
+    registration_commit,
 )
 from hockey_model.experiments.models import ExperimentRecord, HockeyModelError
 from hockey_model.experiments.registry import register_record
@@ -127,22 +130,22 @@ class TestCheckAll:
 
     def test_check_all_fails_when_a_result_csv_is_missing(self, registry_dir: Path):
         """A result that names a CSV the repository does not hold is an error."""
-        record = _register(
+        _register(
             registry_dir,
             {
+                "status": "rejected",
                 "result": {
                     "games": 100,
                     "difference": -0.005,
                     "interval": [-0.010, -0.001],
                     "csv_path": str(registry_dir / "results" / "0001-valid-games.csv"),
                     "csv_hash": "0" * 64,
-                }
+                },
             },
         )
         result = check_all(repo_root=registry_dir.parent)
         assert result["ok"] is False
         assert "not in the repository" in result["errors"][0]
-        assert record.status == "registered"
 
     def test_check_all_fails_when_a_result_csv_hash_does_not_match(self, registry_dir: Path):
         """A per-game CSV that changed after the run fails the hash check."""
@@ -152,13 +155,14 @@ class TestCheckAll:
         _register(
             registry_dir,
             {
+                "status": "rejected",
                 "result": {
                     "games": 1,
                     "difference": -0.001,
                     "interval": [-0.002, 0.000],
                     "csv_path": str(csv_path),
                     "csv_hash": "0" * 64,
-                }
+                },
             },
         )
         result = check_all(repo_root=registry_dir.parent)
@@ -174,13 +178,14 @@ class TestCheckAll:
         _register(
             registry_dir,
             {
+                "status": "rejected",
                 "result": {
                     "games": 1,
                     "difference": -0.001,
                     "interval": [-0.002, 0.000],
                     "csv_path": str(csv_path),
                     "csv_hash": hashlib.sha256(text.encode()).hexdigest(),
-                }
+                },
             },
         )
         result = check_all(repo_root=registry_dir.parent)
@@ -223,7 +228,7 @@ class TestRegistrationCommit:
     def test_registration_commit_is_none_without_git(self, registry_dir: Path):
         """A registry that git does not track has no registration commit."""
         _register(registry_dir)
-        assert registration_commit(registry_dir / "0001-valid.json", registry_dir.parent) is None
+        assert registration_commit("0001-valid", registry_dir.parent) is None
 
     def test_registration_commit_is_the_first_commit(self, tmp_path: Path, registry_dir: Path):
         """The registration commit is the oldest commit that touched the record."""
@@ -234,7 +239,7 @@ class TestRegistrationCommit:
         _git(root, "commit", "-m", "register the record")
         first = _git(root, "rev-parse", "HEAD").strip()
         _git(root, "commit", "--allow-empty", "-m", "an unrelated commit")
-        assert registration_commit(registry_dir / "0001-valid.json", root) == first
+        assert registration_commit("0001-valid", root) == first
 
 
 class TestImmutableFields:
@@ -247,7 +252,7 @@ class TestImmutableFields:
         record = _register(registry_dir)
         _git(root, "add", "experiments")
         _git(root, "commit", "-m", "register the record")
-        commit = registration_commit(registry_dir / "0001-valid.json", root)
+        commit = registration_commit("0001-valid", root)
         assert commit is not None
         check_immutable_fields(record, commit, root)
 
@@ -260,7 +265,7 @@ class TestImmutableFields:
         registered = _register(registry_dir)
         _git(root, "add", "experiments")
         _git(root, "commit", "-m", "register the record")
-        commit = registration_commit(registry_dir / "0001-valid.json", root)
+        commit = registration_commit("0001-valid", root)
         assert commit is not None
         edited = _make_record({"min_games": 5000})
         edited.save(registry_dir / "0001-valid.json")
@@ -279,7 +284,7 @@ class TestImmutableFields:
         (registry_dir / "0001-valid.json").write_text(json.dumps(first), encoding="utf-8")
         _git(root, "add", "experiments")
         _git(root, "commit", "-m", "register the record")
-        commit = registration_commit(registry_dir / "0001-valid.json", root)
+        commit = registration_commit("0001-valid", root)
         assert commit is not None
         current = _make_record({"candidate_features": ["xg_form", "rest"]})
         check_immutable_fields(current, commit, root)
@@ -295,6 +300,89 @@ class TestImmutableFields:
         record = _register(registry_dir)
         with pytest.raises(HockeyModelError, match="git show"):
             check_immutable_fields(record, commit, root)
+
+
+class TestStatusMatchesResult:
+    """Test that the checker ties status to result."""
+
+    _RESULT = {
+        "games": 20,
+        "difference": -0.001,
+        "interval": [-0.002, -0.0005],
+        "csv_path": "experiments/results/0001-valid-games.csv",
+        "csv_hash": "0" * 64,
+    }
+
+    def test_promoted_without_a_result_fails(self, registry_dir: Path):
+        """A record cannot claim promotion with no result behind it."""
+        _register(registry_dir, {"status": "promoted"})
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "holds no result" in result["errors"][0]
+
+    def test_registered_with_a_result_fails(self, registry_dir: Path):
+        """A registered record that holds a result was edited back by hand."""
+        _register(registry_dir, {"result": self._RESULT})
+        result = check_all(repo_root=registry_dir.parent)
+        assert result["ok"] is False
+        assert "'registered' but the record holds a result" in result["errors"][0]
+
+    def test_inconclusive_without_a_result_passes(self, registry_dir: Path):
+        """A run with no interval is inconclusive and writes no result."""
+        _register(registry_dir, {"status": "inconclusive"})
+        assert check_all(repo_root=registry_dir.parent)["ok"] is True
+
+
+class TestOneShot:
+    """Test the one-shot rule against a real git repository."""
+
+    def _commit_result(self, root: Path, registry_dir: Path) -> ExperimentRecord:
+        """Commit a registered record, then commit its result."""
+        _init_repo(root)
+        record = _register(registry_dir)
+        _git(root, "add", "experiments")
+        _git(root, "commit", "-m", "register the record")
+        data = record.to_dict()
+        data["status"] = "rejected"
+        data["result"] = {
+            "games": 20,
+            "difference": 0.001,
+            "interval": [0.0005, 0.002],
+            "csv_path": "experiments/results/0001-valid-games.csv",
+            "csv_hash": "0" * 64,
+        }
+        with_result = ExperimentRecord.from_dict(data)
+        with_result.save(registry_dir / "0001-valid.json")
+        _git(root, "commit", "-am", "record the result")
+        return with_result
+
+    def test_a_kept_result_passes(self, tmp_path: Path, registry_dir: Path):
+        """A record that still holds its committed result passes."""
+        with_result = self._commit_result(tmp_path, registry_dir)
+        check_one_shot(with_result, tmp_path)
+
+    def test_a_reverted_result_fails(self, tmp_path: Path, registry_dir: Path):
+        """Resetting a record to registered and null after a run fails the check."""
+        with_result = self._commit_result(tmp_path, registry_dir)
+        data = with_result.to_dict()
+        data["status"] = "registered"
+        data["result"] = None
+        reverted = ExperimentRecord.from_dict(data)
+        reverted.save(registry_dir / "0001-valid.json")
+        _git(tmp_path, "commit", "-am", "revert the result")
+        with pytest.raises(HockeyModelError, match="one-shot"):
+            check_one_shot(reverted, tmp_path)
+
+    def test_a_replaced_result_fails(self, tmp_path: Path, registry_dir: Path):
+        """Swapping a committed result for another one fails the check."""
+        with_result = self._commit_result(tmp_path, registry_dir)
+        data = with_result.to_dict()
+        data["result"] = {**data["result"], "difference": -0.01}
+        swapped = ExperimentRecord.from_dict(data)
+        swapped.save(registry_dir / "0001-valid.json")
+        _git(tmp_path, "commit", "-am", "swap the result")
+        with pytest.raises(HockeyModelError, match="one-shot"):
+            check_one_shot(swapped, tmp_path)
 
 
 class TestRunExperiment:
