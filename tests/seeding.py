@@ -60,8 +60,11 @@ def add_goalie(
     fetched_at: datetime = FETCHED,
 ) -> None:
     """Store a goalie line of a final game, and the goalie as a player."""
+    # One goalie line, not a whole boxscore, so only the goalie's own team is named.
     rows = BoxscoreRows(
         game_id,
+        team,
+        "",
         [PlayerRow(nhl_id, name, "G", team)],
         [],
         [GoalieRow(team, nhl_id, 3600 if started else 0, started)],

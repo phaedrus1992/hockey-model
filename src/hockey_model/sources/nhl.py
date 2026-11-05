@@ -80,9 +80,14 @@ class GoalieRow(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class BoxscoreRows:
-    """The players, skater lines, and goalie lines of one final game."""
+    """The players, skater lines, and goalie lines of one final game.
+
+    ``home`` and ``away`` are the teams the boxscore declares, not teams read off the rows.
+    """
 
     game_id: int
+    home: str
+    away: str
     players: list[PlayerRow]
     skaters: list[SkaterRow]
     goalies: list[GoalieRow]
@@ -218,9 +223,14 @@ def _parse_goalies(side: Mapping[str, object], team: str, out: BoxscoreRows) -> 
         )
 
 
-def _check_starters(rows: BoxscoreRows, where: str) -> None:
-    """Raise unless each team has one starting goalie, so a stored game always has its starter."""
-    for team in sorted({g.team for g in rows.goalies} | {p.team for p in rows.players}):
+def _check_sides(rows: BoxscoreRows, where: str) -> None:
+    """Raise unless both declared teams have skater lines and one starting goalie.
+
+    The teams come from the boxscore header, so a side with no rows at all cannot pass.
+    """
+    for team in (rows.home, rows.away):
+        if not any(s.team == team for s in rows.skaters):
+            raise SourceParseError(SOURCE, f"{where} has no skater rows for {team}")
         count = sum(1 for g in rows.goalies if g.team == team and g.started)
         if count != 1:
             raise SourceParseError(
@@ -241,12 +251,19 @@ def parse_boxscore(payload: object) -> BoxscoreRows:
     if state not in FINAL_STATES:
         raise SourceParseError(SOURCE, f"{where} is not final (state {state!r}); read it later")
     stats = as_mapping(SOURCE, field(SOURCE, top, "playerByGameStats", where), f"{where} stats")
-    out = BoxscoreRows(game_id, [], [], [])
-    for key in ("homeTeam", "awayTeam"):
-        team = as_mapping(SOURCE, field(SOURCE, top, key, where), f"{where} {key}")
+    codes = {
+        key: _team_code(
+            as_mapping(SOURCE, field(SOURCE, top, key, where), f"{where} {key}"), f"{where} {key}"
+        )
+        for key in ("homeTeam", "awayTeam")
+    }
+    if codes["homeTeam"] == codes["awayTeam"]:
+        raise SourceParseError(SOURCE, f"{where} names {codes['homeTeam']} as both teams")
+    out = BoxscoreRows(game_id, codes["homeTeam"], codes["awayTeam"], [], [], [])
+    for key, code in codes.items():
         side = as_mapping(SOURCE, field(SOURCE, stats, key, where), f"{where} stats {key}")
-        _parse_side(side, _team_code(team, f"{where} {key}"), out)
-    _check_starters(out, where)
+        _parse_side(side, code, out)
+    _check_sides(out, where)
     return out
 
 

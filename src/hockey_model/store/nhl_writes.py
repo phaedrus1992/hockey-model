@@ -65,29 +65,43 @@ def _write_players(conn: sqlite3.Connection, rows: BoxscoreRows, stamp: str) -> 
 def write_boxscore(
     conn: sqlite3.Connection, game_id: int, rows: BoxscoreRows, fetched_at: datetime
 ) -> None:
-    """Store the players and stat lines of one final game, once."""
+    """Store the players and stat lines of one final game.
+
+    A row already stored for the game stays as it was, with its own fetch time. A later
+    boxscore adds only the rows that are missing, which repairs a game stored with one side.
+    """
     stamp = iso_utc(fetched_at)
     _write_players(conn, rows, stamp)
     conn.executemany(
-        "INSERT INTO skater_games (game_id, team, nhl_id, toi_seconds, goals, assists,"
+        "INSERT OR IGNORE INTO skater_games (game_id, team, nhl_id, toi_seconds, goals, assists,"
         " fetched_at) VALUES (?,?,?,?,?,?,?)",
         [(game_id, *skater, stamp) for skater in rows.skaters],
     )
     conn.executemany(
-        "INSERT INTO goalie_games (game_id, team, nhl_id, toi_seconds, started, fetched_at)"
+        "INSERT OR IGNORE INTO goalie_games"
+        " (game_id, team, nhl_id, toi_seconds, started, fetched_at)"
         " VALUES (?,?,?,?,?,?)",
         [(game_id, g.team, g.nhl_id, g.toi_seconds, int(g.started), stamp) for g in rows.goalies],
     )
 
 
 def games_missing_boxscore(conn: sqlite3.Connection) -> list[int]:
-    """Return the ids of final games that have no goalie rows yet, oldest first."""
+    """Return the ids of final games whose boxscore is not stored for both teams, oldest first.
+
+    A team is stored when it has a skater line and a goalie line. A game with one side only
+    is listed again, so a refresh reads it and adds the missing side.
+    """
     marks = ",".join("?" for _ in FINAL_STATES)
     cursor = conn.execute(
         "SELECT DISTINCT g.game_id FROM games g"
         f" WHERE g.state IN ({marks})"
-        " AND NOT EXISTS (SELECT 1 FROM goalie_games w WHERE w.game_id = g.game_id)"
-        " ORDER BY g.start_utc, g.game_id",
+        " AND NOT ("
+        + " AND ".join(
+            f"EXISTS (SELECT 1 FROM {table} t WHERE t.game_id = g.game_id AND t.team = g.{side})"
+            for side in ("home", "away")
+            for table in ("skater_games", "goalie_games")
+        )
+        + ") ORDER BY g.start_utc, g.game_id",
         sorted(FINAL_STATES),
     )
     return [row[0] for row in cursor]

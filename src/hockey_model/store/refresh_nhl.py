@@ -1,16 +1,20 @@
 """The NHL steps of a refresh: score days, then boxscores."""
 
+import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
 from hockey_model.game_day import game_day_of
 from hockey_model.sources.nhl import (
     FINAL_STATES,
+    BoxscoreRows,
     boxscore_url,
     fetch_boxscore,
     fetch_score_day,
     score_day_url,
 )
+from hockey_model.sources.shape_errors import SourceParseError
 from hockey_model.store.nhl_writes import games_missing_boxscore, write_boxscore, write_games
+from hockey_model.store.reads import game_row
 from hockey_model.store.refresh_context import MAX_UNIT_FAILURES, RefreshRun
 from hockey_model.store.source_reads import failed_since, failed_urls, last_ok_read
 from hockey_model.store.timestamps import parse_iso_utc
@@ -85,6 +89,26 @@ def score_days(run: RefreshRun) -> None:
         day += timedelta(days=1)
 
 
+def check_boxscore_identity(conn: sqlite3.Connection, game_id: int, rows: BoxscoreRows) -> None:
+    """Raise unless the boxscore names the stored game's teams, home and away as stored.
+
+    A reversed pair is a different game, so it is never read as equal. The check runs before
+    any row is written.
+    """
+    stored = game_row(conn, game_id)
+    if stored is None:
+        raise SourceParseError(
+            "nhl",
+            f"boxscore for game {game_id} has no stored game to match; read the score day first",
+        )
+    if (rows.home, rows.away) != (stored.home, stored.away):
+        raise SourceParseError(
+            "nhl",
+            f"boxscore for game {game_id} names {rows.away} at {rows.home}, but the stored game "
+            f"is {stored.away} at {stored.home}",
+        )
+
+
 def boxscores(run: RefreshRun) -> None:
     """Read the boxscore of each final game that has none. Each game is its own unit."""
     failures = 0
@@ -103,7 +127,9 @@ def boxscores(run: RefreshRun) -> None:
             continue
 
         def unit(stamp: datetime, game_id: int = game_id) -> int:
-            write_boxscore(run.conn, game_id, fetch_boxscore(run.client, game_id), stamp)
+            rows = fetch_boxscore(run.client, game_id)
+            check_boxscore_identity(run.conn, game_id, rows)
+            write_boxscore(run.conn, game_id, rows, stamp)
             return 1
 
         failures = 0 if run.attempt(BOXSCORES, url, unit) else failures + 1
