@@ -47,22 +47,33 @@ store_dir="$(dirname "$HOCKEY_MODEL_DB")"
 mkdir -p "$store_dir"
 
 # The marker is written only after a backfill finishes. A store file without it is partial.
+if ! command -v jq >/dev/null; then
+  echo "daily-prepare: jq is not installed; it reads the refresh report and live_features" >&2
+  exit 1
+fi
 marker="$HOCKEY_MODEL_DB.backfilled"
 if [[ ! -f "$marker" ]]; then
   echo "daily-prepare: the store has no finished backfill; backfilling from 2014-10-01." >&2
   echo "daily-prepare: the backfill reads one year per window, newest first." >&2
   report="$store_dir/refresh-report.json"
+  refresh_rc=0
   uv run hockey-model refresh --backfill-from 2014-10-01 \
-    --budget-seconds "${BACKFILL_BUDGET_S:-1800}" >"$report"
+    --budget-seconds "${BACKFILL_BUDGET_S:-1800}" >"$report" || refresh_rc=$?
   cat "$report"
-  if ! complete="$(jq -er '.backfill_complete | if type == "boolean" then tostring else error("not a boolean") end' "$report")"; then
-    echo "daily-prepare: $report has no backfill_complete flag; the marker needs it" >&2
-    exit 1
+  if ((refresh_rc != 0)); then
+    exit "$refresh_rc"
   fi
-  if [[ "$complete" != "true" ]]; then
-    echo "daily-prepare: the backfill stopped before it reached 2014-10-01; run it again." >&2
-    exit 75
-  fi
+  case "$(jq -r '.backfill_complete' "$report")" in
+    true) ;;
+    false)
+      echo "daily-prepare: the backfill stopped before it reached 2014-10-01; run it again." >&2
+      exit 75
+      ;;
+    *)
+      echo "daily-prepare: $report has no backfill_complete flag; the marker needs it" >&2
+      exit 1
+      ;;
+  esac
   touch "$marker"
 else
   uv run hockey-model refresh
@@ -75,10 +86,6 @@ backtest_json="$store_dir/backtest-$day.json"
 uv run hockey-model backtest --games-out "$backtest_games" >"$backtest_json"
 # The fit serves only the features that passed the backtest's joint test. An empty list is
 # the Elo alone, and the fit command takes it as an empty --features value.
-if ! command -v jq >/dev/null; then
-  echo "daily-prepare: jq is not installed; it reads live_features from $backtest_json" >&2
-  exit 1
-fi
 if ! live_features="$(jq -er '.live_features | if type == "array" and all(type == "string") then join(",") else error("not names") end' "$backtest_json")"; then
   echo "daily-prepare: $backtest_json has no live_features list of names; the fit needs it" >&2
   exit 1
