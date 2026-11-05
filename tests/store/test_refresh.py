@@ -356,17 +356,47 @@ def test_a_failed_score_day_older_than_the_window_is_left_alone(conn: sqlite3.Co
     assert "2025-11-01" not in _score_requests(client)
 
 
-def test_a_backfill_skips_a_score_day_that_failed_before_the_window(
+def test_a_score_day_that_failed_in_two_reads_is_skipped_and_named(
     conn: sqlite3.Connection,
 ) -> None:
     failing = _failing_days("2025-11-01")
-    first = refresh(conn, FakeClient(failing), now=NOW, backfill_from=date(2025, 11, 1))
-    assert len(first.errors) == 1
+    for hours in (0, 1):
+        report = refresh(
+            conn,
+            FakeClient(failing),
+            now=NOW + timedelta(hours=hours),
+            backfill_from=date(2025, 11, 1),
+        )
+        assert len(report.errors) == 1
     client = FakeClient(failing)
-    report = refresh(conn, client, now=NOW + timedelta(hours=1), backfill_from=date(2025, 11, 1))
+    report = refresh(conn, client, now=NOW + timedelta(hours=2), backfill_from=date(2025, 11, 1))
     assert "2025-11-01" not in _score_requests(client)
     assert report.errors == ()
-    assert any("nhl_scores: 1 old failed days skipped" in n for n in report.notes)
+    assert any("nhl_scores: skipped 2025-11-01, which failed" in n for n in report.notes)
+
+
+def test_a_score_day_with_one_failed_read_is_still_read_in_a_backfill(
+    conn: sqlite3.Connection,
+) -> None:
+    refresh(conn, FakeClient(_failing_days("2025-11-01")), now=NOW, backfill_from=date(2025, 11, 1))
+    client = FakeClient()
+    report = refresh(conn, client, now=NOW + timedelta(hours=1), backfill_from=date(2025, 11, 1))
+    assert "2025-11-01" in _score_requests(client)
+    assert report.errors == ()
+
+
+def test_a_boxscore_that_failed_in_two_reads_does_not_stop_the_later_games(
+    conn: sqlite3.Connection,
+) -> None:
+    bad = f"{BOX_URL}2025020697/boxscore"
+    failing = FakeClient({bad: SourceError("nhl", bad, "HTTP 404")})
+    refresh(conn, failing, now=NOW, backfill_from=date(2026, 1, 10))
+    refresh(conn, failing, now=NOW + timedelta(days=2))
+    client = FakeClient({bad: SourceError("nhl", bad, "HTTP 404")})
+    report = refresh(conn, client, now=NOW + timedelta(days=4))
+    assert bad not in client.urls
+    assert report.errors == ()
+    assert any("nhl_boxscores: 1 games skipped" in n for n in report.notes)
 
 
 def test_failed_days_apart_do_not_stop_the_refresh_before_today(conn: sqlite3.Connection) -> None:

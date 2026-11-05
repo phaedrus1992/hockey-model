@@ -97,7 +97,13 @@ def _run(script: str, env: dict[str, str], *args: str) -> subprocess.CompletedPr
 def test_gate_due_and_not_published_publishes(fakes: Path, tmp_path: Path) -> None:
     result = _run("report-gate.sh", _env(fakes, tmp_path), "--date", DAY)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"due": True, "tag": TAG, "reason": "due", "date": DAY}
+    assert json.loads(result.stdout) == {
+        "due": True,
+        "publish": True,
+        "tag": TAG,
+        "reason": "due",
+        "date": DAY,
+    }
 
 
 def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path) -> None:
@@ -106,6 +112,7 @@ def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
         "due": False,
+        "publish": False,
         "tag": TAG,
         "reason": "already-published",
         "date": DAY,
@@ -115,7 +122,13 @@ def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path)
 def test_gate_not_due_skips_the_release_lookup(fakes: Path, tmp_path: Path) -> None:
     due = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 3})
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=due), "--date", DAY)
-    assert json.loads(result.stdout) == {"due": False, "tag": TAG, "reason": "not-due", "date": DAY}
+    assert json.loads(result.stdout) == {
+        "due": False,
+        "publish": False,
+        "tag": TAG,
+        "reason": "not-due",
+        "date": DAY,
+    }
     assert not any(line.startswith("gh ") for line in _calls(tmp_path))
 
 
@@ -137,7 +150,13 @@ def test_gate_dry_run_builds_a_published_day_without_a_release_lookup(
     env = _env(fakes, tmp_path, FAKE_RELEASES=f"{TAG}\n")
     result = _run("report-gate.sh", env, "--date", DAY, "--dry-run")
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"due": True, "tag": TAG, "reason": "dry-run", "date": DAY}
+    assert json.loads(result.stdout) == {
+        "due": True,
+        "publish": False,
+        "tag": TAG,
+        "reason": "dry-run",
+        "date": DAY,
+    }
     assert f"uv run hockey-model report-due --date {DAY} --force" in _calls(tmp_path)
     assert not any(line.startswith("gh ") for line in _calls(tmp_path))
 

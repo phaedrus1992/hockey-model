@@ -8,7 +8,10 @@
 #   --dry-run  Build a report that the caller does not publish. This implies --force,
 #            and the published-release check is skipped, so a published day is due again.
 #
-# Prints one JSON object on stdout: {"due": bool, "tag": str, "reason": str, "date": str}.
+# Prints one JSON object on stdout:
+#   {"due": bool, "publish": bool, "tag": str, "reason": str, "date": str}.
+# "due" says the report is built. "publish" says the report becomes a release, and it is
+# false for --dry-run.
 # Exits non-zero when the schedule payload is malformed or the release lookup fails.
 set -euo pipefail
 
@@ -92,5 +95,9 @@ elif [[ "$due" == "true" ]]; then
   fi
 fi
 
-jq -n --argjson due "$due" --arg tag "$tag" --arg reason "$reason" --arg date "$day" \
-  '{due: $due, tag: $tag, reason: $reason, date: $date}'
+publish="$due"
+if [[ "$dry_run" == true ]]; then
+  publish="false"
+fi
+jq -n --argjson due "$due" --argjson publish "$publish" --arg tag "$tag" --arg reason "$reason" \
+  --arg date "$day" '{due: $due, publish: $publish, tag: $tag, reason: $reason, date: $date}'
