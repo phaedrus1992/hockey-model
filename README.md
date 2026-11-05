@@ -134,6 +134,31 @@ The model is level with the line in 2024-25 (0.6633 against 0.6604) and worse in
 The model does not pass the blend gate for betting.
 The full report is in [docs/backtest/2026-11-nhl-game-model.md](docs/backtest/2026-11-nhl-game-model.md).
 
+### Experiment registry
+
+Each experiment is one JSON record in `experiments/`.
+A record states the hypothesis, the data cutoff, the baseline, the cohort, the
+minimum games, the promotion criterion, and the failure outcome.
+A record is frozen once registered: only `status` and `result` may change, and
+`hockey-model experiments check` compares the record with the commit that
+registered it.
+
+An exploration record scores the seasons through 2025-26 and can run as many
+times as you like.
+A confirmation record scores only games after its cutoff in the 2026-27 regular
+season and later, and it runs once.
+The run refuses when the cohort holds fewer games than the record requires.
+A run whose interval is wider than the effect the record expected is
+inconclusive, not rejected.
+
+```text
+hockey-model experiments check
+hockey-model experiments run 0001-v1-forward-test --games-out games.csv
+```
+
+The per-game CSV of a confirmation run is committed under
+`experiments/results/`, and the record stores its SHA-256 hash.
+
 ## CLI
 
 The player, team, matchup, and playoff commands wrap the same calls and print
