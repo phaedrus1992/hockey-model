@@ -18,10 +18,11 @@ PLAN = SeasonPlan(
 GOALIE = {"TOR": 11, "BOS": 21}
 
 
-def seed(store: sqlite3.Connection, seasons: range) -> None:
+def seed(store: sqlite3.Connection, seasons: range, *, short: frozenset[int] = frozenset()) -> None:
     game_id = 0
     for season in seasons:
-        for day in range(1, 21):
+        # A short season has few games, so the first game of each team is a large share.
+        for day in range(1, 6 if season in short else 21):
             game_id += 1
             score = (3, 2) if (game_id * 7) % 5 < 3 else (1, 2)
             home, away = ("TOR", "BOS") if day % 2 else ("BOS", "TOR")
@@ -78,3 +79,17 @@ def test_an_attempt_run_ships_nothing_and_says_so(store: sqlite3.Connection) -> 
     assert report.live_features == ()
     assert any("Nothing ships from it" in note for note in report.notes)
     assert not any(kind.startswith("xg_form") for kind in report.missing_inputs)
+
+
+def test_a_candidate_over_the_limit_only_in_a_walk_forward_window_is_vetoed(
+    store: sqlite3.Connection,
+) -> None:
+    # Season 2 has five games, so the first game is a fifth of its rows. Selection trains on
+    # seasons 2 to 4, where the share is small. The first scoring fit uses season 2 alone.
+    plan = SeasonPlan(
+        burn_in=2, fit_first=2, select_train=(2, 4), select_validate=(5, 5), scored=(3, 7)
+    )
+    seed(store, range(2, 8), short=frozenset({2}))
+    report, _ = run_backtest(store, plan, candidates=FEATURES)
+    assert {"xg_form", "rest"} <= set(report.vetoed)
+    assert not {"xg_form", "rest"} & set(report.tested_features)

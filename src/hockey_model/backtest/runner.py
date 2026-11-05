@@ -176,6 +176,7 @@ def _validate(
             "actual": _loss(fit, validate_actual),
             "guess": _loss(fit, validate_guess),
         }
+    refused |= _refused_in_windows(actual, plan, [f for f in candidates if f not in refused])
     baseline = validation[ELO]["guess"]
     vetoed = tuple(
         f
@@ -183,6 +184,42 @@ def _validate(
         if f in refused or validation[f"{ELO}+{f}"]["guess"] > baseline + VETO_TOLERANCE
     )
     return validation, vetoed
+
+
+def _fit_windows(
+    actual: Sequence[TrainingRow], plan: SeasonPlan
+) -> list[tuple[int, list[TrainingRow]]]:
+    """Return ``(season, fit rows)`` for each scored season: all earlier seasons from the first."""
+    cohort = [r for r in actual if in_cohort(r.game, plan)]
+    windows = []
+    for season in sorted({r.game.season for r in cohort}):
+        # Only seasons before the scored one, whatever the id step between seasons.
+        rows = [r for r in actual if plan.fit_first <= r.game.season < season]
+        if not rows:
+            raise HockeyModelError(
+                f"backtest: no games to fit before season {season}; "
+                "run `hockey-model refresh --backfill-from 2014-10-01`"
+            )
+        windows.append((season, rows))
+    return windows
+
+
+def _refused_in_windows(
+    actual: Sequence[TrainingRow], plan: SeasonPlan, candidates: Sequence[str]
+) -> set[str]:
+    """Return the candidates above the imputation limit in any walk-forward fit window.
+
+    The scoring fits use windows that selection never saw, such as the first season alone, so
+    the veto is decided here, before scoring.
+    """
+    refused: set[str] = set()
+    for _, rows in _fit_windows(actual, plan):
+        for name in candidates:
+            try:
+                check_imputation([r.features for r in rows], (name,))
+            except ImputationLimitError:
+                refused.add(name)
+    return refused
 
 
 def _score_seasons(
@@ -195,14 +232,7 @@ def _score_seasons(
     by_game = {r.game.game_id: r for r in guess}
     scored: list[_Scored] = []
     cohort = [r for r in actual if in_cohort(r.game, plan)]
-    for season in sorted({r.game.season for r in cohort}):
-        # Only seasons before the scored one, whatever the id step between seasons.
-        fit_rows = [r for r in actual if plan.fit_first <= r.game.season < season]
-        if not fit_rows:
-            raise HockeyModelError(
-                f"backtest: no games to fit before season {season}; "
-                "run `hockey-model refresh --backfill-from 2014-10-01`"
-            )
+    for season, fit_rows in _fit_windows(actual, plan):
         fit = _fit(fit_rows, tested)
         home_rate = sum(_wins(fit_rows)) / len(fit_rows)
         for row in [r for r in cohort if r.game.season == season]:
