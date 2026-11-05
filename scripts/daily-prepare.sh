@@ -62,9 +62,16 @@ backtest_json="$store_dir/backtest-$day.json"
 uv run hockey-model backtest --games-out "$backtest_games" >"$backtest_json"
 # The fit serves only the features that passed the backtest's joint test. An empty list is
 # the Elo alone, and the fit command takes it as an empty --features value.
-if ! live_features="$(jq -er '.live_features | join(",")' "$backtest_json")"; then
-  echo "daily-prepare: $backtest_json has no live_features list; the fit needs it" >&2
+if ! command -v jq >/dev/null; then
+  echo "daily-prepare: jq is not installed; it reads live_features from $backtest_json" >&2
   exit 1
+fi
+if ! live_features="$(jq -er '.live_features | if all(type == "string") then join(",") else error("not names") end' "$backtest_json")"; then
+  echo "daily-prepare: $backtest_json has no live_features list of names; the fit needs it" >&2
+  exit 1
+fi
+if [[ -z "$live_features" ]]; then
+  echo "daily-prepare: no feature passed the joint test, so the fit is the Elo alone" >&2
 fi
 uv run hockey-model fit --features "$live_features"
 touch "$store_dir/prepared-$day"

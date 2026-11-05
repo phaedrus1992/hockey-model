@@ -1,4 +1,4 @@
-# Prepares the game day before the report triggers: a full refresh, the fit, and the backtest.
+# Prepares the game day before the report triggers: a full refresh, the backtest, and the fit on its live features.
 #
 # The daily-report workflow then refreshes only the starters before it predicts. The
 # prepare run MUST finish before the next hour in TRIGGER_HOURS_UTC in report_trigger.py.
