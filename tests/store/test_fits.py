@@ -1,5 +1,6 @@
 """Tests for saved fits."""
 
+import math
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -8,6 +9,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from hockey_model.game_model.features import ALL_FEATURE_NAMES, feature_name_problem
 from hockey_model.game_model.logistic import FitDiagnostics, LogisticFit
 from hockey_model.store.db import StoreError
 from hockey_model.store.fits import newest_fit, save_fit
@@ -164,7 +166,9 @@ _WEIGHT = st.floats(min_value=-1e3, max_value=1e3, allow_nan=False)
 
 @settings(max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(
-    features=st.lists(st.sampled_from(["xg_form", "goalie_gsax", "rest"]), unique=True, max_size=3),
+    features=st.lists(
+        st.sampled_from(ALL_FEATURE_NAMES), unique=True, max_size=len(ALL_FEATURE_NAMES)
+    ),
     intercept=_WEIGHT,
     elo_weight=_WEIGHT,
     data=st.data(),
@@ -186,7 +190,7 @@ def _row_count(store: sqlite3.Connection) -> int:
     ("fit", "reason"),
     [
         (LogisticFit(("luck",), 0.0, 1.0, {"luck": 1.0}), "unknown feature 'luck'"),
-        (LogisticFit(("rest", "rest"), 0.0, 1.0, {"rest": 1.0}), "twice"),
+        (LogisticFit(("rest", "rest"), 0.0, 1.0, {"rest": 1.0}), "named more than once"),
         (LogisticFit(("rest",), 0.0, 1.0, {}), "different features"),
         (LogisticFit(("rest",), 0.0, 1.0, {"rest": float("nan")}), "not a finite number"),
         (LogisticFit(("rest",), float("inf"), 1.0, {"rest": 0.1}), "not a finite number"),
@@ -198,15 +202,6 @@ def test_save_fit_refuses_an_invalid_fit_and_leaves_no_row(
     with pytest.raises(StoreError, match=f"save the model fit.*{reason}"):
         save_fit(store, fit, 20252026, T0)
     assert _row_count(store) == 0
-
-
-@pytest.mark.parametrize("names", [("xg_form",), ("attempt_form", "goalie_gsax", "rest"), ()])
-def test_every_supported_recipe_round_trips(
-    store: sqlite3.Connection, names: tuple[str, ...]
-) -> None:
-    fit = LogisticFit(names, 0.1, 0.9, {name: 0.5 for name in names})
-    save_fit(store, fit, 20252026, T0)
-    assert newest_fit(store) == fit
 
 
 def test_a_saved_fit_with_a_removed_feature_says_it_is_incompatible(
@@ -222,3 +217,45 @@ def test_a_saved_fit_with_a_removed_feature_says_it_is_incompatible(
     )
     with pytest.raises(StoreError, match="unknown feature 'old_feature'.*run `hockey-model fit`"):
         newest_fit(store)
+
+
+_NAMES = st.lists(st.one_of(st.sampled_from(ALL_FEATURE_NAMES), st.text(max_size=6)), max_size=5)
+_NUMBER = st.one_of(
+    st.floats(allow_nan=False, allow_infinity=False, width=32), st.just(float("nan"))
+)
+
+
+@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(names=_NAMES, intercept=_NUMBER, weight=_NUMBER, drop_a_weight=st.booleans())
+def test_save_fit_accepts_a_fit_exactly_when_it_follows_the_four_rules(
+    store: sqlite3.Connection,
+    names: list[str],
+    intercept: float,
+    weight: float,
+    drop_a_weight: bool,
+) -> None:
+    """Acceptance matches a plain reading of the rules: known, once each, weighed, finite."""
+    weights = {name: weight for name in names}
+    if drop_a_weight and weights:
+        weights.pop(next(iter(weights)))
+    fit = LogisticFit(tuple(names), intercept, 1.0, weights)
+    valid = (
+        all(name in ALL_FEATURE_NAMES for name in names)
+        and len(set(names)) == len(names)
+        and set(weights) == set(names)
+        and all(map(math.isfinite, [intercept, *weights.values()]))
+    )
+    before = _row_count(store)
+    if valid:
+        save_fit(store, fit, 20252026, T0)
+        assert _row_count(store) == before + 1
+    else:
+        with pytest.raises(StoreError):
+            save_fit(store, fit, 20252026, T0)
+        assert _row_count(store) == before
+
+
+@given(names=_NAMES)
+def test_feature_name_problem_is_none_exactly_for_distinct_known_names(names: list[str]) -> None:
+    ok = all(n in ALL_FEATURE_NAMES for n in names) and len(set(names)) == len(names)
+    assert (feature_name_problem(names) is None) == ok

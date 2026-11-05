@@ -232,3 +232,39 @@ def test_a_fit_without_a_form_feature_reads_no_form(store: sqlite3.Connection) -
     result = model(store, fit).predict(GAME, AS_OF, 0.8)
     kinds = {note.kind for note in result.missing}
     assert MissingKind.ATTEMPT_FORM not in kinds
+
+
+def _goalie_game(store: sqlite3.Connection) -> None:
+    """A game with MoneyPuck team form and one goalie who has no MoneyPuck rows."""
+    season(store)
+    add_goalie(store, 15, "TOR", 31, "A. Goalie")
+
+
+def test_a_fit_without_the_goalie_feature_drops_the_goalie_form_notes(
+    store: sqlite3.Connection,
+) -> None:
+    """A model that does not read goalie form reports no gap and no credit for it."""
+    _goalie_game(store)
+    served = LogisticFit(("rest",), 0.0, 1.0, {"rest": 0.1})
+    result = model(store, served).predict(GAME, AS_OF, 0.8)
+    assert MissingKind.GOALIE_FORM not in {note.kind for note in result.missing}
+
+
+def test_a_fit_with_the_goalie_feature_still_reports_the_goalie_form_gap(
+    store: sqlite3.Connection,
+) -> None:
+    _goalie_game(store)
+    served = LogisticFit(("goalie_gsax",), 0.0, 1.0, {"goalie_gsax": 0.1})
+    result = model(store, served).predict(GAME, AS_OF, 0.8)
+    kinds = {note.kind for note in result.missing}
+    assert kinds & {MissingKind.GOALIE_FORM, MissingKind.GOALIE_UNKNOWN}
+
+
+def test_the_starter_notes_stay_when_the_fit_has_no_goalie_feature(
+    store: sqlite3.Connection,
+) -> None:
+    """A reader still learns that no starter is known, whatever the model reads."""
+    season(store)
+    served = LogisticFit(("rest",), 0.0, 1.0, {"rest": 0.1})
+    result = model(store, served).predict(GAME, AS_OF, 0.8)
+    assert MissingKind.GOALIE_UNKNOWN in {note.kind for note in result.missing}

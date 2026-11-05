@@ -91,7 +91,7 @@ def feed(monkeypatch: pytest.MonkeyPatch):
 
 def run(rows: dict[GoalieMode, list[TrainingRow]], feed):
     feed(rows)
-    return run_backtest(None, PLAN)  # ty: ignore[invalid-argument-type]
+    return run_backtest(None, PLAN, candidates=FEATURES)  # ty: ignore[invalid-argument-type]
 
 
 def named(report, name: str):

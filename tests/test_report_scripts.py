@@ -321,9 +321,11 @@ def test_prepare_fits_the_elo_alone_when_the_joint_test_failed(fakes: Path, tmp_
     """An empty live_features list is the raw Elo: the fit command gets an empty value."""
     env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
     env["FAKE_BACKTEST_JSON"] = json.dumps({"live_features": []})
-    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    result = _run("daily-prepare.sh", env, "--date", DAY)
+    assert result.returncode == 0
     fits = [line for line in _calls(tmp_path) if "hockey-model fit" in line]
     assert fits == ["uv run hockey-model fit --features "]
+    assert "the fit is the Elo alone" in result.stderr
 
 
 def test_prepare_stops_when_the_backtest_names_no_live_features(
@@ -402,3 +404,15 @@ def test_prepare_and_daily_help_document_the_split(fakes: Path, tmp_path: Path) 
     assert prepare.returncode == daily.returncode == 0
     assert "resumes on the next run" in prepare.stdout
     assert "late or failed morning run" in daily.stdout
+
+
+def test_prepare_stops_when_live_features_holds_a_value_that_is_not_a_name(
+    fakes: Path, tmp_path: Path
+) -> None:
+    """A null in the list would vanish in a join and change the feature set."""
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    env["FAKE_BACKTEST_JSON"] = json.dumps({"live_features": [None, "rest"]})
+    result = _run("daily-prepare.sh", env, "--date", DAY)
+    assert result.returncode == 1
+    assert "no live_features list of names" in result.stderr
+    assert not any("hockey-model fit" in line for line in _calls(tmp_path))

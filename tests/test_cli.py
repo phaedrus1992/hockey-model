@@ -7,17 +7,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from seeding import add_game
 
 from hockey_model import cli
 from hockey_model.backtest.metrics import calibration
 from hockey_model.backtest.runner import BacktestReport, GameRecord, ScoredRun
 from hockey_model.cli import CliRuntime
+from hockey_model.game_model.features import ALL_FEATURE_NAMES
 from hockey_model.identity import Catalog
 from hockey_model.models import FixedStatModel
 from hockey_model.sources.errors import SourceError
 from hockey_model.store.db import connect
-from hockey_model.types import Player, Projection, Roster, Slot, Standing
+from hockey_model.store_cli import parse_features
+from hockey_model.types import HockeyModelError, Player, Projection, Roster, Slot, Standing
 
 PLAYER_PROJECTION = Projection(0.4, 0.1, 0.7, 0.8)
 
@@ -299,6 +303,35 @@ def test_cli_fit_rejects_a_feature_named_twice(
     code = cli.main(["fit", "--through-season", "20152016", "--features", "rest,rest"])
     assert code == 2
     assert "'rest'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("text", [",", "xg_form,,rest", "rest,", " ", ",rest"])
+def test_cli_fit_rejects_a_blank_feature_entry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, text: str
+) -> None:
+    """A blank entry changes the feature set without a word, so it is an error."""
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
+    assert cli.main(["fit", "--through-season", "20152016", "--features", text]) == 2
+    assert "blank entry" in capsys.readouterr().err
+
+
+def test_feature_names_ignore_spaces_around_names() -> None:
+    assert parse_features(" xg_form , rest ") == ("xg_form", "rest")
+
+
+@given(st.lists(st.sampled_from(ALL_FEATURE_NAMES), unique=True, max_size=4))
+def test_feature_names_round_trip_any_distinct_known_list(names: list[str]) -> None:
+    assert parse_features(",".join(names)) == tuple(names)
+
+
+@given(st.text(max_size=30))
+def test_feature_names_return_distinct_known_names_or_raise(text: str) -> None:
+    try:
+        names = parse_features(text)
+    except HockeyModelError:
+        return
+    assert len(set(names)) == len(names)
+    assert all(name in ALL_FEATURE_NAMES for name in names)
 
 
 def test_cli_fit_accepts_the_attempt_form_research_recipe(

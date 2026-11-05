@@ -7,7 +7,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
-from hockey_model.game_model.features import ALL_FEATURE_NAMES
+from hockey_model.game_model.features import feature_name_problem
 from hockey_model.game_model.logistic import FitDiagnostics, LogisticFit
 from hockey_model.store.db import StoreError
 from hockey_model.store.timestamps import iso_utc
@@ -20,10 +20,7 @@ def save_fit(
     try:
         _check_fit(fit)
     except ValueError as exc:
-        raise StoreError(
-            f"save the model fit: the fit cannot be used ({exc}); "
-            f"the features must be any of {', '.join(ALL_FEATURE_NAMES)}, once each"
-        ) from exc
+        raise StoreError(f"save the model fit: the fit cannot be used ({exc})") from exc
     weights: dict[str, object] = {
         "intercept": fit.intercept,
         "elo_weight": fit.elo_weight,
@@ -75,11 +72,9 @@ def newest_fit(conn: sqlite3.Connection) -> LogisticFit:
 
 def _check_fit(fit: LogisticFit) -> None:
     """Raise ``ValueError`` for a fit that the model cannot predict with."""
-    unknown = [name for name in fit.features if name not in ALL_FEATURE_NAMES]
-    if unknown:
-        raise ValueError(f"unknown feature {unknown[0]!r}")
-    if len(set(fit.features)) != len(fit.features):
-        raise ValueError("a feature is named twice")
+    problem = feature_name_problem(fit.features)
+    if problem is not None:
+        raise ValueError(problem)
     if set(fit.weights) != set(fit.features):
         raise ValueError("the features and the weights name different features")
     numbers = [fit.intercept, fit.elo_weight, *fit.weights.values()]

@@ -12,10 +12,10 @@ from hockey_model.daily_report import build_report, model_identity, report_tag, 
 from hockey_model.game import game_win_probability
 from hockey_model.game_day import game_day_of, game_day_window
 from hockey_model.game_model.features import (
-    ALL_FEATURE_NAMES,
     ATTEMPT_FEATURES,
     FEATURES,
     GoalieMode,
+    feature_name_problem,
 )
 from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
@@ -147,28 +147,35 @@ def _refresh(args: argparse.Namespace) -> tuple[object, int]:
     return _report_json(report), 1 if report.errors else 0
 
 
-def _feature_names(text: str | None) -> tuple[str, ...]:
-    """Return the features of a fit. The caller names them: no default is approved."""
+def parse_features(text: str | None) -> tuple[str, ...]:
+    """Return the features of a fit. The caller names them: no default is approved.
+
+    The exact empty string means the Elo alone. A blank entry in a longer list is an error,
+    because it would change the feature set without a word.
+    """
     if text is None:
         raise HockeyModelError(
             "fit: --features is required. Pass the live_features of the latest backtest "
             'report, or "" for the Elo alone. A default would serve a feature that the '
             "backtest may have vetoed"
         )
-    names = tuple(name.strip() for name in text.split(",") if name.strip())
-    unknown = [name for name in names if name not in ALL_FEATURE_NAMES]
-    if unknown:
+    if text == "":
+        return ()
+    names = tuple(name.strip() for name in text.split(","))
+    blanks = [str(i) for i, name in enumerate(names, start=1) if not name]
+    if blanks:
         raise HockeyModelError(
-            f"fit: unknown feature {unknown[0]!r}; use any of {', '.join(ALL_FEATURE_NAMES)}"
+            f"fit: --features {text!r} has a blank entry at position {', '.join(blanks)}; "
+            'name each feature, or pass "" for the Elo alone'
         )
-    repeated = sorted({name for name in names if names.count(name) > 1})
-    if repeated:
-        raise HockeyModelError(f"fit: feature {repeated[0]!r} is named more than once")
+    problem = feature_name_problem(names)
+    if problem is not None:
+        raise HockeyModelError(f"fit: {problem}")
     return names
 
 
 def _fit(args: argparse.Namespace) -> tuple[object, int]:
-    features = _feature_names(args.features)
+    features = parse_features(args.features)
     through = args.through_season
     if through is None:
         through = _season_code(datetime.now(UTC))

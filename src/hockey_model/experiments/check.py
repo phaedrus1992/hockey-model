@@ -51,7 +51,7 @@ from hockey_model.experiments.registry import (
     results_dir,
 )
 from hockey_model.experiments.schemas import CHECK_OUTPUT_SCHEMA, EXPERIMENT_SCHEMA
-from hockey_model.game_model.features import ALL_FEATURE_NAMES
+from hockey_model.game_model.features import feature_name_problem
 from hockey_model.game_model.seasons import (
     SeasonPlan,
     confirmation_plan,
@@ -162,7 +162,7 @@ def run_experiment(
     else:
         plan = exploration_plan()
 
-    report, game_records = run_backtest(conn, plan, record.candidate_features)
+    report, game_records = run_backtest(conn, plan, candidates=record.candidate_features)
     # The caller's export goes first. A write failure then leaves the look unspent.
     if games_out is not None:
         write_game_records(games_out, game_records)
@@ -234,13 +234,10 @@ def _check_one(record_id: str, repo_root: Path) -> CheckEntry:
 
 
 def _check_features_known(record: ExperimentRecord) -> None:
-    """Raise when a candidate feature is not a feature the model knows."""
-    unknown = [name for name in record.candidate_features if name not in ALL_FEATURE_NAMES]
-    if unknown:
-        raise HockeyModelError(
-            f"experiment {record.id!r}: unknown candidate feature(s) {', '.join(unknown)}; "
-            f"use {', '.join(ALL_FEATURE_NAMES)}"
-        )
+    """Raise when the candidate features are not a usable feature list."""
+    problem = feature_name_problem(record.candidate_features)
+    if problem is not None:
+        raise HockeyModelError(f"experiment {record.id!r}: candidate features: {problem}")
 
 
 def _check_status_matches_result(record: ExperimentRecord) -> None:
