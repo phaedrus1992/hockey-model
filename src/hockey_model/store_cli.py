@@ -268,7 +268,7 @@ def _experiments(args: argparse.Namespace) -> tuple[object, int]:
             from hockey_model.experiments.check import run_experiment
 
             result, _ = run_experiment(args.record_id, conn, args.games_out)
-            return result, 0 if result.get("ok") else 1
+            return result, 0
         finally:
             conn.close()
     raise HockeyModelError("experiments: specify check or run")

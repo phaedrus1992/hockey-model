@@ -7,10 +7,14 @@ Covers:
 - scored_label wording
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+
+from hypothesis import given
+from hypothesis import strategies as st
 
 from hockey_model.game_model.seasons import (
     CONFIRMATION_START,
+    REGULAR_SEASON_TYPE,
     SeasonPlan,
     confirmation_plan,
     exploration_plan,
@@ -120,3 +124,31 @@ class TestScoredLabel:
         """A confirmation plan says onward instead of a fake end season."""
         plan = confirmation_plan(datetime(2026, 10, 31, tzinfo=UTC))
         assert scored_label(plan) == "seasons from 20262027 onward"
+
+
+@given(st.dates(min_value=date(2000, 1, 1), max_value=date(2098, 12, 31)))
+def test_season_of_matches_the_september_rule(day: date) -> None:
+    """The season id changes on 1 September and on no other day."""
+    first_year = day.year if day.month >= 9 else day.year - 1
+    assert season_of(day) == first_year * 10000 + first_year + 1
+    assert season_of(day) == season_of(day + timedelta(days=1)) or (
+        day.month == 8 and day.day == 31
+    )
+
+
+@given(
+    season=st.integers(20152016, 20302031).filter(lambda s: s // 10000 + 1 == s % 10000),
+    game_type=st.sampled_from([1, 2, 3, 4, 9, 19]),
+    offset_days=st.integers(-400, 400),
+)
+def test_a_confirmation_cohort_never_holds_a_game_on_or_before_the_cutoff(
+    season: int, game_type: int, offset_days: int
+) -> None:
+    """Every cohort game is a regular season game, 2026-27 or later, after the cutoff."""
+    cutoff = datetime(2026, 10, 31, tzinfo=UTC)
+    plan = confirmation_plan(cutoff)
+    game = _game(season, game_type, cutoff + timedelta(days=offset_days))
+    if in_cohort(game, plan):
+        assert game.start > cutoff
+        assert game.season >= CONFIRMATION_START
+        assert game.game_type == REGULAR_SEASON_TYPE

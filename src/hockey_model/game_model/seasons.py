@@ -19,9 +19,10 @@ SCORED = (20242025, 20252026)
 # Experiment cohorts.
 # EXPLORATION covers every season through 2025-26 that a walk-forward fit can score.
 # A scored season needs a fit from an earlier season, so the cohort starts one season
-# after the first fit season. Results from these seasons are labeled exploratory and
-# never promote a feature.
-EXPLORATION = (FIT_FIRST + 10001, 20252026)
+# after FIT_FIRST. Results from these seasons are labeled exploratory and never
+# promote a feature. SCORED seasons are inside the range: the backtest report already
+# scored them, so an exploration run on them is a repeat look, not a fresh one.
+EXPLORATION = (20162017, 20252026)
 # CONFIRMATION starts with the 2026-27 season. The owner approved the regular season
 # only, so playoff games (NHL game type 3) are outside the cohort.
 CONFIRMATION_START = 20262027

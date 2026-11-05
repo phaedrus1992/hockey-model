@@ -167,7 +167,8 @@ def _score_seasons(
     scored: list[_Scored] = []
     cohort = [r for r in actual if in_cohort(r.game, plan)]
     for season in sorted({r.game.season for r in cohort}):
-        fit_rows = _in(actual, plan.fit_first, season - 1)
+        # Only seasons before the scored one, whatever the id step between seasons.
+        fit_rows = [r for r in actual if plan.fit_first <= r.game.season < season]
         if not fit_rows:
             raise HockeyModelError(
                 f"backtest: no games to fit before season {season}; "
