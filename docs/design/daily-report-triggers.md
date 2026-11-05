@@ -49,8 +49,9 @@ The fit and the backtest each take minutes or more on a full store.
 1. `daily-prepare.yml` runs once each morning, before the first trigger hour. It refreshes every source, fits the model, and runs the backtest.
 2. `daily-report.yml` runs at each trigger. When the trigger is due, it refreshes only the schedule, the goalie sources, and the injuries, then predicts and publishes.
 
-When the morning run did not finish, the report run does the morning work first.
-The report is then later, but it is not missing.
+When the morning run did not finish, the report run fails and says so.
+It does not do the morning work itself, because that work takes about an hour and the report run must finish in minutes before the puck drop.
+The operator runs the `daily-prepare` workflow for the day, then runs the report again.
 Both workflows share one concurrency group, because both write the cached store.
 
 ## Actions cost

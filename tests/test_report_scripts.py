@@ -461,16 +461,15 @@ def test_daily_run_after_the_morning_refreshes_only_the_starters(
     assert (out / f"backtest-games-{DAY}.csv").exists()
 
 
-def test_daily_run_without_the_morning_prepares_first(fakes: Path, tmp_path: Path) -> None:
+def test_daily_run_without_the_morning_fails_and_runs_nothing(fakes: Path, tmp_path: Path) -> None:
     env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
     out = tmp_path / "out"
     result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out))
-    assert result.returncode == 0, result.stderr
-    assert f"no morning preparation for {DAY}" in result.stderr
-    calls = _calls(tmp_path)
-    assert "uv run hockey-model fit --features xg_form,rest" in calls
-    assert "uv run hockey-model refresh --starters-only" not in calls
-    assert (out / f"backtest-{DAY}.json").exists()
+    assert result.returncode == 1
+    assert f"no preparation for {DAY}" in result.stderr
+    assert "run the daily-prepare workflow" in result.stderr
+    assert _calls(tmp_path) == []
+    assert not (out / f"backtest-{DAY}.json").exists()
 
 
 def test_prepare_and_daily_help_document_the_split(fakes: Path, tmp_path: Path) -> None:
@@ -478,7 +477,7 @@ def test_prepare_and_daily_help_document_the_split(fakes: Path, tmp_path: Path) 
     daily = _run("daily-report.sh", _env(fakes, tmp_path), "--help")
     assert prepare.returncode == daily.returncode == 0
     assert "resumes on the next run" in prepare.stdout
-    assert "late or failed morning run" in daily.stdout
+    assert "daily-prepare workflow" in daily.stdout
 
 
 def test_prepare_stops_when_live_features_holds_a_value_that_is_not_a_name(
