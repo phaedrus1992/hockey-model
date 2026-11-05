@@ -657,3 +657,18 @@ def test_a_malformed_model_projection_exits_two_without_json(
     output = capsys.readouterr()
     assert output.out == ""
     assert "the projection has level 0.5 but 0.8 was requested" in output.err
+
+
+def test_cli_game_reports_a_degraded_form_input(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    db = tmp_path / "store.db"
+    _store_with_games(db)
+    monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
+    assert cli.main(["fit", "--through-season", "20152016", "--features", "xg_form"]) == 0
+    capsys.readouterr()
+    assert cli.main(["game", "2025020001"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["degraded_inputs"] == [
+        {"feature": "xg_form", "kind": "xg_form", "teams": ["TOR", "BOS"]}
+    ]

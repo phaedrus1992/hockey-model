@@ -132,4 +132,5 @@ class NhlGameModel:
             away_goals=_projection(away_rate, level),
             missing=tuple(missing),
             credits=credits,
+            degraded_inputs=row.imputed,
         )

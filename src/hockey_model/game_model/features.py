@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from hockey_model.game import Game, GoalieStart, MissingInput, MissingKind
+from hockey_model.game import DegradedInput, Game, GoalieStart, MissingInput, MissingKind
 from hockey_model.game_model.elo import EloBook
 from hockey_model.game_model.goalies import boxscore_starter, resolve_goalie
 from hockey_model.identity import Catalog
@@ -37,6 +37,8 @@ GOALIE_FEATURE = "goalie_gsax"
 FORM_WINDOW = 10
 GOALIE_WINDOW = 20
 REST_CAP_DAYS = 4.0
+# The value of a form feature when either team has no form: no difference between the teams.
+NEUTRAL_FORM = 0.0
 _DAY = timedelta(days=1)
 
 
@@ -57,6 +59,7 @@ class FeatureRow:
     values: Mapping[str, float]
     missing: tuple[MissingInput, ...]
     uses_moneypuck: bool
+    imputed: tuple[DegradedInput, ...] = ()
 
 
 def feature_name_problem(names: Sequence[str]) -> str | None:
@@ -97,7 +100,7 @@ def _share_form(
     ]
     home, away = shares[game.home], shares[game.away]
     if home is None or away is None:
-        return 0.0, missing
+        return NEUTRAL_FORM, missing
     return home - away, missing
 
 
@@ -219,10 +222,16 @@ def build_features(
     values = {name: value for name, (value, _) in forms.items()}
     values.update({"goalie_gsax": gsax, "rest": rest})
     missing = [m for _, gaps in forms.values() for m in gaps]
+    imputed = tuple(
+        DegradedInput(name, _FORM_READERS[name][1], tuple(m.team for m in gaps if m.team))
+        for name, (_, gaps) in forms.items()
+        if gaps
+    )
     return FeatureRow(
         game_id=game.game_id,
         elo_logit=_logit(elo.home_win_chance(game.home, game.away)),
         values=values,
         missing=(*missing, *goalie_missing, *rest_missing),
         uses_moneypuck=form_used or goalie_used,
+        imputed=imputed,
     )

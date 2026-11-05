@@ -106,6 +106,13 @@ def _missing_json(missing: tuple[MissingInput, ...]) -> list[dict[str, Any]]:
     return [{"kind": m.kind.value, "team": m.team, "note": m.note} for m in missing]
 
 
+def _degraded_json(prediction: GamePrediction) -> list[dict[str, Any]]:
+    return [
+        {"feature": d.feature, "kind": d.kind.value, "teams": list(d.teams)}
+        for d in prediction.degraded_inputs
+    ]
+
+
 def _line_json(line: DailyLine) -> dict[str, Any]:
     row = line.row
     base: dict[str, Any] = {
@@ -124,6 +131,7 @@ def _line_json(line: DailyLine) -> dict[str, Any]:
             "away_win": None,
             "made_after_start": False,
             "missing": [],
+            "degraded_inputs": [],
         }
     return {
         **base,
@@ -131,6 +139,7 @@ def _line_json(line: DailyLine) -> dict[str, Any]:
         "away_win": prediction.away_win,
         "made_after_start": prediction.made_after_start,
         "missing": _missing_json(prediction.missing),
+        "degraded_inputs": _degraded_json(prediction),
     }
 
 

@@ -21,7 +21,7 @@ from hockey_model.daily_report import (
     report_tag,
     write_report,
 )
-from hockey_model.game import GamePrediction, MissingKind
+from hockey_model.game import DegradedInput, GamePrediction, MissingKind
 from hockey_model.game_model.features import GoalieMode
 from hockey_model.game_model.logistic import ELO_ONLY, FitDiagnostics, LogisticFit
 from hockey_model.game_model.nhl_model import NhlGameModel
@@ -198,3 +198,14 @@ def test_report_without_a_model_says_null(store: sqlite3.Connection) -> None:
     report = build_report(store, _model(store), DAY, now=NOW)
     assert report_json(report)["model"] is None
     assert "Model:" not in report_markdown(report)
+
+
+def test_json_lists_the_degraded_inputs_of_a_prediction() -> None:
+    degraded = (DegradedInput("xg_form", MissingKind.XG_FORM, ("TOR",)),)
+    predicted = replace(_prediction(0), degraded_inputs=degraded)
+    lines = (DailyLine(_row(1), predicted, ""), DailyLine(_row(2), None, "over"))
+    games = report_json(DailyReport(DAY, NOW, 0.8, lines))["games"]
+    assert games[0]["degraded_inputs"] == [
+        {"feature": "xg_form", "kind": "xg_form", "teams": ["TOR"]}
+    ]
+    assert games[1]["degraded_inputs"] == []

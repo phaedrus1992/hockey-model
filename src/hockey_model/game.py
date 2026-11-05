@@ -98,6 +98,19 @@ class MissingInput:
 
 
 @dataclass(frozen=True, slots=True)
+class DegradedInput:
+    """A model feature that was set to its neutral value, because a team had no data for it.
+
+    ``teams`` names the teams without data, home first. A feature that was measured, even when
+    it measured zero, is never listed.
+    """
+
+    feature: str
+    kind: MissingKind
+    teams: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class GamePrediction:
     """Win probabilities and goal projections for one game."""
 
@@ -108,6 +121,7 @@ class GamePrediction:
     missing: tuple[MissingInput, ...]
     credits: tuple[str, ...]
     made_after_start: bool = False
+    degraded_inputs: tuple[DegradedInput, ...] = ()
 
 
 def game_win_probability(

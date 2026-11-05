@@ -83,6 +83,9 @@ A fitted logistic regression sets the weights.
 A caller must never treat such a result as a pregame read.
 The starting goalie comes from the first confirmed ESPN or Daily Faceoff read, then the newest likely read, then the goalie with the most recent starts.
 The result lists a goalie that no source confirmed.
+`degraded_inputs` lists each form feature of the fit that was set to the neutral value `NEUTRAL_FORM`, because a team had no MoneyPuck games before the game.
+A form that was measured, even when it measured zero, is not listed.
+The command line prints the same field, and each game in the daily report JSON carries it.
 
 The model uses no price data.
 It does not say whether the model beats a betting market.
