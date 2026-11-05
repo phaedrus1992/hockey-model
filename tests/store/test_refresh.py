@@ -267,6 +267,23 @@ def test_refresh_retries_a_failed_boxscore_only_after_a_day(conn: sqlite3.Connec
     assert bad in client.urls
 
 
+def test_a_boxscore_with_no_goalies_is_read_a_bounded_number_of_times(
+    conn: sqlite3.Connection,
+) -> None:
+    game_id = 2025020697
+    bad = f"{BOX_URL}{game_id}/boxscore"
+    payload = json.loads(FakeClient._boxscore(game_id))
+    for side in payload["playerByGameStats"].values():
+        side["goalies"] = []
+    body = json.dumps(payload).encode()
+    reads = 0
+    for hours in (0, 2, 48, 96, 144):
+        client = FakeClient({bad: body})
+        refresh(conn, client, now=NOW + timedelta(hours=hours), backfill_from=date(2026, 1, 10))
+        reads += client.urls.count(bad)
+    assert reads <= 2, f"the boxscore with no goalies was requested {reads} times"
+
+
 def test_refresh_rejects_naive_now(conn: sqlite3.Connection) -> None:
     with pytest.raises(ValueError, match="no timezone"):
         refresh(conn, FakeClient(), now=datetime(2026, 1, 10, 10, 0))
