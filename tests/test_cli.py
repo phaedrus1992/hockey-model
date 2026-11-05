@@ -413,12 +413,9 @@ _EXPERIMENT_RECORD = {
 
 
 def _registry(tmp_path: Path) -> Path:
-    """Make a registry under the working directory, with the shipped schema files."""
+    """Make a temporary registry directory for the CLI to read."""
     registry = tmp_path / "experiments"
     registry.mkdir()
-    real = Path(__file__).resolve().parent.parent / "experiments"
-    for name in ("schema.json", "check_output.schema.json"):
-        (registry / name).write_text((real / name).read_text(encoding="utf-8"), encoding="utf-8")
     return registry
 
 
@@ -443,9 +440,9 @@ def _seed_seasons(conn, seasons: range) -> None:
 def test_cli_experiments_check_exits_zero_for_a_valid_record(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.chdir(tmp_path)
     registry = _registry(tmp_path)
     _write_record(registry, _EXPERIMENT_RECORD)
+    monkeypatch.chdir(tmp_path)
     assert cli.main(["experiments", "check"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
@@ -455,9 +452,9 @@ def test_cli_experiments_check_exits_zero_for_a_valid_record(
 def test_cli_experiments_check_exits_one_and_names_the_bad_field(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.chdir(tmp_path)
     registry = _registry(tmp_path)
     _write_record(registry, {**_EXPERIMENT_RECORD, "min_games": "ten"})
+    monkeypatch.chdir(tmp_path)
     assert cli.main(["experiments", "check"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
@@ -475,9 +472,10 @@ def test_cli_experiments_without_a_subcommand_exits_two(
 def test_cli_experiments_run_names_a_missing_record(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    registry = _registry(tmp_path)
+    _write_record(registry, _EXPERIMENT_RECORD)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(tmp_path / "store.db"))
-    _write_record(_registry(tmp_path), _EXPERIMENT_RECORD)
     assert cli.main(["experiments", "run", "0002-absent"]) == 2
     assert "not found" in capsys.readouterr().err
 
@@ -485,10 +483,11 @@ def test_cli_experiments_run_names_a_missing_record(
 def test_cli_experiments_run_scores_an_exploration_record(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    registry = _registry(tmp_path)
+    _write_record(registry, _EXPERIMENT_RECORD)
     monkeypatch.chdir(tmp_path)
     db = tmp_path / "store.db"
     monkeypatch.setenv("HOCKEY_MODEL_DB", str(db))
-    _write_record(_registry(tmp_path), _EXPERIMENT_RECORD)
     conn = connect(db)
     _seed_seasons(conn, range(20152016, 20262027, 10001))
     conn.close()

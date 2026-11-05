@@ -160,7 +160,8 @@ A run whose interval is wider than the effect the record expected is
 inconclusive, not rejected.
 
 Run the registry commands from the repository root.
-The registry directory and its schema are read relative to the working directory.
+The records live in `experiments/`, relative to the working directory. The schema
+that validates them is `src/hockey_model/experiments/schemas.py`.
 
 ```text
 hockey-model experiments check

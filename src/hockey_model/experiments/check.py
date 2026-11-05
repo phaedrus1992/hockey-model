@@ -1,7 +1,7 @@
 """Experiment checker: validate records and enforce immutability.
 
 ``hockey-model experiments check`` prints JSON validated against
-``experiments/check_output.schema.json``. It fails when a record is invalid, when
+``CHECK_OUTPUT_SCHEMA`` in ``schemas.py``. It fails when a record is invalid, when
 a field other than ``status`` and ``result`` changed since the commit that
 registered the record, or when a result names a per-game CSV whose hash no longer
 matches the file.
@@ -38,13 +38,13 @@ from hockey_model.experiments.models import (
     validate_against_schema,
 )
 from hockey_model.experiments.registry import (
-    CHECK_OUTPUT_SCHEMA_PATH,
-    REGISTRY_DIR,
-    RESULTS_DIR,
-    SCHEMA_PATH,
+    REGISTRY_DIR_NAME,
     get_record,
     list_records,
+    registry_dir,
+    results_dir,
 )
+from hockey_model.experiments.schemas import CHECK_OUTPUT_SCHEMA, EXPERIMENT_SCHEMA
 from hockey_model.game_model.seasons import (
     SeasonPlan,
     confirmation_plan,
@@ -115,10 +115,15 @@ def check_all(repo_root: Path | None = None) -> CheckOutput:
     Returns ``ok``, the entry for every record, and the error messages.
     """
     root = repo_root or Path.cwd()
+    if not registry_dir(root).is_dir():
+        raise HockeyModelError(
+            f"no experiment registry at {registry_dir(root)}; run the command from the "
+            "repository root"
+        )
     results: list[CheckEntry] = []
     errors: list[str] = []
 
-    for record_id in list_records():
+    for record_id in list_records(root):
         try:
             results.append(_check_one(record_id, root))
         except HockeyModelError as exc:
@@ -126,7 +131,7 @@ def check_all(repo_root: Path | None = None) -> CheckOutput:
             results.append({"id": record_id, "valid": False, "error": str(exc)})
 
     output: CheckOutput = {"ok": len(errors) == 0, "records": results, "errors": errors}
-    validate_against_schema(output, CHECK_OUTPUT_SCHEMA_PATH)
+    validate_against_schema(output, CHECK_OUTPUT_SCHEMA)
     return output
 
 
@@ -142,6 +147,7 @@ def run_experiment(
     record_id: str,
     conn: sqlite3.Connection,
     games_out: Path | None = None,
+    repo_root: Path | None = None,
 ) -> tuple[RunPayload, list[GameExport]]:
     """Run one backtest for one experiment record.
 
@@ -153,8 +159,9 @@ def run_experiment(
     An exploration record may run again and again, and its notes say the run is
     exploratory.
     """
-    record = get_record(record_id)
-    validate_against_schema(record, SCHEMA_PATH)
+    root = repo_root or Path.cwd()
+    record = get_record(record_id, root)
+    validate_against_schema(record, EXPERIMENT_SCHEMA)
 
     if record.cohort == "confirmation":
         _check_confirmation_can_run(record)
@@ -166,11 +173,11 @@ def run_experiment(
     report, game_records = run_backtest(conn, plan, record.candidate_features)
 
     if record.cohort == "confirmation":
-        csv_path = RESULTS_DIR / f"{record.id}-games.csv"
+        csv_path = results_dir(root) / f"{record.id}-games.csv"
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         write_game_records(csv_path, game_records)
         updated = _record_with_result(record, report, csv_path)
-        updated.save(REGISTRY_DIR / f"{updated.id}.json")
+        updated.save(registry_dir(root) / f"{updated.id}.json")
         notes = report.notes
     else:
         updated = record
@@ -209,12 +216,7 @@ def check_immutable_fields(
     A field the record did not carry at registration is a schema addition, not a
     broken promise, so it is not compared.
     """
-    path = REGISTRY_DIR / f"{record.id}.json"
-    relative = _repo_relative(path, repo_root)
-    if relative is None:
-        raise HockeyModelError(
-            f"check {record.id!r}: the record is outside the repository {repo_root}"
-        )
+    relative = f"{REGISTRY_DIR_NAME}/{record.id}.json"
     text = _git(["show", f"{registration_commit}:{relative}"], repo_root)
     prior = record_from_text(text, f"commit {registration_commit} of {relative}")
     registered = json.loads(text)
@@ -232,9 +234,9 @@ def check_immutable_fields(
 
 def _check_one(record_id: str, repo_root: Path) -> CheckEntry:
     """Validate one record, then check its immutability and its result hash."""
-    path = REGISTRY_DIR / f"{record_id}.json"
-    record = get_record(record_id)
-    validate_against_schema(record, SCHEMA_PATH)
+    path = registry_dir(repo_root) / f"{record_id}.json"
+    record = get_record(record_id, repo_root)
+    validate_against_schema(record, EXPERIMENT_SCHEMA)
     entry: CheckEntry = {"id": record.id, "status": record.status, "valid": True}
 
     commit = registration_commit(path, repo_root)

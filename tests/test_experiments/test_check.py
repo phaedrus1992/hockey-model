@@ -54,11 +54,16 @@ def _make_record(data: dict | None = None) -> ExperimentRecord:
     return ExperimentRecord.from_dict(merged)
 
 
-def _register(data: dict | None = None) -> ExperimentRecord:
+def _register(registry: Path, data: dict | None = None) -> ExperimentRecord:
     """Register a record in the fixture registry and return it."""
     record = _make_record(data)
-    register_record(record)
+    register_record(record, registry.parent)
     return record
+
+
+def _repo_root() -> Path:
+    """Return the repository root, so the test works from any working directory."""
+    return Path(_git(Path(__file__).parent, "rev-parse", "--show-toplevel").strip())
 
 
 def _git(root: Path, *args: str) -> str:
@@ -104,7 +109,7 @@ class TestCheckAll:
 
     def test_check_all_valid_record(self, registry_dir: Path):
         """A valid record passes, and immutability is reported as unchecked outside git."""
-        _register()
+        _register(registry_dir)
         result = check_all(repo_root=registry_dir.parent)
         assert result["ok"] is True
         entry = result["records"][0]
@@ -123,6 +128,7 @@ class TestCheckAll:
     def test_check_all_fails_when_a_result_csv_is_missing(self, registry_dir: Path):
         """A result that names a CSV the repository does not hold is an error."""
         record = _register(
+            registry_dir,
             {
                 "result": {
                     "games": 100,
@@ -131,7 +137,7 @@ class TestCheckAll:
                     "csv_path": str(registry_dir / "results" / "0001-valid-games.csv"),
                     "csv_hash": "0" * 64,
                 }
-            }
+            },
         )
         result = check_all(repo_root=registry_dir.parent)
         assert result["ok"] is False
@@ -144,6 +150,7 @@ class TestCheckAll:
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         csv_path.write_text("game_id,run\n1,elo\n", encoding="utf-8")
         _register(
+            registry_dir,
             {
                 "result": {
                     "games": 1,
@@ -152,7 +159,7 @@ class TestCheckAll:
                     "csv_path": str(csv_path),
                     "csv_hash": "0" * 64,
                 }
-            }
+            },
         )
         result = check_all(repo_root=registry_dir.parent)
         assert result["ok"] is False
@@ -165,6 +172,7 @@ class TestCheckAll:
         text = "game_id,run\n1,elo\n"
         csv_path.write_text(text, encoding="utf-8")
         _register(
+            registry_dir,
             {
                 "result": {
                     "games": 1,
@@ -173,15 +181,20 @@ class TestCheckAll:
                     "csv_path": str(csv_path),
                     "csv_hash": hashlib.sha256(text.encode()).hexdigest(),
                 }
-            }
+            },
         )
         result = check_all(repo_root=registry_dir.parent)
         assert result["ok"] is True
         assert result["records"][0]["has_result"] is True
 
+    def test_check_all_raises_when_the_registry_directory_is_missing(self, tmp_path: Path):
+        """A directory with no registry is an error, not an empty success."""
+        with pytest.raises(HockeyModelError, match="no experiment registry"):
+            check_all(repo_root=tmp_path)
+
     def test_check_all_accepts_the_real_registry(self):
         """The records committed in the repository pass their own checker."""
-        result = check_all(repo_root=Path.cwd())
+        result = check_all(repo_root=_repo_root())
         assert result["ok"] is True, result["errors"]
         ids = [entry["id"] for entry in result["records"]]
         assert "0001-v1-forward-test" in ids
@@ -192,7 +205,7 @@ class TestCheckExperiment:
 
     def test_check_experiment_valid(self, registry_dir: Path):
         """check_experiment returns ok for a valid record."""
-        _register()
+        _register(registry_dir)
         result = check_experiment("0001-valid", repo_root=registry_dir.parent)
         assert result["ok"] is True
         assert result["record"]["id"] == "0001-valid"
@@ -209,14 +222,14 @@ class TestRegistrationCommit:
 
     def test_registration_commit_is_none_without_git(self, registry_dir: Path):
         """A registry that git does not track has no registration commit."""
-        _register()
+        _register(registry_dir)
         assert registration_commit(registry_dir / "0001-valid.json", registry_dir.parent) is None
 
     def test_registration_commit_is_the_first_commit(self, tmp_path: Path, registry_dir: Path):
         """The registration commit is the oldest commit that touched the record."""
         root = tmp_path
         _init_repo(root)
-        _register()
+        _register(registry_dir)
         _git(root, "add", "experiments")
         _git(root, "commit", "-m", "register the record")
         first = _git(root, "rev-parse", "HEAD").strip()
@@ -231,7 +244,7 @@ class TestImmutableFields:
         """A record identical to its registered version passes."""
         root = tmp_path
         _init_repo(root)
-        record = _register()
+        record = _register(registry_dir)
         _git(root, "add", "experiments")
         _git(root, "commit", "-m", "register the record")
         commit = registration_commit(registry_dir / "0001-valid.json", root)
@@ -244,7 +257,7 @@ class TestImmutableFields:
         """Editing min_games after registration fails the check."""
         root = tmp_path
         _init_repo(root)
-        registered = _register()
+        registered = _register(registry_dir)
         _git(root, "add", "experiments")
         _git(root, "commit", "-m", "register the record")
         commit = registration_commit(registry_dir / "0001-valid.json", root)
@@ -271,18 +284,17 @@ class TestImmutableFields:
         current = _make_record({"candidate_features": ["xg_form", "rest"]})
         check_immutable_fields(current, commit, root)
 
-    def test_immutable_fields_raise_when_the_record_is_outside_the_repository(
+    def test_immutable_fields_raise_when_the_commit_has_no_record(
         self, tmp_path: Path, registry_dir: Path
     ):
-        """The check names the repository when the record file is not inside it."""
-        inner = tmp_path / "inner"
-        inner.mkdir()
-        _init_repo(inner)
-        _git(inner, "commit", "--allow-empty", "-m", "an empty commit")
-        commit = _git(inner, "rev-parse", "HEAD").strip()
-        record = _register()
-        with pytest.raises(HockeyModelError, match="outside the repository"):
-            check_immutable_fields(record, commit, inner)
+        """A commit that does not hold the record file fails with the git error."""
+        root = tmp_path
+        _init_repo(root)
+        _git(root, "commit", "--allow-empty", "-m", "an empty commit")
+        commit = _git(root, "rev-parse", "HEAD").strip()
+        record = _register(registry_dir)
+        with pytest.raises(HockeyModelError, match="git show"):
+            check_immutable_fields(record, commit, root)
 
 
 class TestRunExperiment:
@@ -294,8 +306,8 @@ class TestRunExperiment:
         """A confirmation run scores only cohort games and saves status, result, and CSV."""
         _seed(store, FIT_SEASONS)
         _seed(store, [20262027], first_id=1000)
-        record = _register({"id": "0002-forward"})
-        payload, entries = run_experiment(record.id, store)
+        record = _register(registry_dir, {"id": "0002-forward"})
+        payload, entries = run_experiment(record.id, store, repo_root=registry_dir.parent)
         assert payload["ok"] is True
         assert payload["scored"] == "seasons from 20262027 onward"
         assert payload["status"] in {"promoted", "rejected", "inconclusive"}
@@ -317,9 +329,11 @@ class TestRunExperiment:
         """A run writes the per-game file the caller names, one row per exported game."""
         _seed(store, FIT_SEASONS)
         _seed(store, [20262027], first_id=1000)
-        record = _register({"id": "0009-games"})
+        record = _register(registry_dir, {"id": "0009-games"})
         out = registry_dir / "scratch-games.csv"
-        payload, entries = run_experiment(record.id, store, games_out=out)
+        payload, entries = run_experiment(
+            record.id, store, games_out=out, repo_root=registry_dir.parent
+        )
         assert payload["games_out"] == str(out)
         assert out.read_text(encoding="utf-8").count("\n") == len(entries) + 1
 
@@ -327,10 +341,10 @@ class TestRunExperiment:
         """The second confirmation run of a record is refused."""
         _seed(store, FIT_SEASONS)
         _seed(store, [20262027], first_id=1000)
-        record = _register({"id": "0002-forward"})
-        run_experiment(record.id, store)
+        record = _register(registry_dir, {"id": "0002-forward"})
+        run_experiment(record.id, store, repo_root=registry_dir.parent)
         with pytest.raises(HockeyModelError, match="expected registered"):
-            run_experiment(record.id, store)
+            run_experiment(record.id, store, repo_root=registry_dir.parent)
 
     def test_confirmation_run_refuses_when_a_result_is_already_recorded(
         self, registry_dir: Path, store
@@ -339,6 +353,7 @@ class TestRunExperiment:
         _seed(store, FIT_SEASONS)
         _seed(store, [20262027], first_id=1000)
         _register(
+            registry_dir,
             {
                 "id": "0008-spent",
                 "result": {
@@ -348,34 +363,34 @@ class TestRunExperiment:
                     "csv_path": "experiments/results/0008-spent-games.csv",
                     "csv_hash": "0" * 64,
                 },
-            }
+            },
         )
         with pytest.raises(HockeyModelError, match="already has a result"):
-            run_experiment("0008-spent", store)
+            run_experiment("0008-spent", store, repo_root=registry_dir.parent)
 
     def test_confirmation_run_refuses_when_not_registered(self, registry_dir: Path, store):
         """A confirmation record with a status other than registered cannot run."""
         _seed(store, FIT_SEASONS)
         _seed(store, [20262027], first_id=1000)
-        record = _register({"id": "0003-spent", "status": "promoted"})
+        record = _register(registry_dir, {"id": "0003-spent", "status": "promoted"})
         with pytest.raises(HockeyModelError, match="confirmation status is 'promoted'"):
-            run_experiment(record.id, store)
+            run_experiment(record.id, store, repo_root=registry_dir.parent)
 
     def test_confirmation_run_refuses_when_cohort_has_no_games(self, registry_dir: Path, store):
         """A store with only exploration seasons cannot feed a confirmation cohort."""
         _seed(store, FIT_SEASONS)
-        record = _register({"id": "0004-early"})
+        record = _register(registry_dir, {"id": "0004-early"})
         with pytest.raises(HockeyModelError, match="confirmation cohort has 0 games"):
-            run_experiment(record.id, store)
+            run_experiment(record.id, store, repo_root=registry_dir.parent)
 
     def test_confirmation_run_excludes_playoff_games(self, registry_dir: Path, store):
         """Playoff games in the confirmation season are not part of the cohort."""
         _seed(store, FIT_SEASONS)
         _seed(store, [20262027], game_type=3, first_id=1000)
         _seed(store, [20262027], game_type=2, first_id=2000)
-        record = _register({"id": "0005-playoffs", "min_games": 25})
+        record = _register(registry_dir, {"id": "0005-playoffs", "min_games": 25})
         with pytest.raises(HockeyModelError, match="cohort has 20 games"):
-            run_experiment(record.id, store)
+            run_experiment(record.id, store, repo_root=registry_dir.parent)
 
     def test_confirmation_run_scores_only_games_after_the_cutoff(self, registry_dir: Path, store):
         """Games that started before the registered data_cutoff are not scored."""
@@ -383,16 +398,16 @@ class TestRunExperiment:
         _seed(store, [20262027], first_id=1000)
         for day in range(1, 11):
             add_game(store, 3000 + day, f"2026-10-{day:02d}T00:00", season=20262027)
-        record = _register({"id": "0006-cutoff", "min_games": 15})
-        _, entries = run_experiment(record.id, store)
+        record = _register(registry_dir, {"id": "0006-cutoff", "min_games": 15})
+        _, entries = run_experiment(record.id, store, repo_root=registry_dir.parent)
         scored_ids = {entry["game_id"] for entry in entries}
         assert scored_ids == set(range(1000, 1020))
 
     def test_exploration_run_never_writes_a_result(self, registry_dir: Path, store):
         """An exploration run reports its seasons and says it cannot promote anything."""
         _seed(store, FIT_SEASONS)
-        record = _register({"id": "0007-explore", "cohort": "exploration"})
-        payload, _ = run_experiment(record.id, store)
+        record = _register(registry_dir, {"id": "0007-explore", "cohort": "exploration"})
+        payload, _ = run_experiment(record.id, store, repo_root=registry_dir.parent)
         assert payload["ok"] is True
         assert payload["scored"] == "seasons 20162017 to 20252026"
         assert any("exploratory" in note for note in payload["notes"])
@@ -404,15 +419,18 @@ class TestRunExperiment:
 class TestMain:
     """Test the CLI entry point."""
 
-    def test_main_exits_zero_on_valid_records(self, registry_dir: Path, monkeypatch):
-        """main prints the check result and exits zero when every record is valid."""
+    def test_main_exits_zero_on_valid_records(
+        self, registry_dir: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """main reads the registry of the working directory and exits zero when valid."""
         exited: list[int] = []
 
         def fake_exit(code: int | None = None) -> None:
             exited.append(code if code is not None else 0)
             raise SystemExit(code)
 
-        _register()
+        _register(registry_dir)
+        monkeypatch.chdir(repo_root)
         monkeypatch.setattr("sys.exit", fake_exit)
         from hockey_model.experiments.check import main
 

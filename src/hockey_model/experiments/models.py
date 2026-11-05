@@ -177,31 +177,24 @@ def record_from_text(text: str, source: str) -> ExperimentRecord:
 
 
 def validate_against_schema(
-    record: ExperimentRecord | Mapping[str, Any], schema_path: Path
+    record: ExperimentRecord | Mapping[str, Any],
+    schema: Mapping[str, Any],
+    schema_name: str = "schema",
 ) -> None:
-    """Validate a record against a JSON Schema.
+    """Validate a record against a JSON Schema given as a mapping.
 
     Raises ``HockeyModelError`` when the record does not match.
     """
-    if not schema_path.exists():
-        raise HockeyModelError(
-            f"schema not found: {schema_path}. The registry is relative to the working "
-            "directory, so run the command from the repository root."
-        )
-    try:
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise HockeyModelError(f"cannot read schema {schema_path}: {exc}") from exc
     data = record.to_dict() if isinstance(record, ExperimentRecord) else record
-    _validate_value(data, schema, schema_path, "$")
+    _validate_value(data, schema, schema_name, "$")
 
 
-def _validate_value(value: Any, schema: dict[str, Any], schema_path: Path, path: str) -> None:
+def _validate_value(value: Any, schema: Mapping[str, Any], schema_name: str, path: str) -> None:
     """Validate one value against one schema node."""
     unsupported = sorted(set(schema) - _SCHEMA_KEYWORDS)
     if unsupported:
         raise HockeyModelError(
-            f"{path} in {schema_path}: this validator does not implement the schema "
+            f"{path} in {schema_name}: this validator does not implement the schema "
             f"keyword(s) {', '.join(unsupported)}; add support or remove the keyword"
         )
     expected = schema.get("type")
@@ -214,9 +207,9 @@ def _validate_value(value: Any, schema: dict[str, Any], schema_path: Path, path:
     _check_format(value, schema, path)
     _check_bound(value, schema, path)
     if isinstance(value, (list, tuple)):
-        _check_array(value, schema, schema_path, path)
+        _check_array(value, schema, schema_name, path)
     elif isinstance(value, dict):
-        _check_object(value, schema, schema_path, path)
+        _check_object(value, schema, schema_name, path)
 
 
 def _type_matches(value: Any, expected: str | list[str]) -> bool:
@@ -244,14 +237,14 @@ def _matches_one(value: Any, name: str) -> bool:
     raise HockeyModelError(f"unknown schema type {name!r}")
 
 
-def _check_enum(value: Any, schema: dict[str, Any], path: str) -> None:
+def _check_enum(value: Any, schema: Mapping[str, Any], path: str) -> None:
     """Check that a value is one of the enum values."""
     enum_values = schema.get("enum")
     if enum_values is not None and value not in enum_values:
         raise HockeyModelError(f"{path}: value {value!r} not in {list(enum_values)}")
 
 
-def _check_pattern(value: Any, schema: dict[str, Any], path: str) -> None:
+def _check_pattern(value: Any, schema: Mapping[str, Any], path: str) -> None:
     """Check that a string matches the schema pattern."""
     pattern = schema.get("pattern")
     if pattern is None:
@@ -272,7 +265,7 @@ def _matches_pattern(value: str, pattern: str) -> bool:
         raise HockeyModelError(f"schema pattern {pattern!r} is not a valid regex: {exc}") from exc
 
 
-def _check_format(value: Any, schema: dict[str, Any], path: str) -> None:
+def _check_format(value: Any, schema: Mapping[str, Any], path: str) -> None:
     """Check the declared string format. Only ``date`` is supported."""
     fmt = schema.get("format")
     if fmt is None:
@@ -287,7 +280,7 @@ def _check_format(value: Any, schema: dict[str, Any], path: str) -> None:
         raise HockeyModelError(f"{path}: {value!r} is not a YYYY-MM-DD date: {exc}") from exc
 
 
-def _check_bound(value: Any, schema: dict[str, Any], path: str) -> None:
+def _check_bound(value: Any, schema: Mapping[str, Any], path: str) -> None:
     """Check the numeric bounds the schema declares. A non-number reaches the type check first."""
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return
@@ -301,8 +294,8 @@ def _check_bound(value: Any, schema: dict[str, Any], path: str) -> None:
 
 def _check_array(
     value: Any,
-    schema: dict[str, Any],
-    schema_path: Path,
+    schema: Mapping[str, Any],
+    schema_name: str,
     path: str,
 ) -> None:
     """Check the length bounds of an array and validate its items."""
@@ -315,19 +308,19 @@ def _check_array(
     items_schema = schema.get("items")
     if items_schema is not None:
         for index, item in enumerate(value):
-            _validate_value(item, items_schema, schema_path, f"{path}[{index}]")
+            _validate_value(item, items_schema, schema_name, f"{path}[{index}]")
 
 
 def _check_object(
     value: Any,
-    schema: dict[str, Any],
-    schema_path: Path,
+    schema: Mapping[str, Any],
+    schema_name: str,
     path: str,
 ) -> None:
     """Check the required keys of an object and validate its properties."""
     for name in schema.get("required", []):
         if name not in value:
-            raise HockeyModelError(f"{path}: missing required field {name!r} in {schema_path}")
+            raise HockeyModelError(f"{path}: missing required field {name!r} in {schema_name}")
     for name, prop_schema in schema.get("properties", {}).items():
         if name in value:
-            _validate_value(value[name], prop_schema, schema_path, f"{path}.{name}")
+            _validate_value(value[name], prop_schema, schema_name, f"{path}.{name}")
