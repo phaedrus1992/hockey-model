@@ -1,15 +1,18 @@
 """Tests for the per-URL, age-aware source staleness. They use frozen clocks and no network."""
 
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from seeding import add_injury, record_injury_snapshot, utc
 
 from hockey_model.sources.moneypuck import TEAM_GAMES_URL, goalie_games_url
 from hockey_model.sources.nhl import score_day_url
+from hockey_model.store.db import connect
 from hockey_model.store.reads import injury_reads_before
 from hockey_model.store.source_reads import (
     ACTIVE_FAILURE_WINDOW,
@@ -231,24 +234,21 @@ def test_a_read_at_the_cutoff_is_not_known_yet(store: sqlite3.Connection) -> Non
     assert _reasons(store) == []
 
 
-@settings(
-    max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
-)
+@settings(max_examples=25, deadline=None)
 @given(st.lists(st.tuples(st.integers(1, 600), st.booleans()), max_size=8))
 def test_a_newer_good_read_of_a_url_clears_every_failure_of_it(
-    store: sqlite3.Connection, history: list[tuple[int, bool]]
+    history: list[tuple[int, bool]],
 ) -> None:
-    store.execute("DELETE FROM source_reads")
-    _fresh_everything(store, skip="daily_faceoff")
-    for minutes, ok in history:
-        record_read(
-            store,
-            "daily_faceoff",
-            FACEOFF,
-            AS_OF - timedelta(minutes=minutes + 5),
-            error=None if ok else "x",
-        )
-    # The newest read of the URL is a good one.
-    record_read(store, "daily_faceoff", FACEOFF, AS_OF - timedelta(minutes=1))
-    store.commit()
-    assert [r for s, r in _reasons(store) if s == "daily_faceoff"] == []
+    with tempfile.TemporaryDirectory() as directory:
+        conn = connect(Path(directory) / "store.db")
+        try:
+            _fresh_everything(conn, skip="daily_faceoff")
+            for minutes, ok in history:
+                moment = AS_OF - timedelta(minutes=minutes + 5)
+                record_read(conn, "daily_faceoff", FACEOFF, moment, error=None if ok else "x")
+            # The newest read of the URL is a good one.
+            record_read(conn, "daily_faceoff", FACEOFF, AS_OF - timedelta(minutes=1))
+            conn.commit()
+            assert [r for s, r in _reasons(conn) if s == "daily_faceoff"] == []
+        finally:
+            conn.close()
