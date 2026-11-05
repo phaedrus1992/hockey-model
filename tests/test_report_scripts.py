@@ -12,6 +12,7 @@ if "mutants" in Path(__file__).resolve().parts:
     pytest.skip("the mutation copy has no scripts directory", allow_module_level=True)
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+LIVE = ["xg_form", "rest"]
 DAY = "2026-11-04"
 TAG = f"reports-{DAY}"
 SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -52,7 +53,7 @@ def fakes(tmp_path: Path) -> Path:
         '#!/usr/bin/env bash\necho "uv $*" >> "$FAKE_CALLS"\n'
         'if [[ "$*" == "run hockey-model report-due"* ]]; then printf "%s" "$FAKE_DUE_JSON"; fi\n'
         'if [[ "$*" == "run hockey-model backtest --games-out "* ]]; then\n'
-        '  echo "game_id,elo" > "$5"; echo "{}"\n'
+        '  echo "game_id,elo" > "$5"; printf "%s\\n" "$FAKE_BACKTEST_JSON"\n'
         "fi\n"
         "exit 0\n",
         encoding="utf-8",
@@ -68,6 +69,7 @@ def _env(fakes: Path, tmp_path: Path, **extra: str) -> dict[str, str]:
         "FAKE_CALLS": str(tmp_path / "calls.log"),
         "FAKE_RELEASES": "",
         "FAKE_DUE_JSON": json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 3}),
+        "FAKE_BACKTEST_JSON": json.dumps({"live_features": LIVE}),
         "GITHUB_SHA": SHA,
     }
     env.update(extra)
@@ -303,7 +305,38 @@ def test_prepare_writes_the_backtest_and_the_marker_and_drops_old_days(
         f"prepared-{DAY}",
         "store.db.backfilled",
     ]
-    assert "uv run hockey-model fit" in _calls(tmp_path)
+    assert "uv run hockey-model fit --features xg_form,rest" in _calls(tmp_path)
+
+
+def test_prepare_fits_on_the_features_the_backtest_kept(fakes: Path, tmp_path: Path) -> None:
+    """The served fit uses live_features, so a vetoed candidate never reaches the report."""
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    env["FAKE_BACKTEST_JSON"] = json.dumps({"live_features": ["rest"], "tested_features": LIVE})
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    fits = [line for line in _calls(tmp_path) if "hockey-model fit" in line]
+    assert fits == ["uv run hockey-model fit --features rest"]
+
+
+def test_prepare_fits_the_elo_alone_when_the_joint_test_failed(fakes: Path, tmp_path: Path) -> None:
+    """An empty live_features list is the raw Elo: the fit command gets an empty value."""
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    env["FAKE_BACKTEST_JSON"] = json.dumps({"live_features": []})
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    fits = [line for line in _calls(tmp_path) if "hockey-model fit" in line]
+    assert fits == ["uv run hockey-model fit --features "]
+
+
+def test_prepare_stops_when_the_backtest_names_no_live_features(
+    fakes: Path, tmp_path: Path
+) -> None:
+    """A report without live_features is an error, not a fit on a guess."""
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    env["FAKE_BACKTEST_JSON"] = "{}"
+    result = _run("daily-prepare.sh", env, "--date", DAY)
+    assert result.returncode == 1
+    assert "no live_features list" in result.stderr
+    assert not any("hockey-model fit" in line for line in _calls(tmp_path))
+    assert not (tmp_path / "store" / f"prepared-{DAY}").exists()
 
 
 def test_prepare_stops_at_a_failed_refresh(fakes: Path, tmp_path: Path) -> None:
@@ -346,7 +379,7 @@ def test_daily_run_after_the_morning_refreshes_only_the_starters(
     assert result.returncode == 0, result.stderr
     calls = _calls(tmp_path)
     assert calls[0] == "uv run hockey-model refresh --starters-only"
-    assert not any(line.endswith(" fit") or " backtest " in line for line in calls)
+    assert not any(" hockey-model fit" in line or " backtest " in line for line in calls)
     assert (out / f"backtest-{DAY}.json").exists()
     assert (out / f"backtest-games-{DAY}.csv").exists()
 
@@ -358,7 +391,7 @@ def test_daily_run_without_the_morning_prepares_first(fakes: Path, tmp_path: Pat
     assert result.returncode == 0, result.stderr
     assert f"no morning preparation for {DAY}" in result.stderr
     calls = _calls(tmp_path)
-    assert "uv run hockey-model fit" in calls
+    assert "uv run hockey-model fit --features xg_form,rest" in calls
     assert "uv run hockey-model refresh --starters-only" not in calls
     assert (out / f"backtest-{DAY}.json").exists()
 

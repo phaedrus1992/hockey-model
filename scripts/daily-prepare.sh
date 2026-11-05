@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Prepare one game day: refresh every source, fit the model, and run the backtest.
+# Prepare one game day: refresh every source, run the backtest, and fit the model on the
+# features that the backtest kept.
 #
 # Usage: daily-prepare.sh [--date YYYY-MM-DD] [--help]
 #   --date  Eastern game day to prepare. Default: today in Eastern time.
@@ -53,10 +54,17 @@ if [[ ! -f "$marker" ]]; then
 else
   uv run hockey-model refresh
 fi
-uv run hockey-model fit
 
 # Files from earlier days are stale. The release of each day already holds its own copy.
 find "$store_dir" -maxdepth 1 -type f \( -name 'prepared-*' -o -name 'backtest-*' \) -delete
 backtest_games="$store_dir/backtest-games-$day.csv"
-uv run hockey-model backtest --games-out "$backtest_games" >"$store_dir/backtest-$day.json"
+backtest_json="$store_dir/backtest-$day.json"
+uv run hockey-model backtest --games-out "$backtest_games" >"$backtest_json"
+# The fit serves only the features that passed the backtest's joint test. An empty list is
+# the Elo alone, and the fit command takes it as an empty --features value.
+if ! live_features="$(jq -er '.live_features | join(",")' "$backtest_json")"; then
+  echo "daily-prepare: $backtest_json has no live_features list; the fit needs it" >&2
+  exit 1
+fi
+uv run hockey-model fit --features "$live_features"
 touch "$store_dir/prepared-$day"
