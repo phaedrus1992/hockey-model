@@ -641,3 +641,19 @@ def test_an_unsupported_payload_is_a_serialization_failure(
     captured = capsys.readouterr()
     assert captured.err == "error: serialization failed: cannot serialize object\n"
     assert captured.out == ""
+
+
+def test_a_malformed_model_projection_exits_two_without_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class WrongLevel:
+        def project(
+            self, player: Player, stat: str, horizon_games: int, level: float
+        ) -> Projection:
+            return Projection(0.4, 0.1, 0.7, 0.5)
+
+    runtime = replace(_runtime((_player("p-a"),)), stat_model=WrongLevel())
+    assert cli.main(["player", "goals", "p-a"], runtime) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "the projection has level 0.5 but 0.8 was requested" in output.err

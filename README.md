@@ -48,6 +48,8 @@ result = matchup(home_roster, away_roster, matchup_model)
 print(result.home_win, result.away_win)
 ```
 
+Every public entry point checks what a model returns before it returns it: a projection must be a `Projection` at the requested level with `low <= point <= high`, a count or goals-against average cannot be negative, and a fractional rate or a probability must be in [0, 1].
+A bad result raises `ProjectionError` (or `ProbabilityError` for a probability), and the library never clamps it.
 The player, team, and matchup model protocols contain no production model or
 data-source choice. An embedding application supplies those adapters.
 `FixedStatModel` is available for deterministic examples and tests.

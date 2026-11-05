@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hockey_model.models import JointModel, StatModel
 from hockey_model.roster import validate_roster
 from hockey_model.types import Player, Projection, RateStatAggregationError, Roster, Slot
+from hockey_model.validation import stat_domain, validate_projection
 
 RATE_STATS = frozenset({"save_pct", "goals_against_average", "gaa", "shooting_pct"})
 
@@ -34,7 +35,10 @@ def project_player(
 ) -> Projection:
     """Project one player statistic over a positive game horizon."""
     _validate_request(horizon_games, level)
-    return model.project(player, stat, horizon_games, level)
+    projection = model.project(player, stat, horizon_games, level)
+    return validate_projection(
+        projection, level, f"project {stat} for {player.canonical_id!r}", stat_domain(stat)
+    )
 
 
 def _counting_players(roster: Roster) -> tuple[Player, ...]:
@@ -67,8 +71,20 @@ def project_team(
     players = _counting_players(roster)
     if not players:
         return TeamProjection(Projection(0.0, 0.0, 0.0, level), {})
+    domain = stat_domain(stat)
     breakdown = {
-        player.canonical_id: model.project(player, stat, horizon_games, level) for player in players
+        player.canonical_id: validate_projection(
+            model.project(player, stat, horizon_games, level),
+            level,
+            f"project {stat} for {player.canonical_id!r}",
+            domain,
+        )
+        for player in players
     }
-    total = joint.project_total(players, stat, horizon_games, level)
+    total = validate_projection(
+        joint.project_total(players, stat, horizon_games, level),
+        level,
+        f"project the {stat} total of team {roster.name!r}",
+        domain,
+    )
     return TeamProjection(total, breakdown)

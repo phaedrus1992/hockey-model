@@ -7,8 +7,9 @@ from enum import StrEnum
 from hockey_model.matchup import check_win_pair
 from hockey_model.models import GameModel
 from hockey_model.team_codes import NHL_TEAM_CODES
-from hockey_model.types import HockeyModelError, Player, Projection
+from hockey_model.types import HockeyModelError, Player, Projection, ProjectionError
 from hockey_model.utc import require_utc
+from hockey_model.validation import Domain, validate_projection
 
 
 class StarterStatus(StrEnum):
@@ -123,7 +124,14 @@ def game_win_probability(
     require_utc(moment, "as_of")
     result = model.predict(game, moment, level)
     label = f"predict game {game.game_id} ({game.away} at {game.home})"
+    if not isinstance(result, GamePrediction):
+        raise ProjectionError(
+            f"{label}: the model returned {type(result).__name__}, expected a GamePrediction; "
+            "return a GamePrediction"
+        )
     check_win_pair((result.home_win, result.away_win), label)
+    validate_projection(result.home_goals, level, f"{label}: home goals", Domain.NONNEGATIVE)
+    validate_projection(result.away_goals, level, f"{label}: away goals", Domain.NONNEGATIVE)
     made_after_start = moment >= game.start
     missing = result.missing
     if made_after_start:
