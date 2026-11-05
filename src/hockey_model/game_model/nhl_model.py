@@ -86,7 +86,8 @@ class NhlGameModel:
 
     def _expected_goals(
         self, game: Game, cutoff: datetime
-    ) -> tuple[float, float, list[MissingInput]]:
+    ) -> tuple[float, float, list[MissingInput], bool]:
+        """Return both goal rates, their gaps, and whether MoneyPuck data set a rate."""
         home_for, home_against, home_xg = _goals_for_and_against(self._conn, game.home, cutoff)
         away_for, away_against, away_xg = _goals_for_and_against(self._conn, game.away, cutoff)
         notes: list[MissingInput] = []
@@ -105,22 +106,25 @@ class NhlGameModel:
                 note = "the expected goals come from actual goals, not MoneyPuck expected goals"
                 notes.append(MissingInput(MissingKind.XG_FORM, team, note))
             rates.append((attack + defence) / 2)
-        return rates[0], rates[1], notes
+        return rates[0], rates[1], notes, home_xg or away_xg
 
     def predict(self, game: Game, as_of: datetime, level: float) -> GamePrediction:
         """Return the win chances and expected goals of ``game`` as known at ``as_of``."""
         cutoff = min(as_of, game.start)
         elo = replay(g for g in final_games_before(self._conn, cutoff) if g.season >= ELO_BURN_IN)
-        row = build_features(self._conn, game, as_of, elo, goalie_mode=self._mode)
+        row = build_features(
+            self._conn, game, as_of, elo, goalie_mode=self._mode, names=self._fit.features
+        )
         home_win = predict_logistic(self._fit, row)
-        home_rate, away_rate, goal_notes = self._expected_goals(game, cutoff)
+        home_rate, away_rate, goal_notes, goals_use_moneypuck = self._expected_goals(game, cutoff)
         missing = [*row.missing, *goal_notes]
         missing.extend(
             MissingInput(MissingKind.STALE_SOURCE, None, f"{source}: {reason}")
             for source, reason in stale_sources(self._conn, as_of)
         )
         missing.extend(_clamp_notes(game, home_rate, away_rate))
-        credits = (MONEYPUCK_CREDIT,) if row.uses_moneypuck else ()
+        # The goal rates read MoneyPuck data even when the fit uses no MoneyPuck feature.
+        credits = (MONEYPUCK_CREDIT,) if row.uses_moneypuck or goals_use_moneypuck else ()
         return GamePrediction(
             home_win=home_win,
             away_win=1.0 - home_win,

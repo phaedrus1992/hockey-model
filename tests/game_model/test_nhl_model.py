@@ -211,3 +211,24 @@ def test_the_prediction_elo_starts_at_the_burn_in_season(store: sqlite3.Connecti
     add_game(store, 2, "2014-11-01T00:00", season=20142015, home="MTL", away="OTT")
     baseline = model(store).predict(GAME, AS_OF, 0.8).home_win
     assert baseline == pytest.approx(1 / (1 + 10 ** (-28 / 400)))
+
+
+def test_a_fit_that_uses_attempt_form_predicts(store: sqlite3.Connection) -> None:
+    """The model reads the form feature that the loaded fit names, not the default set."""
+    add_game(store, 1, "2026-01-15T00:00", home="TOR", away="MTL")
+    add_game(store, 2, "2026-01-16T00:00", home="MTL", away="BOS")
+    add_team_form(store, 1, "TOR", 3.0, 2.0, attempts=(70, 30))
+    add_team_form(store, 2, "BOS", 3.0, 2.0, attempts=(30, 70))
+    plain = LogisticFit(("attempt_form",), 0.0, 1.0, {"attempt_form": 0.0})
+    boosted = LogisticFit(("attempt_form",), 0.0, 1.0, {"attempt_form": 4.0})
+    base = model(store, plain).predict(GAME, AS_OF, 0.8).home_win
+    assert model(store, boosted).predict(GAME, AS_OF, 0.8).home_win > base
+
+
+def test_a_fit_without_a_form_feature_reads_no_form(store: sqlite3.Connection) -> None:
+    """A fit that names no form feature reports no form gap, since it never reads one."""
+    season(store)
+    fit = LogisticFit(("rest",), 0.0, 1.0, {"rest": 0.1})
+    result = model(store, fit).predict(GAME, AS_OF, 0.8)
+    kinds = {note.kind for note in result.missing}
+    assert MissingKind.ATTEMPT_FORM not in kinds

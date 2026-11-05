@@ -176,3 +176,49 @@ def test_any_fit_round_trips_through_the_store(
     fit = LogisticFit(tuple(features), intercept, elo_weight, weights)
     save_fit(store, fit, 20252026, T0)
     assert newest_fit(store) == fit
+
+
+def _row_count(store: sqlite3.Connection) -> int:
+    return store.execute("SELECT COUNT(*) FROM model_fits").fetchone()[0]
+
+
+@pytest.mark.parametrize(
+    ("fit", "reason"),
+    [
+        (LogisticFit(("luck",), 0.0, 1.0, {"luck": 1.0}), "unknown feature 'luck'"),
+        (LogisticFit(("rest", "rest"), 0.0, 1.0, {"rest": 1.0}), "twice"),
+        (LogisticFit(("rest",), 0.0, 1.0, {}), "different features"),
+        (LogisticFit(("rest",), 0.0, 1.0, {"rest": float("nan")}), "not a finite number"),
+        (LogisticFit(("rest",), float("inf"), 1.0, {"rest": 0.1}), "not a finite number"),
+    ],
+)
+def test_save_fit_refuses_an_invalid_fit_and_leaves_no_row(
+    store: sqlite3.Connection, fit: LogisticFit, reason: str
+) -> None:
+    with pytest.raises(StoreError, match=f"save the model fit.*{reason}"):
+        save_fit(store, fit, 20252026, T0)
+    assert _row_count(store) == 0
+
+
+@pytest.mark.parametrize("names", [("xg_form",), ("attempt_form", "goalie_gsax", "rest"), ()])
+def test_every_supported_recipe_round_trips(
+    store: sqlite3.Connection, names: tuple[str, ...]
+) -> None:
+    fit = LogisticFit(names, 0.1, 0.9, {name: 0.5 for name in names})
+    save_fit(store, fit, 20252026, T0)
+    assert newest_fit(store) == fit
+
+
+def test_a_saved_fit_with_a_removed_feature_says_it_is_incompatible(
+    store: sqlite3.Connection,
+) -> None:
+    store.execute(
+        "INSERT INTO model_fits (fit_through_season, features, weights, created_at)"
+        " VALUES (1, ?, ?, '2026-01-01T00:00:00.000000+00:00')",
+        (
+            '["old_feature"]',
+            '{"intercept": 0, "elo_weight": 1, "features": {"old_feature": 1}}',
+        ),
+    )
+    with pytest.raises(StoreError, match="unknown feature 'old_feature'.*run `hockey-model fit`"):
+        newest_fit(store)
