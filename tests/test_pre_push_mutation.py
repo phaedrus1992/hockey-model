@@ -3,10 +3,13 @@
 import importlib.util
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 # The mutation run copies src and tests only, so the scripts are not there to test.
 if "mutants" in Path(__file__).resolve().parts:
@@ -85,7 +88,7 @@ def repo(tmp_path: Path) -> Path:
 def test_first_push_uses_the_remote_default_branch_as_base(mod: ModuleType, repo: Path) -> None:
     base_sha = _git(repo, "rev-parse", "HEAD").strip()
     _commit(repo, {SOURCE: BASE_SOURCE.replace("+ 1", "+ 2")}, "feature")
-    assert mod.resolve_base(repo) == base_sha
+    assert mod.resolve_base(repo) == (base_sha, "default branch")
 
 
 def test_missing_origin_head_fails_with_the_fix(mod: ModuleType, repo: Path) -> None:
@@ -96,23 +99,25 @@ def test_missing_origin_head_fails_with_the_fix(mod: ModuleType, repo: Path) -> 
 
 def test_upstream_branch_is_the_base_when_it_is_set(mod: ModuleType, repo: Path) -> None:
     _git(repo, "update-ref", "refs/remotes/origin/feat", "HEAD")
+    _git(repo, "config", "remote.origin.url", str(repo))
+    _git(repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
     _git(repo, "config", "branch.main.remote", "origin")
     _git(repo, "config", "branch.main.merge", "refs/heads/feat")
     upstream_sha = _git(repo, "rev-parse", "HEAD").strip()
     _commit(repo, {SOURCE: BASE_SOURCE.replace("+ 1", "+ 2")}, "feature")
-    assert mod.resolve_base(repo) == upstream_sha
+    assert mod.resolve_base(repo) == (upstream_sha, "tracking branch")
 
 
 def test_a_rename_is_a_delete_and_an_add(mod: ModuleType, repo: Path) -> None:
     _git(repo, "mv", SOURCE, "src/hockey_model/sources/renamed.py")
     _git(repo, "commit", "-q", "-m", "rename")
-    changes = mod.changed_files(repo, mod.resolve_base(repo))
+    changes = mod.changed_files(repo, mod.resolve_base(repo)[0])
     assert mod.FileChange("D", SOURCE) in changes
     assert mod.FileChange("A", "src/hockey_model/sources/renamed.py") in changes
 
 
 def test_changed_lines_cover_an_edit_and_mark_a_pure_deletion(mod: ModuleType, repo: Path) -> None:
-    base = mod.resolve_base(repo)
+    base = mod.resolve_base(repo)[0]
     _commit(repo, {SOURCE: BASE_SOURCE.replace("+ 1", "+ 2")}, "edit")
     assert mod.changed_lines(repo, base, SOURCE) == {2}
     kept = BASE_SOURCE.replace("+ 1", "+ 2").replace("    size = 1\n", "")
@@ -162,7 +167,7 @@ def test_a_malformed_result_line_fails(mod: ModuleType, bad: str) -> None:
 def test_a_directory_that_is_not_mutmut_output_is_kept(mod: ModuleType, repo: Path) -> None:
     (repo / "mutants").mkdir()
     (repo / "mutants" / "keep.txt").write_text("mine", encoding="utf-8")
-    with pytest.raises(mod.PushCheckError, match="not mutmut output"):
+    with pytest.raises(mod.PushCheckError, match="does not hold only mutmut output"):
         mod.clear_generated_mutants(repo)
     assert (repo / "mutants" / "keep.txt").exists()
 
@@ -176,13 +181,15 @@ def test_generated_mutants_are_removed(mod: ModuleType, repo: Path) -> None:
 
 
 @pytest.fixture
-def fake_mutmut(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def fake_mutmut(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mod: ModuleType) -> Path:
     """A stub mutmut. Its output comes from the FAKE_* environment variables."""
     stub = tmp_path / "fake-mutmut"
     stub.write_text(
         "#!/usr/bin/env bash\n"
         'case "$1" in\n'
-        '  run) echo "run $*" >> "$FAKE_CALLS"; sleep "${FAKE_SLEEP:-0}";'
+        '  run) echo "run $*" >> "$FAKE_CALLS";'
+        '    [[ -n "${FAKE_CHILD_PID:-}" ]] && { sleep 60 & echo $! > "$FAKE_CHILD_PID"; };'
+        '    sleep "${FAKE_SLEEP:-0}";'
         '    exit "${FAKE_RUN_RC:-0}";;\n'
         '  results) printf "%s" "$FAKE_RESULTS";;\n'
         '  show) printf "%s" "$FAKE_SHOW";;\n'
@@ -190,7 +197,7 @@ def fake_mutmut(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         encoding="utf-8",
     )
     stub.chmod(0o755)
-    monkeypatch.setenv("PRE_PUSH_MUTMUT", str(stub))
+    monkeypatch.setattr(mod, "MUTMUT_COMMAND", (str(stub),))
     monkeypatch.setenv("FAKE_CALLS", str(tmp_path / "calls.log"))
     monkeypatch.setenv("FAKE_RESULTS", "")
     monkeypatch.setenv("FAKE_SHOW", "")
@@ -295,3 +302,133 @@ def test_a_dirty_tree_is_refused(mod: ModuleType, repo: Path, fake_mutmut: Path)
     (repo / SOURCE).write_text("# edited\n", encoding="utf-8")
     with pytest.raises(mod.PushCheckError, match="uncommitted changes"):
         mod.clean_worktree(repo)
+
+
+def test_a_timeout_kills_the_child_that_mutmut_started(
+    mod: ModuleType, repo: Path, fake_mutmut: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _changed_top(repo)
+    pid_file = tmp_path / "child.pid"
+    monkeypatch.setattr(mod, "MUTMUT_TIMEOUT_S", 1.5)
+    monkeypatch.setenv("FAKE_SLEEP", "5")
+    monkeypatch.setenv("FAKE_CHILD_PID", str(pid_file))
+    with pytest.raises(mod.PushCheckError, match="stopped"):
+        mod.run_mutmut(repo, ["run", TOP])
+    child = int(pid_file.read_text(encoding="utf-8"))
+    for _ in range(50):
+        if subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(child)], capture_output=True, text=True, check=False
+        ).stdout.strip()[:1] in {"", "Z"}:
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"background child {child} survived the timeout")
+
+
+def test_the_base_and_its_source_are_printed(
+    mod: ModuleType,
+    repo: Path,
+    fake_mutmut: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _changed_top(repo)
+    monkeypatch.setenv("FAKE_RESULTS", f"    {TOP}: killed\n")
+    assert mod.run_check(repo) == 0
+    assert "(default branch)" in capsys.readouterr().err
+
+
+def test_changed_lines_outside_every_function_are_named(
+    mod: ModuleType,
+    repo: Path,
+    fake_mutmut: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _commit(repo, {SOURCE: BASE_SOURCE.replace("+ 1", "+ 2") + "LIMIT = 3\n"}, "change")
+    monkeypatch.setenv("FAKE_RESULTS", "")
+    monkeypatch.setattr(mod, "MUTMUT_TIMEOUT_S", 900)
+    mod.run_check(repo)
+    err = capsys.readouterr().err
+    assert "outside any function" in err and "LIMIT" not in err
+
+
+def test_the_plan_subcommand_prints_the_mutant_globs(
+    mod: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _changed_top(repo)
+    monkeypatch.chdir(repo)
+    assert mod.main(["plan"]) == 0
+    assert capsys.readouterr().out.strip() == ("hockey_model.sources.shapes.x_top__mutmut_*")
+
+
+def test_a_path_outside_a_repository_is_a_named_error(
+    mod: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert mod.main(["run"]) == 1
+    assert "pre-push mutation: PushCheckError" in capsys.readouterr().err
+
+
+def test_a_project_without_only_mutate_is_a_named_error(
+    mod: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _commit(repo, {"pyproject.toml": "[tool.mutmut]\n"}, "drop the list")
+    monkeypatch.chdir(repo)
+    assert mod.main(["plan"]) == 1
+    assert "only_mutate" in capsys.readouterr().err
+
+
+@given(
+    hunks=st.lists(st.tuples(st.integers(1, 500), st.integers(0, 8)), min_size=0, max_size=6).map(
+        lambda raw: sorted(raw)
+    )
+)
+def test_hunk_lines_are_the_union_of_the_new_side_ranges(
+    mod: ModuleType, hunks: list[tuple[int, int]]
+) -> None:
+    diff = "".join(f"@@ -1,1 +{start},{count} @@\n" for start, count in hunks)
+    expected: set[int] = set()
+    for start, count in hunks:
+        expected |= {max(start, 1)} if count == 0 else set(range(start, start + count))
+    assert mod.hunk_new_lines(diff) == expected
+
+
+_NAMES = st.from_regex(r"[a-z_][a-z0-9_]{0,12}__mutmut_[0-9]{1,3}", fullmatch=True)
+_STATUSES = st.sampled_from(
+    sorted({"killed", "survived", "no tests", "timeout", "suspicious", "not checked", "skipped"})
+)
+
+
+@given(results=st.dictionaries(_NAMES, _STATUSES, max_size=12))
+def test_results_round_trip_through_their_text(mod: ModuleType, results: dict[str, str]) -> None:
+    text = "".join(f"    {name}: {status}\n" for name, status in results.items())
+    assert mod.parse_results(text) == results
+
+
+@given(name=_NAMES, status=_STATUSES)
+def test_a_name_listed_twice_is_refused(mod: ModuleType, name: str, status: str) -> None:
+    with pytest.raises(mod.PushCheckError, match="twice"):
+        mod.parse_results(f"    {name}: {status}\n    {name}: killed\n")
+
+
+_PYTHON_NAME = st.from_regex(r"[a-z_][a-z0-9_]{0,15}", fullmatch=True).filter(
+    lambda name: name.isidentifier()
+)
+
+
+@given(name=_PYTHON_NAME, owner=_PYTHON_NAME)
+def test_mutant_names_follow_mutmut_for_functions_and_methods(
+    mod: ModuleType, name: str, owner: str
+) -> None:
+    assert mod.mutant_glob("src/hockey_model/a/b.py", name) == (
+        f"hockey_model.a.b.x_{name}__mutmut_*"
+    )
+    assert mod.mutant_glob("src/hockey_model/a/b.py", f"{owner}.{name}") == (
+        f"hockey_model.a.b.xǁ{owner}ǁ{name}__mutmut_*"
+    )

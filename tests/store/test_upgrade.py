@@ -2,10 +2,13 @@
 
 import argparse
 import sqlite3
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from seeding import add_game, add_team_form
 
 from hockey_model.store import upgrade
@@ -16,20 +19,20 @@ from hockey_model.store_cli import run_store_command
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "store"
 V1_SCHEMA = FIXTURES / "schema_v1.sql"
-VIEWS = Path(__file__).resolve().parents[2] / "src" / "hockey_model" / "store" / "views.sql"
 V1_MP_ROWS = [
     (2001, "TOR", "2026-01-01", 1.5, 2.5, "2026-01-02T00:00:00Z"),
     (2001, "TOR", "2026-01-01", 1.6, 2.4, "2026-01-03T00:00:00Z"),
     (2002, "BOS", "2026-01-05", 3.1, 0.9, "2026-01-06T00:00:00Z"),
 ]
+MP_KEPT_COLUMNS = "game_id, team, game_date, xg_for, xg_against, fetched_at"
 
 
-def make_v1_store(path: Path) -> Path:
-    """Write a version 1 store with duplicate MoneyPuck versions and one saved fit."""
+def make_v1_store(path: Path, mp_rows: list[tuple] = V1_MP_ROWS) -> Path:
+    """Write a version 1 store with the given MoneyPuck rows and one saved fit."""
     conn = sqlite3.connect(path)
     conn.executescript(V1_SCHEMA.read_text(encoding="utf-8"))
     conn.execute("INSERT INTO schema_version (version) VALUES (1)")
-    conn.executemany("INSERT INTO mp_team_games VALUES (?, ?, ?, ?, ?, ?)", V1_MP_ROWS)
+    conn.executemany("INSERT INTO mp_team_games VALUES (?, ?, ?, ?, ?, ?)", mp_rows)
     conn.execute(
         "INSERT INTO model_fits (fit_id, fit_through_season, features, weights, created_at)"
         " VALUES (7, 20252026, '[\"rest\"]', '[0.1]', '2026-11-01T00:00:00Z')"
@@ -51,33 +54,32 @@ def version_of(path: Path) -> int:
     return rows(path, "SELECT version FROM schema_version")[0][0]
 
 
+def _columns(path: Path) -> list[tuple]:
+    """Return name, type, not-null, default, and key position of each mp_team_games column."""
+    return rows(
+        path,
+        "SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('mp_team_games')"
+        " ORDER BY cid",
+    )
+
+
 @pytest.fixture
 def v1(tmp_path: Path) -> Path:
     return make_v1_store(tmp_path / "store.db")
 
 
 def test_upgrade_keeps_every_row_and_leaves_attempt_counts_unknown(v1: Path) -> None:
-    before = rows(
-        v1,
-        "SELECT game_id, team, game_date, xg_for, xg_against, fetched_at"
-        " FROM mp_team_games ORDER BY game_id, fetched_at",
-    )
+    before = rows(v1, f"SELECT {MP_KEPT_COLUMNS} FROM mp_team_games ORDER BY game_id, fetched_at")
     report = upgrade_store(v1)
     assert (report.from_version, report.to_version, report.changed) == (1, SCHEMA_VERSION, True)
-    after = rows(
-        v1,
-        "SELECT game_id, team, game_date, xg_for, xg_against, fetched_at"
-        " FROM mp_team_games ORDER BY game_id, fetched_at",
-    )
+    after = rows(v1, f"SELECT {MP_KEPT_COLUMNS} FROM mp_team_games ORDER BY game_id, fetched_at")
     assert after == before
-    assert (
-        rows(
-            v1,
-            "SELECT shot_attempts_for, shot_attempts_against, unblocked_for,"
-            " unblocked_against FROM mp_team_games",
-        )
-        == [(None, None, None, None)] * 3
+    counts = rows(
+        v1,
+        "SELECT shot_attempts_for, shot_attempts_against, unblocked_for, unblocked_against,"
+        " attempts_known FROM mp_team_games",
     )
+    assert counts == [(None, None, None, None, 0)] * len(V1_MP_ROWS)
     assert version_of(v1) == SCHEMA_VERSION
 
 
@@ -98,23 +100,23 @@ def test_upgrade_writes_a_backup_that_still_reads_as_version_1(v1: Path) -> None
     assert len(rows(backup, "SELECT * FROM mp_team_games")) == len(V1_MP_ROWS)
 
 
-def test_a_second_upgrade_is_a_no_op(v1: Path) -> None:
-    upgrade_store(v1)
-    report = upgrade_store(v1)
-    assert (report.changed, report.backup_path) == (False, None)
+def test_a_second_upgrade_is_a_no_op_that_names_the_last_backup(v1: Path) -> None:
+    first = upgrade_store(v1)
+    again = upgrade_store(v1)
+    assert again.changed is False
+    assert again.backup_path == first.backup_path
     assert len(rows(v1, "SELECT * FROM schema_migrations")) == 1
 
 
 def test_a_failed_change_rolls_back_and_keeps_version_1(
     v1: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    broken = (*upgrade.MIGRATIONS[1][:2], "ALTER TABLE no_such_table ADD COLUMN x INTEGER")
+    broken = (upgrade.MIGRATIONS[1][0], "INSERT INTO no_such_table VALUES (1)")
     monkeypatch.setitem(upgrade.MIGRATIONS, 1, broken)
     with pytest.raises(StoreError, match="the store is unchanged"):
         upgrade_store(v1)
     assert version_of(v1) == 1
-    columns = [row[1] for row in rows(v1, "PRAGMA table_info(mp_team_games)")]
-    assert "shot_attempts_for" not in columns
+    assert "attempts_known" not in [row[0] for row in _columns(v1)]
     assert rows(v1, "SELECT COUNT(*) FROM mp_team_games") == [(len(V1_MP_ROWS),)]
 
 
@@ -171,3 +173,74 @@ def test_attempt_form_skips_rows_without_counts(v1: Path) -> None:
     form = mp_attempt_form_before(conn, "TOR", datetime(2026, 2, 1, tzinfo=UTC), 5)
     conn.close()
     assert form == [(55, 45)]
+
+
+def test_an_upgraded_table_has_the_same_columns_as_a_fresh_one(tmp_path: Path) -> None:
+    fresh = tmp_path / "fresh.db"
+    connect(fresh).close()
+    upgraded = make_v1_store(tmp_path / "upgraded.db")
+    upgrade_store(upgraded)
+    assert _columns(upgraded) == _columns(fresh)
+
+
+def test_a_fresh_row_without_counts_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "fresh.db"
+    connect(path).close()
+    conn = sqlite3.connect(path)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO mp_team_games (game_id, team, game_date, xg_for, xg_against, fetched_at)"
+            " VALUES (1, 'TOR', '2026-01-01', 1.0, 1.0, '2026-01-02T00:00:00Z')"
+        )
+    conn.close()
+
+
+def test_views_exist_after_the_upgrade(v1: Path) -> None:
+    upgrade_store(v1)
+    names = {row[0] for row in rows(v1, "SELECT name FROM sqlite_master WHERE type = 'view'")}
+    assert {"latest_mp_team_games", "latest_games"} <= names
+
+
+_ROW = st.tuples(
+    st.integers(1, 10**9),
+    st.sampled_from(["TOR", "BOS", "NYR"]),
+    st.from_regex(r"20[0-9]{2}-[01][0-9]-[0-3][0-9]", fullmatch=True),
+    st.floats(0, 10, allow_nan=False, allow_infinity=False),
+    st.floats(0, 10, allow_nan=False, allow_infinity=False),
+    st.from_regex(r"20[0-9]{2}-[01][0-9]-[0-3][0-9]T00:00:00Z", fullmatch=True),
+)
+
+
+@settings(
+    max_examples=25,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+@given(data=st.lists(_ROW, min_size=0, max_size=8, unique_by=lambda r: (r[0], r[1], r[5])))
+def test_any_v1_rows_keep_their_values_and_gain_unknown_counts(data: list[tuple]) -> None:
+    # Each example needs its own directory, because a store and its backup must not exist yet.
+    with tempfile.TemporaryDirectory() as folder:
+        path = make_v1_store(Path(folder) / "prop.db", mp_rows=data)
+        upgrade_store(path)
+        kept = rows(path, f"SELECT {MP_KEPT_COLUMNS} FROM mp_team_games")
+        assert sorted(kept) == sorted(data)
+        counts = rows(path, "SELECT shot_attempts_for, attempts_known FROM mp_team_games")
+        assert all(count == (None, 0) for count in counts)
+
+
+def test_an_unknown_attempt_column_is_refused_before_any_sql_runs(v1: Path) -> None:
+    upgrade_store(v1)
+    conn = connect(v1)
+    try:
+        with pytest.raises(ValueError, match="unknown column"):
+            from hockey_model.store.reads import _mp_pairs_before
+
+            _mp_pairs_before(
+                conn,
+                ("xg_for; DROP TABLE games", "xg_against"),
+                "TOR",
+                datetime(2026, 2, 1, tzinfo=UTC),
+                5,
+            )
+    finally:
+        conn.close()

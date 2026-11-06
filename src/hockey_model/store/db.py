@@ -40,13 +40,22 @@ def connect(path: Path) -> sqlite3.Connection:
         return _prepare(conn, path)
     except sqlite3.Error as exc:
         conn.close()
-        raise StoreError(
-            f"open store {str(path)!r}: {exc}; the file is not a usable SQLite store, "
-            "so use a new path"
-        ) from exc
-    except StoreError:
+        raise StoreError(_open_failure_fix(path, exc)) from exc
+    except StoreError, OSError:
         conn.close()
         raise
+
+
+def _open_failure_fix(path: Path, exc: sqlite3.Error) -> str:
+    """Name the open failure and the fix. A lock and a damaged file need different fixes."""
+    text = str(exc)
+    if "not a database" in text:
+        fix = "the file is not a SQLite store, so use a new path"
+    elif "locked" in text or "busy" in text:
+        fix = "another process holds the store; stop it, then open the store again"
+    else:
+        fix = "check the disk and the file permissions, then open the store again"
+    return f"open store {str(path)!r}: {text}; {fix}"
 
 
 def _prepare(conn: sqlite3.Connection, path: Path) -> sqlite3.Connection:

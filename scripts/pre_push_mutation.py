@@ -20,8 +20,7 @@ Subcommands:
 - ``run``: run mutmut on the selected globs and gate the results.
 
 Exit 0 on a pass or on nothing to check, 1 on a failed check, and 2 on a bad argument.
-Diagnostics go to stderr. The mutmut command comes from ``PRE_PUSH_MUTMUT``, which
-defaults to ``uv run mutmut``.
+Diagnostics go to stderr.
 """
 
 import argparse
@@ -29,8 +28,8 @@ import ast
 import fnmatch
 import os
 import re
-import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -42,8 +41,9 @@ PYPROJECT = "pyproject.toml"
 MUTANTS_DIR = "mutants"
 # A changed-code run that passes this many seconds fails with an actionable message.
 MUTMUT_TIMEOUT_S = 900
-MUTMUT_CMD_ENV = "PRE_PUSH_MUTMUT"
-DEFAULT_MUTMUT_CMD = "uv run mutmut"
+MUTMUT_COMMAND = ("uv", "run", "mutmut")
+# Top-level names that mutmut writes into its output directory. Any other name is refused.
+MUTANTS_OUTPUT_NAMES = frozenset({"mutmut-stats.json", "pyproject.toml", "src", "tests", "uv.lock"})
 # Statuses that a surviving mutant can carry. Only these are gated by the changed lines.
 SURVIVING = frozenset({"survived", "no tests"})
 # Statuses that show the test run did not finish. These always fail the push.
@@ -82,39 +82,60 @@ class Target:
     last_line: int
 
 
+def _git_run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run git in ``repo`` and return the completed process without raising."""
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
+
+
 def git(repo: Path, *args: str) -> str:
     """Run git in ``repo`` and return stdout. Raise with git's stderr on failure."""
-    done = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
+    done = _git_run(repo, *args)
     if done.returncode != 0:
         raise PushCheckError(f"git {' '.join(args)} failed: {done.stderr.strip()}")
     return done.stdout
 
 
-def try_git(repo: Path, *args: str) -> str | None:
-    """Run git in ``repo``. Return stdout, or None when git exits non-zero."""
-    done = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
-    return done.stdout if done.returncode == 0 else None
+def tracking_ref(repo: Path) -> str | None:
+    """Return the remote branch that HEAD tracks, or None when HEAD tracks none.
+
+    git exits 1 for "no tracking branch" and 128 for a broken repository. Only the first
+    means absent.
+    """
+    done = _git_run(repo, "rev-parse", "--verify", "--quiet", "@{upstream}")
+    if done.returncode == 0:
+        return done.stdout.strip()
+    if done.returncode == 1:
+        return None
+    raise PushCheckError(f"git rev-parse @{{upstream}} failed: {done.stderr.strip()}")
 
 
 def remote_default_branch(repo: Path) -> str:
     """Return the remote default branch, such as ``origin/main``."""
-    ref = try_git(repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
-    if ref is None:
+    done = _git_run(repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    if done.returncode != 0:
         raise PushCheckError(
-            "no upstream branch and no origin/HEAD, so the change base is unknown. "
+            "no tracking branch and no origin/HEAD, so the change base is unknown. "
             "Run `git remote set-head origin --auto`, then push again."
         )
-    return ref.strip().removeprefix("refs/remotes/")
+    return done.stdout.strip().removeprefix("refs/remotes/")
 
 
-def resolve_base(repo: Path) -> str:
-    """Return the merge base of HEAD with the upstream, or with the default branch.
+def resolve_base(repo: Path) -> tuple[str, str]:
+    """Return ``(merge base sha, label)`` of HEAD with its tracking branch or the default.
 
-    A first push has no upstream, so the default branch is the base there.
+    A first push has no tracking branch, so the default branch is the base there. The label
+    names which one was used, so the log shows the size of the check.
     """
-    upstream = try_git(repo, "rev-parse", "--verify", "--quiet", "@{upstream}")
-    target = upstream.strip() if upstream else remote_default_branch(repo)
-    return git(repo, "merge-base", "HEAD", target).strip()
+    tracked = tracking_ref(repo)
+    target, label = (
+        (tracked, "tracking branch")
+        if tracked
+        else (
+            remote_default_branch(repo),
+            "default branch",
+        )
+    )
+    return git(repo, "merge-base", "HEAD", target).strip(), label
 
 
 def changed_files(repo: Path, base: str) -> list[FileChange]:
@@ -133,7 +154,13 @@ def changed_files(repo: Path, base: str) -> list[FileChange]:
 def covered_globs(repo: Path) -> list[str]:
     """Return ``[tool.mutmut] only_mutate`` from the project's pyproject.toml."""
     data = tomllib.loads((repo / PYPROJECT).read_text(encoding="utf-8"))
-    return list(data["tool"]["mutmut"]["only_mutate"])
+    try:
+        return list(data["tool"]["mutmut"]["only_mutate"])
+    except KeyError as exc:
+        raise PushCheckError(
+            f"{PYPROJECT} has no [tool.mutmut] only_mutate list ({exc}); add it, "
+            "because the check needs it to find the covered modules."
+        ) from exc
 
 
 def is_covered(path: str, globs: list[str]) -> bool:
@@ -146,8 +173,12 @@ def changed_lines(repo: Path, base: str, path: str) -> set[int]:
 
     A pure deletion has no new lines. It marks the line before the deletion instead.
     """
+    return hunk_new_lines(git(repo, "diff", "-U0", base, "HEAD", "--", path))
+
+
+def hunk_new_lines(diff: str) -> set[int]:
+    """Return the new-side line numbers of a unified diff with no context lines."""
     lines: set[int] = set()
-    diff = git(repo, "diff", "-U0", base, "HEAD", "--", path)
     for line in diff.splitlines():
         match = HUNK_NEW.match(line)
         if match is None:
@@ -233,48 +264,55 @@ def parse_results(text: str) -> dict[str, str]:
         match = RESULT_LINE.match(line)
         if match is None:
             raise PushCheckError(f"mutmut results has a line that is not a result: {line!r}")
-        statuses[match["name"]] = match["status"]
+        name = match["name"]
+        if name in statuses:
+            raise PushCheckError(f"mutmut results lists mutant {name!r} twice")
+        statuses[name] = match["status"]
     return statuses
 
 
-def mutmut_command() -> list[str]:
-    """Return the mutmut command to run, from the environment or the default."""
-    return shlex.split(os.environ.get(MUTMUT_CMD_ENV, DEFAULT_MUTMUT_CMD))
-
-
 def clear_generated_mutants(repo: Path) -> None:
-    """Remove the mutants directory only when mutmut wrote it. Otherwise refuse."""
+    """Remove the mutants directory only when it holds mutmut output and nothing else."""
     target = repo / MUTANTS_DIR
     if not target.exists():
         return
-    generated = (target / "mutmut-stats.json").is_file() and (target / PYPROJECT).is_file()
-    if not target.is_dir() or not generated:
+    names = {entry.name for entry in target.iterdir()} if target.is_dir() else set()
+    generated = {"mutmut-stats.json", PYPROJECT} <= names and names <= MUTANTS_OUTPUT_NAMES
+    if not generated:
         raise PushCheckError(
-            f"{MUTANTS_DIR}/ is not mutmut output, so it was not removed. "
-            f"Move it aside, then push again."
+            f"{MUTANTS_DIR}/ does not hold only mutmut output, so it was not removed. "
+            "Move it aside, then push again."
         )
     shutil.rmtree(target)
 
 
 def run_mutmut(repo: Path, args: list[str]) -> str:
-    """Run one mutmut command and return its stdout. Fail on a timeout or a non-zero exit."""
+    """Run one mutmut command and return its stdout.
+
+    The command runs in its own process group. A timeout kills the whole group, so no
+    worker keeps writing the mutants directory after the push fails.
+    """
+    proc = subprocess.Popen(
+        [*MUTMUT_COMMAND, *args],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
     try:
-        done = subprocess.run(
-            [*mutmut_command(), *args],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            timeout=MUTMUT_TIMEOUT_S,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as err:
+        stdout, stderr = proc.communicate(timeout=MUTMUT_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
         raise PushCheckError(
-            f"mutmut {args[0]} passed {MUTMUT_TIMEOUT_S}s and was stopped. "
-            "Push fewer functions per change, or raise MUTMUT_TIMEOUT_S with a reason."
-        ) from err
-    if done.returncode != 0:
-        raise PushCheckError(f"mutmut {args[0]} exited {done.returncode}: {done.stderr.strip()}")
-    return done.stdout
+            f"mutmut {args[0]} ran past {MUTMUT_TIMEOUT_S}s and was stopped. Push fewer "
+            "functions per change, or raise MUTMUT_TIMEOUT_S in scripts/pre_push_mutation.py "
+            "with a reason."
+        ) from exc
+    if proc.returncode != 0:
+        raise PushCheckError(f"mutmut {args[0]} exited {proc.returncode}: {stderr.strip()}")
+    return stdout
 
 
 def clean_worktree(repo: Path) -> None:
@@ -296,6 +334,35 @@ def covered_targets(repo: Path, base: str) -> list[tuple[str, Target, set[int]]]
         lines = changed_lines(repo, base, change.path)
         source = git(repo, "show", f"HEAD:{change.path}")
         found.extend((change.path, target, lines) for target in targets_at(source, lines))
+    return found
+
+
+def _function_nodes(body: list[ast.stmt]) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return the top-level functions and class methods, without nested functions."""
+    nodes: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    for node in body:
+        if isinstance(node, ast.ClassDef):
+            nodes.extend(_function_nodes(node.body))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            nodes.append(node)
+    return nodes
+
+
+def uncovered_changes(repo: Path, base: str) -> dict[str, list[int]]:
+    """Return the changed lines of covered files that no function holds, by path."""
+    globs = covered_globs(repo)
+    found: dict[str, list[int]] = {}
+    for change in changed_files(repo, base):
+        if change.status == "D" or not is_covered(change.path, globs):
+            continue
+        source = git(repo, "show", f"HEAD:{change.path}")
+        covered: set[int] = set()
+        for node in _function_nodes(ast.parse(source).body):
+            first = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+            covered.update(range(first, (node.end_lineno or node.lineno) + 1))
+        loose = sorted(changed_lines(repo, base, change.path) - covered)
+        if loose:
+            found[change.path] = loose
     return found
 
 
@@ -347,8 +414,14 @@ def gate(
 def run_check(repo: Path) -> int:
     """Run the changed-code check and return the exit code."""
     started = time.monotonic()
-    base = resolve_base(repo)
+    base, label = resolve_base(repo)
+    print(f"pre-push mutation: base {base[:12]} ({label})", file=sys.stderr)
     clean_worktree(repo)
+    for path, lines in uncovered_changes(repo, base).items():
+        print(
+            f"pre-push mutation: not mutated, outside any function: {path} lines {lines}",
+            file=sys.stderr,
+        )
     found = covered_targets(repo, base)
     if not found:
         print("pre-push mutation: no covered function changed; nothing to run", file=sys.stderr)
@@ -374,21 +447,32 @@ def run_check(repo: Path) -> int:
     return 0
 
 
+# Every error the check raises on purpose, or on a broken input file, ends with a message.
+REPORTED_ERRORS = (
+    PushCheckError,
+    KeyError,
+    OSError,
+    SyntaxError,
+    ValueError,
+    tomllib.TOMLDecodeError,
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse the subcommand, run it, and return the exit code."""
     parser = argparse.ArgumentParser(description="Mutation tests on the functions a push changes.")
     parser.add_argument("command", choices=["plan", "run"])
     args = parser.parse_args(argv)
-    repo = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
     try:
+        repo = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
         if args.command == "run":
             return run_check(repo)
-        found = covered_targets(repo, resolve_base(repo))
-        for path, target, _ in found:
+        base, _ = resolve_base(repo)
+        for path, target, _ in covered_targets(repo, base):
             print(mutant_glob(path, target.qualname))
         return 0
-    except PushCheckError as err:
-        print(f"pre-push mutation: {err}", file=sys.stderr)
+    except REPORTED_ERRORS as err:
+        print(f"pre-push mutation: {type(err).__name__}: {err}", file=sys.stderr)
         return 1
 
 

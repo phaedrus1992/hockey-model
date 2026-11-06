@@ -97,10 +97,13 @@ jobs:
           # The script exits 1 past this budget. The variable names the limit, so it is not restated here.
           REPORT_BUDGET_S: "600"
         run: bash scripts/daily-report.sh --date "$DAY" --out-dir "$RUNNER_TEMP/report"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # Runs even when the report step failed, so a report written before the budget check
+      # is still uploaded. The publish job then fails at the download if nothing was written.
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: daily-report
-          if-no-files-found: error
+          if-no-files-found: warn
           path: ${{ runner.temp }}/report
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: always()
@@ -110,7 +113,11 @@ jobs:
 
   publish:
     needs: [gate, build]
-    if: needs.gate.outputs.publish == 'true'
+    # A failed build still publishes when it wrote a report. The build job stays failed, so
+    # the overrun remains visible. A cancelled or skipped build does not publish.
+    if: >-
+      always() && needs.gate.outputs.publish == 'true'
+      && (needs.build.result == 'success' || needs.build.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

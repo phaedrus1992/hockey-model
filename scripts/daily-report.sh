@@ -12,8 +12,10 @@
 # the script with its exit code, so a failed run writes no report.
 #
 # Reads REPORT_BUDGET_S, a whole number of seconds. The default is set in the budget line below.
-# Each step logs its seconds to stderr.
-# When the whole run passes the budget, the script exits 1 after it writes the report.
+# Each step logs its seconds to stderr. The clock has one-second resolution, so a run can pass
+# the budget by less than one second and still pass this check.
+# When the whole run passes the budget, the script exits 1 after it writes the report. The
+# workflow still uploads and publishes that report, and the build job stays failed.
 set -euo pipefail
 
 day=""
@@ -83,12 +85,18 @@ if [[ ! -f "$store_dir/prepared-$day" ]]; then
 fi
 
 # Run one step and log its name and its seconds to stderr, so the log shows where time goes.
+# A failed step logs its name and exit code too, so the log names the step that stopped the run.
 run_step() {
   local name="$1"
   local step_start=$SECONDS
+  local rc=0
   shift
-  "$@"
+  "$@" || rc=$?
   echo "daily-report: step $name took $((SECONDS - step_start))s" >&2
+  if ((rc != 0)); then
+    echo "daily-report: step $name failed with exit code $rc" >&2
+    exit "$rc"
+  fi
 }
 
 start=$SECONDS
