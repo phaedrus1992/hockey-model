@@ -7,6 +7,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "mutation_shards.py"
@@ -32,6 +34,12 @@ def test_shard_patterns_return_one_glob_per_module() -> None:
     assert "hockey_model.sources.errors.*" in shards.shard_patterns(1)
 
 
+@pytest.mark.parametrize("index", [-1, len(shards.SHARDS)])
+def test_shard_patterns_reject_an_index_outside_the_table(index: int) -> None:
+    with pytest.raises(shards.ShardError, match="does not exist"):
+        shards.shard_patterns(index)
+
+
 def test_every_covered_module_has_exactly_one_owning_shard() -> None:
     covered = shards.covered_modules(ROOT / "pyproject.toml")
     for module in covered:
@@ -42,12 +50,6 @@ def test_every_covered_module_has_exactly_one_owning_shard() -> None:
             if any(fnmatch(key, glob) for glob in shards.shard_patterns(index))
         ]
         assert len(owners) == 1, f"{key} matched shards {owners}"
-
-
-@pytest.mark.parametrize("index", [-1, len(shards.SHARDS)])
-def test_shard_patterns_reject_an_index_outside_the_table(index: int) -> None:
-    with pytest.raises(shards.ShardError, match="does not exist"):
-        shards.shard_patterns(index)
 
 
 @pytest.mark.parametrize(
@@ -62,15 +64,27 @@ def test_module_from_source_drops_the_package_prefix(path: str, module: str) -> 
     assert shards.module_from_source(path) == module
 
 
-@pytest.mark.parametrize("path", ["tests/test_x.py", "src/hockey_model/x.txt"])
-def test_module_from_source_rejects_a_path_outside_src(path: str) -> None:
-    with pytest.raises(shards.ShardError, match="src/ Python file"):
+@pytest.mark.parametrize(
+    "path",
+    ["tests/test_x.py", "src/hockey_model/x.txt", "src/x.py", "src/other/y.py", "src/.py"],
+)
+def test_module_from_source_rejects_a_path_outside_the_package(path: str) -> None:
+    with pytest.raises(shards.ShardError, match="fix only_mutate"):
         shards.module_from_source(path)
 
 
 def test_the_shards_cover_the_configured_modules_exactly_once() -> None:
     covered = shards.covered_modules(ROOT / "pyproject.toml")
     assert shards.check_partition(covered) == []
+
+
+def test_covered_modules_rejects_a_pattern_that_matches_nothing(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[tool.mutmut]\nonly_mutate = ["src/hockey_model/gone/*.py"]\n', encoding="utf-8"
+    )
+    with pytest.raises(shards.ShardError, match="matches no file"):
+        shards.covered_modules(pyproject)
 
 
 def test_check_partition_reports_an_uncovered_module() -> None:
@@ -111,15 +125,6 @@ def test_merge_meta_unions_the_mutants_each_shard_ran(tmp_path: Path) -> None:
     assert _read_codes(dest / "src/a.py.meta") == {"m.x__1": 0, "m.x__2": 1}
 
 
-def test_merge_meta_keeps_a_file_only_one_shard_wrote(tmp_path: Path) -> None:
-    first = tmp_path / "shard-0"
-    second = tmp_path / "shard-1"
-    _write_meta(first / "src/a.py.meta", {"m.x__1": 0})
-    _write_meta(second / "src/b.py.meta", {"m.y__1": None})
-
-    assert shards.merge_meta([first, second], tmp_path / "merged") == 2
-
-
 def test_merge_meta_rejects_two_results_for_one_mutant(tmp_path: Path) -> None:
     first = tmp_path / "shard-0"
     second = tmp_path / "shard-1"
@@ -138,3 +143,43 @@ def test_merge_meta_rejects_shards_that_ran_different_source(tmp_path: Path) -> 
     (second / "src/a.py.meta").write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(shards.ShardError, match="source hashes"):
         shards.merge_meta([first, second], tmp_path / "merged")
+
+
+def test_merge_meta_names_a_meta_file_that_is_not_json(tmp_path: Path) -> None:
+    shard = tmp_path / "shard-0"
+    (shard / "src").mkdir(parents=True)
+    (shard / "src/a.py.meta").write_text("{broken", encoding="utf-8")
+    with pytest.raises(shards.ShardError, match="a.py.meta"):
+        shards.merge_meta([shard], tmp_path / "merged")
+
+
+def test_merge_meta_rejects_shards_with_no_meta_files(tmp_path: Path) -> None:
+    empty = tmp_path / "shard-0"
+    empty.mkdir()
+    with pytest.raises(shards.ShardError, match="no .meta files"):
+        shards.merge_meta([empty], tmp_path / "merged")
+
+
+def test_missing_results_lists_a_module_with_no_merged_file(tmp_path: Path) -> None:
+    _write_meta(tmp_path / "src/hockey_model/sources/nhl.py.meta", {"m.x__1": 0})
+    missing = shards.missing_results(tmp_path)
+    assert "sources.nhl" not in missing
+    assert "backtest.metrics" in missing
+
+
+def test_merge_command_fails_when_no_shard_directory_exists(tmp_path: Path) -> None:
+    code = shards.main(["merge", "--from", str(tmp_path / "absent"), "--into", str(tmp_path)])
+    assert code == 1
+
+
+@given(
+    part=st.dictionaries(
+        st.text(min_size=1, max_size=6),
+        st.one_of(st.none(), st.integers(min_value=0, max_value=3)),
+        max_size=8,
+    )
+)
+def test_union_keeps_every_key_and_a_null_never_wins(part: dict[str, object]) -> None:
+    union = shards._union_results(Path("a.meta"), "exit_code_by_key", [part, {}])
+    assert set(union) == set(part)
+    assert all(union[key] == value for key, value in part.items() if value is not None)

@@ -11,6 +11,8 @@ from hypothesis import strategies as st
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "mutation_report.py"
+BOT = {"is_bot": True, "login": "github-actions"}
+PERSON = {"is_bot": False, "login": "someone"}
 
 
 def _load_report() -> ModuleType:
@@ -63,6 +65,13 @@ def test_read_stats_rejects_a_file_that_is_not_json(tmp_path: Path) -> None:
     path = tmp_path / "stats.json"
     path.write_text("{not json", encoding="utf-8")
     with pytest.raises(report.MalformedStats, match="not JSON"):
+        report.read_stats(path)
+
+
+def test_read_stats_rejects_bytes_that_are_not_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "stats.json"
+    path.write_bytes(b"\xff\xfe{}")
+    with pytest.raises(report.MalformedStats, match="cannot read"):
         report.read_stats(path)
 
 
@@ -122,22 +131,67 @@ def test_build_body_starts_with_the_marker_and_shows_the_difference() -> None:
     assert "https://example.test/run/1" in body
 
 
-def test_build_body_says_why_there_are_no_stats() -> None:
-    body = report.build_body(report.STATUS_FAILED, None, 524, "https://example.test/run/2")
+def test_build_body_names_the_reason_when_there_are_no_stats() -> None:
+    body = report.build_body(
+        report.STATUS_FAILED, None, 524, "https://example.test/run/2", "stats file is missing"
+    )
     assert report.MARKER in body
-    assert "did not produce valid stats" in body
+    assert "stats file is missing" in body
 
 
-def test_find_open_report_returns_the_marked_issue() -> None:
+def test_status_writes_the_body_and_prints_the_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "body.md"
+    code = report.main(
+        [
+            "status",
+            "--stats",
+            str(_write_stats(tmp_path / "stats.json")),
+            "--execution",
+            "success",
+            "--out",
+            str(out),
+            "--run-url",
+            "https://example.test/run/3",
+        ]
+    )
+    assert code == 0
+    assert capsys.readouterr().out.strip() == report.STATUS_CLEAN
+    assert "https://example.test/run/3" in out.read_text(encoding="utf-8")
+
+
+def test_status_with_out_needs_a_run_url(tmp_path: Path) -> None:
+    argv = [
+        "status",
+        "--stats",
+        str(tmp_path / "missing.json"),
+        "--execution",
+        "success",
+        "--out",
+        str(tmp_path / "body.md"),
+    ]
+    with pytest.raises(SystemExit) as caught:
+        report.main(argv)
+    assert caught.value.code == 2
+
+
+def test_find_open_report_returns_the_marked_bot_issue() -> None:
     issues = [
-        {"number": 7, "body": "unrelated"},
-        {"number": 9, "body": f"{report.MARKER}\nold run"},
+        {"number": 7, "body": "unrelated", "author": BOT},
+        {"number": 9, "body": f"{report.MARKER}\nold run", "author": BOT},
     ]
     assert report.find_open_report(json.dumps(issues)) == 9
 
 
+def test_find_open_report_ignores_a_marker_copied_by_a_person() -> None:
+    issues = [{"number": 9, "body": report.MARKER, "author": PERSON}]
+    assert report.find_open_report(json.dumps(issues)) is None
+
+
 def test_find_open_report_returns_none_when_no_issue_is_marked() -> None:
-    assert report.find_open_report(json.dumps([{"number": 7, "body": None}])) is None
+    issues = [{"number": 7, "body": None, "author": BOT}]
+    assert report.find_open_report(json.dumps(issues)) is None
 
 
 def test_find_open_report_returns_none_for_an_empty_list() -> None:
@@ -146,8 +200,21 @@ def test_find_open_report_returns_none_for_an_empty_list() -> None:
 
 @pytest.mark.parametrize(
     "payload",
-    ['{"number": 1}', '[{"body": "x"}]', '[{"number": "7", "body": "x"}]', "not json"],
+    [
+        '{"number": 1}',
+        '[{"body": "x"}]',
+        '[{"number": "7", "body": "x"}]',
+        '[{"number": true, "body": "x"}]',
+        '[{"number": 7, "body": 5}]',
+        "not json",
+    ],
 )
 def test_find_open_report_rejects_a_malformed_list(payload: str) -> None:
     with pytest.raises(ValueError):
         report.find_open_report(payload)
+
+
+@given(number=st.integers(min_value=1, max_value=10**9))
+def test_find_open_report_returns_the_number_it_was_given(number: int) -> None:
+    issues = [{"number": number, "body": report.MARKER, "author": BOT}]
+    assert report.find_open_report(json.dumps(issues)) == number

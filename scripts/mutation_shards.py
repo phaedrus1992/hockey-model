@@ -15,9 +15,11 @@ Subcommands:
 
 - ``patterns --shard N``: print one mutant-name glob per line for shard N.
 - ``check``: exit 1 when a covered module is missing from the shards or listed twice.
-- ``merge --from DIR --into DIR``: copy each shard's ``.meta`` files into one tree.
+- ``merge --from DIR --into DIR``: join the shards' ``.meta`` files into one tree.
+    Exit 1 when no shard wrote results, or when a module in the shards has no result.
 
-Diagnostics go to stderr. Exit 0 on success, 1 on a failed check or merge, 2 on bad input.
+Diagnostics go to stderr. Exit 0 on success, 1 on a failed check or merge, and 2 on a
+bad argument (argparse).
 
 Usage: uv run python3 scripts/mutation_shards.py patterns --shard 0
 """
@@ -31,9 +33,10 @@ from typing import Any
 
 PYPROJECT = Path("pyproject.toml")
 SOURCE_PREFIX = "src/"
+PACKAGE = "hockey_model"
 # mutmut names every mutant with the package prefix, for example
 # hockey_model.sources.nhl.parse__mutmut_3.
-MUTANT_PREFIX = "hockey_model."
+MUTANT_PREFIX = f"{PACKAGE}."
 # The per-key fields of a .meta file that shards fill in one mutant at a time.
 RESULT_FIELDS = ("exit_code_by_key", "durations_by_key", "type_check_error_by_key")
 # Balanced from measured `mutmut run` times on one module group each. A group time is
@@ -73,33 +76,39 @@ def module_from_source(path: str) -> str:
     """Return the dotted module name that mutmut uses for a source path.
 
     ``src/hockey_model/sources/nhl.py`` becomes ``sources.nhl``. A mutant key adds
-    ``MUTANT_PREFIX`` in front of that name.
+    ``MUTANT_PREFIX`` in front of that name. Raise ShardError for a path outside the
+    package, because such a path has no module name to shard.
     """
-    if not path.startswith(SOURCE_PREFIX) or not path.endswith(".py"):
+    relative = path[len(SOURCE_PREFIX) : -len(".py")] if path.startswith(SOURCE_PREFIX) else ""
+    if not path.endswith(".py") or not relative:
         raise ShardError(f"{path!r} is not a src/ Python file; fix only_mutate in pyproject.toml")
-    relative = path[len(SOURCE_PREFIX) : -len(".py")]
-    parts = relative.split("/")[1:]
-    return ".".join(parts)
+    parts = relative.split("/")
+    if len(parts) < 2 or parts[0] != PACKAGE:
+        raise ShardError(f"{path!r} is outside src/{PACKAGE}/; fix only_mutate in pyproject.toml")
+    return ".".join(parts[1:])
 
 
 def covered_modules(pyproject: Path) -> set[str]:
     """Return the modules named by ``[tool.mutmut] only_mutate``.
 
-    Globs are expanded against the working tree. A package ``__init__`` is skipped,
-    because mutmut generates no mutants for a file with no functions.
+    A pattern that matches no file raises ShardError, because a stale pattern would
+    otherwise drop a module from the check without a sign. A package ``__init__`` is
+    skipped, because mutmut generates no mutants for a file with no functions.
     """
     try:
         config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as error:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise ShardError(f"cannot read {pyproject}: {error}") from error
     patterns = config.get("tool", {}).get("mutmut", {}).get("only_mutate", [])
     root = pyproject.parent
     modules: set[str] = set()
     for pattern in patterns:
-        for match in sorted(root.glob(pattern)):
-            if match.name == "__init__.py":
-                continue
-            modules.add(module_from_source(match.relative_to(root).as_posix()))
+        matches = sorted(root.glob(pattern))
+        if not matches:
+            raise ShardError(f"only_mutate pattern {pattern!r} matches no file; fix pyproject.toml")
+        for match in matches:
+            if match.name != "__init__.py":
+                modules.add(module_from_source(match.relative_to(root).as_posix()))
     return modules
 
 
@@ -149,22 +158,66 @@ def _merge_meta_docs(relative: Path, docs: list[dict[str, Any]]) -> dict[str, An
     return merged
 
 
+def _read_meta(path: Path) -> dict[str, Any]:
+    """Read one shard ``.meta`` file. Raise ShardError with the path and the fix."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ShardError(
+            f"cannot read {path}: {getattr(error, 'strerror', None) or error}; "
+            "delete that shard's results and rerun the shard"
+        ) from error
+    if not isinstance(doc, dict):
+        raise ShardError(f"{path} must hold a JSON object; rerun the shard that wrote it")
+    return doc
+
+
 def merge_meta(source_dirs: list[Path], dest: Path) -> int:
     """Write one merged ``.meta`` file into ``dest`` for every file any shard wrote.
 
-    Return the number of files written. Raise ShardError when the shards disagree.
+    Return the number of files written. Raise ShardError when the shards disagree, or
+    when no shard wrote a ``.meta`` file.
     """
     copies: dict[Path, list[dict[str, Any]]] = {}
     for source in source_dirs:
         for meta in sorted(source.rglob("*.meta")):
-            relative = meta.relative_to(source)
-            copies.setdefault(relative, []).append(json.loads(meta.read_text(encoding="utf-8")))
+            copies.setdefault(meta.relative_to(source), []).append(_read_meta(meta))
+    if not copies:
+        raise ShardError("the shard results hold no .meta files; the shards mutated nothing")
     for relative, docs in copies.items():
         target = dest / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         merged = _merge_meta_docs(relative, docs)
         target.write_text(json.dumps(merged, indent=4), encoding="utf-8")
     return len(copies)
+
+
+def _meta_path(root: Path, module: str) -> Path:
+    """Return where mutmut keeps the ``.meta`` file of one dotted module."""
+    return root / SOURCE_PREFIX.rstrip("/") / PACKAGE / f"{'/'.join(module.split('.'))}.py.meta"
+
+
+def missing_results(root: Path) -> list[str]:
+    """Return each module in SHARDS that has no merged ``.meta`` file under ``root``."""
+    modules = sorted({module for shard in SHARDS for module in shard})
+    return [module for module in modules if not _meta_path(root, module).exists()]
+
+
+def _run_merge(source_root: Path, dest: Path) -> int:
+    """Merge every shard directory under ``source_root`` into ``dest``. Return the exit code."""
+    found = source_root.iterdir() if source_root.is_dir() else []
+    source_dirs = sorted(p for p in found if p.is_dir())
+    if not source_dirs:
+        raise ShardError(
+            f"no shard results under {source_root}; download the mutation-shard artifacts first"
+        )
+    dest.mkdir(parents=True, exist_ok=True)
+    copied = merge_meta(source_dirs, dest)
+    print(f"merged {copied} meta files into {dest}")
+    missing = missing_results(dest)
+    for module in missing:
+        print(f"mutation-shards: no merged results for {module}", file=sys.stderr)
+    return 1 if missing else 0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -191,11 +244,7 @@ def _run(args: argparse.Namespace) -> int:
         for problem in problems:
             print(f"mutation-shards: {problem}", file=sys.stderr)
         return 1 if problems else 0
-    source_dirs = sorted(p for p in args.source_root.iterdir() if p.is_dir())
-    args.dest.mkdir(parents=True, exist_ok=True)
-    copied = merge_meta(source_dirs, args.dest)
-    print(f"merged {copied} meta files into {args.dest}")
-    return 0
+    return _run_merge(args.source_root, args.dest)
 
 
 def main(argv: list[str] | None = None) -> int:

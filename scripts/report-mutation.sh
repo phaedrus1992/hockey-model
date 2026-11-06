@@ -48,22 +48,38 @@ readonly HELPER="scripts/mutation_report.py"
 readonly BODY=".tmp/mutation-report.md"
 mkdir -p .tmp
 
-status="$(uv run python3 "$HELPER" status --stats "$STATS" --execution "$EXECUTION")"
-uv run python3 "$HELPER" body --stats "$STATS" --execution "$EXECUTION" \
-  --run-url "$RUN_URL" --out "$BODY"
+# One call decides the status and writes the body, so both read the same stats.
+status="$(uv run python3 "$HELPER" status --stats "$STATS" --execution "$EXECUTION" \
+  --out "$BODY" --run-url "$RUN_URL")"
 title="$(uv run python3 "$HELPER" title)"
 
-issues="$(gh issue list --state open --limit 200 --json number,body)"
+# 1000 is the gh maximum. A marked report past that cap would be missed.
+if ! issues="$(gh issue list --state open --limit 1000 --json number,body,author)"; then
+  echo "report-mutation: gh issue list failed; run gh auth status, then rerun" >&2
+  exit 1
+fi
 existing="$(printf '%s' "$issues" | uv run python3 "$HELPER" find)"
 
 if [[ "$status" == "clean" ]]; then
   if [[ -n "$existing" ]]; then
-    gh issue comment "$existing" --body "Recovery: the weekly run $RUN_URL is clean. Survivors are at or below the baseline. Close this report when you accept the result." >&2
+    gh issue comment "$existing" --body "Recovery: the weekly run $RUN_URL is clean. Survivors are at or below the baseline. Close this report when you accept the result." >&2 ||
+      {
+        echo "report-mutation: gh issue comment #$existing failed for $RUN_URL" >&2
+        exit 1
+      }
   fi
 elif [[ -n "$existing" ]]; then
-  gh issue comment "$existing" --body-file "$BODY" >&2
+  gh issue comment "$existing" --body-file "$BODY" >&2 ||
+    {
+      echo "report-mutation: gh issue comment #$existing failed for $RUN_URL" >&2
+      exit 1
+    }
 else
-  gh issue create --title "$title" --body-file "$BODY" >&2
+  gh issue create --title "$title" --body-file "$BODY" >&2 ||
+    {
+      echo "report-mutation: gh issue create failed for $RUN_URL" >&2
+      exit 1
+    }
 fi
 
 echo "$status"
