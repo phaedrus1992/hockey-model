@@ -64,12 +64,14 @@ jobs:
       - run: editorconfig-checker
 
   # Mutation testing is advisory. A surviving mutant shows a test with a weak oracle,
-  # but it does not fail the build.
+  # but it does not fail the build. A timeout is not a surviving mutant: it means the run
+  # outgrew the limit. The run grows with the suite, so the limit is a stopgap (#147).
+  # Sharding is tracked in #148.
   mutation:
     runs-on: ubuntu-latest
     needs: test
     continue-on-error: true
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
