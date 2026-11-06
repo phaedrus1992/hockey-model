@@ -35,3 +35,11 @@ repos:
         pass_filenames: false
         stages: [pre-push]
         types: [python]
+      - id: mutation-changed
+        name: mutation tests on changed functions
+        # Runs only when the push holds a covered-source change. A docs-only push skips it.
+        entry: uv run python3 scripts/pre_push_mutation.py run
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        types: [python]
