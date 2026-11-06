@@ -70,6 +70,8 @@ jobs:
     timeout-minutes: 360
     env:
       DAY: ${{ needs.gate.outputs.day }}
+    outputs:
+      report_complete: ${{ steps.state.outputs.report_complete }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,6 +99,16 @@ jobs:
           # The script exits 1 past this budget. The variable names the limit, so it is not restated here.
           REPORT_BUDGET_S: "600"
         run: bash scripts/daily-report.sh --date "$DAY" --out-dir "$RUNNER_TEMP/report"
+      # The script writes the complete marker only after every output file is copied. The
+      # publish job reads this output, so a report cut short by a crash is never published.
+      - id: state
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/report/complete" ]]; then
+            echo "report_complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "report_complete=false" >> "$GITHUB_OUTPUT"
+          fi
       # Runs even when the report step failed, so a report written before the budget check
       # is still uploaded. The publish job then fails at the download if nothing was written.
       - if: always()
@@ -113,11 +125,11 @@ jobs:
 
   publish:
     needs: [gate, build]
-    # A failed build still publishes when it wrote a report. The build job stays failed, so
-    # the overrun remains visible. A cancelled or skipped build does not publish.
+    # Publishes only a complete report. A build that overran the budget still publishes, and
+    # the build job stays failed, so the overrun remains visible. A crash never publishes.
     if: >-
       always() && needs.gate.outputs.publish == 'true'
-      && (needs.build.result == 'success' || needs.build.result == 'failure')
+      && needs.build.outputs.report_complete == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

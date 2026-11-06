@@ -66,4 +66,6 @@ def test_an_over_budget_report_is_uploaded_and_published() -> None:
         text.index("actions/upload-artifact") - 120 : text.index("actions/upload-artifact")
     ]
     assert "if: always()" in upload
-    assert "needs.build.result == 'failure'" in text
+    assert "needs.build.outputs.report_complete == 'true'" in text
+    assert "needs.build.result" not in text
+    assert "report_complete: ${{ steps.state.outputs.report_complete }}" in text

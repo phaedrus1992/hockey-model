@@ -103,6 +103,9 @@ start=$SECONDS
 run_step refresh uv run hockey-model refresh --starters-only
 run_step predict uv run hockey-model daily --date "$day" --out-dir "$out_dir"
 cp "$store_dir/backtest-$day.json" "$store_dir/backtest-games-$day.csv" "$out_dir/"
+# The marker says every output file is in place. The budget check comes after it, so an
+# over-budget report still carries the marker and the workflow can publish it.
+touch "$out_dir/complete"
 
 elapsed=$((SECONDS - start))
 echo "daily-report: total ${elapsed}s, budget ${budget}s" >&2
