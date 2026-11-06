@@ -138,7 +138,7 @@ def test_a_class_attribute_line_selects_nothing(mod: ModuleType) -> None:
 
 
 def test_mutant_globs_use_the_mutmut_names(mod: ModuleType) -> None:
-    assert mod.mutant_glob(SOURCE, "top") == "hockey_model.sources.shapes.top__mutmut_*"
+    assert mod.mutant_glob(SOURCE, "top") == "hockey_model.sources.shapes.x_top__mutmut_*"
     assert mod.mutant_glob(SOURCE, "Box.grow") == (
         "hockey_model.sources.shapes.xǁBoxǁgrow__mutmut_*"
     )
@@ -201,7 +201,7 @@ def _changed_top(repo: Path) -> None:
     _commit(repo, {SOURCE: BASE_SOURCE.replace("+ 1", "+ 2")}, "change top")
 
 
-TOP = "hockey_model.sources.shapes.top__mutmut_1"
+TOP = "hockey_model.sources.shapes.x_top__mutmut_1"
 GROW_SURVIVED_OFF_LINE = (
     "# x\n--- src/hockey_model/sources/shapes.py\n+++ src/hockey_model/sources/shapes.py\n"
     "@@ -1,2 +1,2 @@\n-def top(x):\n+def top(x, y):\n     return x + 2\n"

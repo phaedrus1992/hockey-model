@@ -170,7 +170,7 @@ def module_name(path: str) -> str:
 def mutmut_name(qualname: str) -> str:
     """Return the name mutmut gives a function or method, without its ``__mutmut_N`` suffix."""
     if "." not in qualname:
-        return qualname
+        return f"x_{qualname}"
     return METHOD_SEPARATOR.join(["x", *qualname.split(".")])
 
 
