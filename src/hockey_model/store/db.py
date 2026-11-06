@@ -63,13 +63,21 @@ def _prepare(conn: sqlite3.Connection, path: Path) -> sqlite3.Connection:
     if stored != SCHEMA_VERSION:
         raise StoreError(
             f"open store {str(path)!r}: schema version {stored} does not match "
-            f"expected {SCHEMA_VERSION}. Version 2 adds the MoneyPuck shot-attempt columns, "
-            "so a version 1 store must be rebuilt: run `hockey-model refresh --backfill-from "
-            "2014-10-01` on a new path, or open a store made by this version"
+            f"expected {SCHEMA_VERSION}. {_mismatch_fix(path, stored)}"
         )
     # The views are code, not data, so every connection makes them again.
     conn.executescript(_VIEWS_PATH.read_text(encoding="utf-8"))
     return conn
+
+
+def _mismatch_fix(path: Path, stored: int) -> str:
+    """Return the fix for a store whose version is not the one this code reads."""
+    if stored < SCHEMA_VERSION:
+        return (
+            f"Upgrade it with `hockey-model store upgrade --db {str(path)!r}`. The upgrade "
+            "keeps every row and writes a backup first."
+        )
+    return "This store is newer than this hockey-model. Use a hockey-model that reads it."
 
 
 def _stored_version(conn: sqlite3.Connection, path: Path) -> int:

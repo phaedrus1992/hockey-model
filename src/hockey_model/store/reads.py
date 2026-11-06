@@ -144,6 +144,8 @@ def _mp_pairs_before(
         f"SELECT m.{columns[0]}, m.{columns[1]} FROM latest_mp_team_games m"
         " JOIN latest_final_games g ON g.game_id = m.game_id"
         f" WHERE m.team IN ({_marks(codes)}) AND g.start_utc <= ?"
+        # A NULL is an unknown value, such as a version 1 row has for attempt counts.
+        f" AND m.{columns[0]} IS NOT NULL AND m.{columns[1]} IS NOT NULL"
         " ORDER BY g.start_utc DESC, g.game_id DESC LIMIT ?",
         (*codes, _cutoff(before), limit),
     )
