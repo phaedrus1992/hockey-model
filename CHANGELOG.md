@@ -32,7 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- The daily report run logs the seconds of each step and fails once it passes `REPORT_BUDGET_S` (600 s by default). The build job fails on a store cache miss. [chore:ci]
+- The daily report run logs the seconds of each step and fails once it passes the limit in `REPORT_BUDGET_S`. The build job fails on a store cache miss. [chore:ci]
 
 - Record the DraftKings comparison in the README, the backtest report, and the run report. The model is level with the line in 2024-25 and worse in 2025-26, and it fails the blend gate. [docs:backtest]
 - Move the store to schema version 2, which adds MoneyPuck shot-attempt counts. A version 1 store is refused, so rebuild it on a new path with `hockey-model refresh --backfill-from 2014-10-01`. [feat:store]

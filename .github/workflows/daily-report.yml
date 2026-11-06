@@ -94,7 +94,7 @@ jobs:
           exit 1
       - env:
           HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
-          # The owner needs the report under 10 minutes. The script exits 1 past this budget.
+          # The script exits 1 past this budget. The variable names the limit, so it is not restated here.
           REPORT_BUDGET_S: "600"
         run: bash scripts/daily-report.sh --date "$DAY" --out-dir "$RUNNER_TEMP/report"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

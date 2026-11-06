@@ -11,7 +11,8 @@
 # daily-prepare workflow for the day, then run this script again. Any failed step stops
 # the script with its exit code, so a failed run writes no report.
 #
-# Reads REPORT_BUDGET_S (whole seconds, default 600). Each step logs its seconds to stderr.
+# Reads REPORT_BUDGET_S, a whole number of seconds. The default is set in the budget line below.
+# Each step logs its seconds to stderr.
 # When the whole run passes the budget, the script exits 1 after it writes the report.
 set -euo pipefail
 
@@ -99,6 +100,6 @@ elapsed=$((SECONDS - start))
 echo "daily-report: total ${elapsed}s, budget ${budget}s" >&2
 if ((elapsed > budget)); then
   echo "daily-report: the report took ${elapsed}s, over the ${budget}s budget (REPORT_BUDGET_S)." >&2
-  echo "daily-report: the owner needs the report under 10 minutes. Find the slow step in the log above." >&2
+  echo "daily-report: the owner needs the report inside the limit. Find the slow step in the log above." >&2
   exit 1
 fi
