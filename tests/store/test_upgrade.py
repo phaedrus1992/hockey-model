@@ -1,6 +1,7 @@
 """Tests for the store upgrade: a version 1 store moves to the current version, keeping rows."""
 
 import argparse
+import re
 import sqlite3
 import tempfile
 from datetime import UTC, datetime
@@ -244,3 +245,48 @@ def test_an_unknown_attempt_column_is_refused_before_any_sql_runs(v1: Path) -> N
             )
     finally:
         conn.close()
+
+
+def _table_sql(path: Path) -> str:
+    """Return the table's SQL with comments, quotes, and whitespace removed, for comparison."""
+    text = rows(
+        path, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'mp_team_games'"
+    )[0][0]
+    body = re.sub(r"--[^\n]*", "", text)
+    body = re.sub(r"CREATE TABLE \S+", "CREATE TABLE t", body, count=1)
+    return re.sub(r"\s+", " ", body.replace('"', "")).strip().lower()
+
+
+def test_the_upgraded_table_sql_matches_the_fresh_one_including_checks(tmp_path: Path) -> None:
+    fresh = tmp_path / "fresh.db"
+    connect(fresh).close()
+    upgraded = make_v1_store(tmp_path / "upgraded.db")
+    upgrade_store(upgraded)
+    assert _table_sql(upgraded) == _table_sql(fresh)
+
+
+def test_a_completed_upgrade_says_what_to_run_next(v1: Path) -> None:
+    report = upgrade_store(v1)
+    assert report.next_step is not None
+    assert "hockey-model refresh --reread-moneypuck" in report.next_step
+
+
+def test_a_no_op_upgrade_has_no_next_step(v1: Path) -> None:
+    upgrade_store(v1)
+    assert upgrade_store(v1).next_step is None
+
+
+def test_the_reread_flag_makes_moneypuck_stale_even_when_fresh() -> None:
+    from typing import cast
+
+    from hockey_model.sources.http import HttpClient
+    from hockey_model.store.refresh_context import RefreshRun
+    from hockey_model.store.refresh_other import _stale
+
+    run = RefreshRun(
+        conn=cast(sqlite3.Connection, None),
+        client=cast(HttpClient, None),
+        now=datetime(2026, 11, 6, tzinfo=UTC),
+        reread_moneypuck=True,
+    )
+    assert _stale(run, "https://example.test/teams.csv") is True

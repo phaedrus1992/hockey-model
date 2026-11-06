@@ -49,9 +49,10 @@ def connect(path: Path) -> sqlite3.Connection:
 def _open_failure_fix(path: Path, exc: sqlite3.Error) -> str:
     """Name the open failure and the fix. A lock and a damaged file need different fixes."""
     text = str(exc)
-    if "not a database" in text:
+    name = getattr(exc, "sqlite_errorname", "")
+    if name == "SQLITE_NOTADB":
         fix = "the file is not a SQLite store, so use a new path"
-    elif "locked" in text or "busy" in text:
+    elif name in {"SQLITE_BUSY", "SQLITE_LOCKED"}:
         fix = "another process holds the store; stop it, then open the store again"
     else:
         fix = "check the disk and the file permissions, then open the store again"

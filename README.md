@@ -117,6 +117,8 @@ The four MoneyPuck attempt columns are NULL for the rows that version 1 wrote, s
 To restore, stop every writer, copy the backup over the store file, and delete any `-wal` and `-shm` files beside it.
 Opening a store never migrates it, so a consumer on a version 1 store fails and names this command.
 Upgrade the producer first, then the consumers.
+After the upgrade, run `hockey-model refresh --reread-moneypuck` before any attempt-form backtest.
+Until that refresh runs, the attempt-form features are empty.
 The report lists `coverage`: the scored games of each season and game type, with the expected count of a regular season (`EXPECTED_REGULAR_GAMES` in `game_model/seasons.py`) and the stored games of that season that never finished.
 `eligible` is false when a listed regular season is under `MIN_SEASON_COVERAGE` of its expected count, or when the scored games hold fewer than `MIN_INDEPENDENT_BLOCKS` independent blocks for the bootstrap.
 Then `success` is false, `live_features` is empty, the interval is `null`, and `ineligible_reasons` says why. The scores stay in the report as descriptions.

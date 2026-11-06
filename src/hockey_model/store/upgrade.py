@@ -63,6 +63,12 @@ _LEDGER = (
     " applied_at TEXT NOT NULL, backup_path TEXT NOT NULL)"
 )
 _VIEWS_PATH = Path(__file__).with_name("views.sql")
+# The MoneyPuck team file is read on the weekly schedule, so after an upgrade the
+# attempt counts arrive only at the next weekly read unless the reread flag forces it.
+_NEXT_STEP = (
+    "run `hockey-model refresh --reread-moneypuck` before any attempt-form backtest; "
+    "until it runs, the attempt-form features are empty and every game counts as missing"
+)
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,7 @@ class UpgradeReport:
     to_version: int
     changed: bool
     backup_path: str | None
+    next_step: str | None = None
 
 
 def _check_path(path: Path) -> None:
@@ -179,7 +186,8 @@ def _apply(conn: sqlite3.Connection, path: Path, stored: int, backup: Path) -> N
             conn.execute("ROLLBACK")
         raise StoreError(
             f"upgrade store {str(path)!r}: {exc}; the store is unchanged. The backup is "
-            f"{str(backup)!r}. Fix the cause, then run the upgrade again."
+            f"{str(backup)!r}. Fix the cause, move the backup aside, then run the "
+            "upgrade again."
         ) from exc
 
 
@@ -217,7 +225,7 @@ def upgrade_store(path: Path) -> UpgradeReport:
         _rebuild_views(conn, path, backup)
     finally:
         conn.close()
-    return UpgradeReport(str(path), stored, SCHEMA_VERSION, True, str(backup))
+    return UpgradeReport(str(path), stored, SCHEMA_VERSION, True, str(backup), _NEXT_STEP)
 
 
 def add_store_group(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

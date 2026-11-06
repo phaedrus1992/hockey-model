@@ -72,7 +72,8 @@ CREATE TABLE mp_team_games (
     unblocked_for INTEGER,
     unblocked_against INTEGER,
     -- 0 only for a row that a version 1 store wrote, before the counts existed. The upgrade
-    -- sets it. Every other row must carry all four counts.
+    -- sets it. Every other row must carry all four counts. Readers do not check this flag:
+    -- they filter on IS NOT NULL, which is the same test for a row the upgrade left unknown.
     attempts_known INTEGER NOT NULL DEFAULT 1 CHECK (attempts_known IN (0, 1)),
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (game_id, team, fetched_at),

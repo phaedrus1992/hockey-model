@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add `hockey-model refresh --reread-moneypuck`, which reads the MoneyPuck files even when they are fresh. [feat:store]
 - Add the typed player, roster, projection, matchup, playoff, and JSON CLI APIs. [feat:types]
 - Add the Game input and game_win_probability() for one NHL game's home and away win chance, with a GameModel protocol that a model implements. Game rejects a team code that is not an NHL code. [feat:api]
 - Add an SQLite store at the HOCKEY_MODEL_DB path, which refuses a store made by another schema version. [feat:store]
@@ -32,6 +33,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The attempt-form and expected-goals reads skip a MoneyPuck team game with a missing value, instead of failing on it. The 10-game window reaches one game further back in that case. [fix:store]
 - The daily report run logs the seconds of each step and fails once it passes the limit in `REPORT_BUDGET_S`. The build job fails on a store cache miss. [chore:ci]
 
 - Record the DraftKings comparison in the README, the backtest report, and the run report. The model is level with the line in 2024-25 and worse in 2025-26, and it fails the blend gate. [docs:backtest]

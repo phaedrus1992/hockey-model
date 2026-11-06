@@ -50,6 +50,11 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         help="read score days from this date; days already read after they ended are skipped",
     )
     parser.add_argument(
+        "--reread-moneypuck",
+        action="store_true",
+        help="read the MoneyPuck files even when they are fresh",
+    )
+    parser.add_argument(
         "--budget-seconds",
         type=int,
         default=None,
@@ -165,6 +170,7 @@ def _refresh(args: argparse.Namespace) -> tuple[object, int]:
                 now=datetime.now(UTC),
                 backfill_from=args.backfill_from,
                 clock=lambda: datetime.now(UTC),
+                reread_moneypuck=args.reread_moneypuck,
                 budget=None
                 if args.budget_seconds is None
                 else timedelta(seconds=args.budget_seconds),

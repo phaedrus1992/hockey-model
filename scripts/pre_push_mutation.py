@@ -14,6 +14,10 @@ crash, or an incomplete result always fails the push. A push that changes no cov
 function, such as a docs-only or a test-only push, runs no mutants. A deleted file selects
 nothing, because its mutants no longer exist. A renamed file counts as added at its new path.
 
+The check gates HEAD against its tracking branch. It ignores the refs that git passes on
+stdin, so it is right for one checkout that pushes its own branch. A push of another
+branch from the same checkout is gated against HEAD, not against that branch.
+
 Subcommands:
 
 - ``plan``: print the mutant-name globs that the changed code selects, one per line.
