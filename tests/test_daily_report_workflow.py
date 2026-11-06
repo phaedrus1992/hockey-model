@@ -38,3 +38,20 @@ def test_prepare_runs_at_an_hour_with_no_trigger() -> None:
     assert match is not None
     (hour,) = _hours(match.group(2))
     assert hour not in TRIGGER_HOURS_UTC
+
+
+def test_build_job_fails_loudly_on_a_store_cache_miss() -> None:
+    # The mutation copy has no .github directory, so there is no workflow to read there.
+    if "mutants" in Path(__file__).resolve().parts:
+        pytest.skip("the mutation copy has no .github directory")
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "id: restore" in text
+    # A restore hit on another branch is invisible; matched-key is empty when nothing restored.
+    assert "steps.restore.outputs.cache-matched-key == ''" in text
+
+
+def test_build_job_sets_the_report_budget_to_ten_minutes() -> None:
+    # The mutation copy has no .github directory, so there is no workflow to read there.
+    if "mutants" in Path(__file__).resolve().parts:
+        pytest.skip("the mutation copy has no .github directory")
+    assert 'REPORT_BUDGET_S: "600"' in WORKFLOW.read_text(encoding="utf-8")

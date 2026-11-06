@@ -555,3 +555,47 @@ def test_a_flag_without_its_value_is_a_usage_error(
     assert result.returncode == 2
     assert message in result.stderr
     assert script.removesuffix(".sh") in result.stderr
+
+
+def _slow_uv(fakes: Path, tmp_path: Path) -> Path:
+    """Put a `uv` ahead of the fake one that waits one second, so a zero budget is exceeded."""
+    slow = tmp_path / "slow-bin"
+    slow.mkdir()
+    (slow / "uv").write_text(
+        f'#!/usr/bin/env bash\nsleep 1\nexec "{fakes / "uv"}" "$@"\n', encoding="utf-8"
+    )
+    (slow / "uv").chmod(0o755)
+    return slow
+
+
+def test_daily_run_logs_each_step_with_its_seconds(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 0, result.stderr
+    assert "daily-report: step refresh took " in result.stderr
+    assert "daily-report: step predict took " in result.stderr
+    assert "daily-report: total " in result.stderr
+
+
+def test_daily_run_fails_loudly_when_the_report_passes_the_budget(
+    fakes: Path, tmp_path: Path
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)), REPORT_BUDGET_S="0")
+    env["PATH"] = f"{_slow_uv(fakes, tmp_path)}{os.pathsep}{env['PATH']}"
+    assert _run("daily-prepare.sh", env | {"REPORT_BUDGET_S": "600"}, "--date", DAY).returncode == 0
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 1
+    assert "over the 0s budget" in result.stderr
+    assert "REPORT_BUDGET_S" in result.stderr
+
+
+@pytest.mark.parametrize("bad", ["ten", "-5", "1.5"])
+def test_daily_run_refuses_a_budget_that_is_not_whole_seconds(
+    fakes: Path, tmp_path: Path, bad: str
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)), REPORT_BUDGET_S=bad)
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 2
+    assert "REPORT_BUDGET_S must be whole seconds" in result.stderr
+    assert _calls(tmp_path) == []

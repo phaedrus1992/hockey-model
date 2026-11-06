@@ -79,14 +79,23 @@ jobs:
       # The store is restored from the newest save and saved again after the run. A cache
       # miss, or a store without the prepared marker of the day, fails the run: run the
       # daily-prepare workflow for the day first.
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/hockey-model
           key: hockey-model-store-${{ github.run_id }}
           restore-keys: |
             hockey-model-store-
+      # GitHub scopes a cache to its branch, so a prepare run from another branch is not found.
+      # An empty matched key means nothing was restored.
+      - if: steps.restore.outputs.cache-matched-key == ''
+        run: |
+          echo "::error::No store cache found for this branch. Run daily-prepare on main for $DAY first." >&2
+          exit 1
       - env:
           HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
+          # The owner needs the report under 10 minutes. The script exits 1 past this budget.
+          REPORT_BUDGET_S: "600"
         run: bash scripts/daily-report.sh --date "$DAY" --out-dir "$RUNNER_TEMP/report"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
