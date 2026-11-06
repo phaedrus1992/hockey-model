@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.14"
+# ///
+"""Split the mutation run into shards, and merge the shard results.
+
+Each shard is a group of modules. A CI job runs ``mutmut run`` on the mutants of one
+group. The groups are sized from measured run time, not from file count, because
+one module can cost many times as much as another.
+
+Every module named in ``[tool.mutmut] only_mutate`` must sit in exactly one shard.
+The ``check`` subcommand, and a test, fail when the two lists drift apart.
+
+Subcommands:
+
+- ``patterns --shard N``: print one mutant-name glob per line for shard N.
+- ``check``: exit 1 when a covered module is missing from the shards or listed twice.
+- ``merge --from DIR --into DIR``: copy each shard's ``.meta`` files into one tree.
+
+Diagnostics go to stderr. Exit 0 on success, 1 on a failed check or merge, 2 on bad input.
+
+Usage: uv run python3 scripts/mutation_shards.py patterns --shard 0
+"""
+
+import argparse
+import json
+import sys
+import tomllib
+from pathlib import Path
+from typing import Any
+
+PYPROJECT = Path("pyproject.toml")
+SOURCE_PREFIX = "src/"
+# mutmut names every mutant with the package prefix, for example
+# hockey_model.sources.nhl.parse__mutmut_3.
+MUTANT_PREFIX = "hockey_model."
+# The per-key fields of a .meta file that shards fill in one mutant at a time.
+RESULT_FIELDS = ("exit_code_by_key", "durations_by_key", "type_check_error_by_key")
+# Balanced from measured `mutmut run` times on one module group each. A group time is
+# the run time minus the stats pass, about 60 seconds locally. The shard totals are
+# 65, 67, 68, and 67 seconds of mutant work (local estimates, not CI measurements).
+SHARDS: tuple[tuple[str, ...], ...] = (
+    ("sources.http",),
+    (
+        "sources.espn",
+        "game_model.elo",
+        "sources.errors",
+        "sources.policy",
+        "sources.shape_errors",
+        "sources.starters",
+        "sources.teams",
+    ),
+    ("sources.daily_faceoff", "sources.payload", "backtest.metrics"),
+    ("sources.moneypuck", "experiments.models", "sources.nhl", "game_model.logistic"),
+)
+
+
+class ShardError(ValueError):
+    """A shard request or a shard check is invalid. The message names the fix."""
+
+
+def shard_patterns(index: int) -> tuple[str, ...]:
+    """Return the mutant-name globs for shard ``index``.
+
+    Raise ShardError when the index is outside the shard table.
+    """
+    if not 0 <= index < len(SHARDS):
+        raise ShardError(f"shard {index} does not exist; use 0 to {len(SHARDS) - 1}")
+    return tuple(f"{MUTANT_PREFIX}{module}.*" for module in SHARDS[index])
+
+
+def module_from_source(path: str) -> str:
+    """Return the dotted module name that mutmut uses for a source path.
+
+    ``src/hockey_model/sources/nhl.py`` becomes ``sources.nhl``. A mutant key adds
+    ``MUTANT_PREFIX`` in front of that name.
+    """
+    if not path.startswith(SOURCE_PREFIX) or not path.endswith(".py"):
+        raise ShardError(f"{path!r} is not a src/ Python file; fix only_mutate in pyproject.toml")
+    relative = path[len(SOURCE_PREFIX) : -len(".py")]
+    parts = relative.split("/")[1:]
+    return ".".join(parts)
+
+
+def covered_modules(pyproject: Path) -> set[str]:
+    """Return the modules named by ``[tool.mutmut] only_mutate``.
+
+    Globs are expanded against the working tree. A package ``__init__`` is skipped,
+    because mutmut generates no mutants for a file with no functions.
+    """
+    try:
+        config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ShardError(f"cannot read {pyproject}: {error}") from error
+    patterns = config.get("tool", {}).get("mutmut", {}).get("only_mutate", [])
+    root = pyproject.parent
+    modules: set[str] = set()
+    for pattern in patterns:
+        for match in sorted(root.glob(pattern)):
+            if match.name == "__init__.py":
+                continue
+            modules.add(module_from_source(match.relative_to(root).as_posix()))
+    return modules
+
+
+def check_partition(covered: set[str]) -> list[str]:
+    """Return one problem per module that is missing from or listed twice in SHARDS."""
+    listed: list[str] = [module for shard in SHARDS for module in shard]
+    repeated = {module for module in listed if listed.count(module) > 1}
+    problems = [f"{m} is covered but in no shard" for m in sorted(covered - set(listed))]
+    problems += [f"{m} is in a shard but not covered" for m in sorted(set(listed) - covered)]
+    problems += [f"{m} is in more than one shard" for m in sorted(repeated)]
+    return problems
+
+
+def _union_results(relative: Path, field: str, parts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Join the per-key results of one field. A key holds a result in at most one shard.
+
+    A shard writes ``null`` for every mutant it did not run, so a null never wins.
+    Two different results for one key raise ShardError, because the shards overlap.
+    """
+    union: dict[str, Any] = {}
+    for part in parts:
+        for key, value in part.items():
+            previous = union.get(key)
+            if value is None:
+                union.setdefault(key, None)
+            elif previous is not None and previous != value:
+                raise ShardError(
+                    f"{relative} {field}[{key!r}] has two results: {previous} and {value}"
+                )
+            else:
+                union[key] = value
+    return union
+
+
+def _merge_meta_docs(relative: Path, docs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return one ``.meta`` document from the copies that each shard wrote.
+
+    Every shard parses the same source, so the source hashes must match. A mismatch
+    means the shards ran different code, and the merge refuses it.
+    """
+    hashes = [doc.get("hash_by_function_name") for doc in docs]
+    if any(found != hashes[0] for found in hashes):
+        raise ShardError(f"{relative} has different source hashes across shards; rerun all shards")
+    merged = dict(docs[0])
+    for field in RESULT_FIELDS:
+        merged[field] = _union_results(relative, field, [doc.get(field, {}) for doc in docs])
+    return merged
+
+
+def merge_meta(source_dirs: list[Path], dest: Path) -> int:
+    """Write one merged ``.meta`` file into ``dest`` for every file any shard wrote.
+
+    Return the number of files written. Raise ShardError when the shards disagree.
+    """
+    copies: dict[Path, list[dict[str, Any]]] = {}
+    for source in source_dirs:
+        for meta in sorted(source.rglob("*.meta")):
+            relative = meta.relative_to(source)
+            copies.setdefault(relative, []).append(json.loads(meta.read_text(encoding="utf-8")))
+    for relative, docs in copies.items():
+        target = dest / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        merged = _merge_meta_docs(relative, docs)
+        target.write_text(json.dumps(merged, indent=4), encoding="utf-8")
+    return len(copies)
+
+
+def _parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the three subcommands."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    patterns = sub.add_parser("patterns")
+    patterns.add_argument("--shard", type=int, required=True)
+    sub.add_parser("check")
+    merge = sub.add_parser("merge")
+    merge.add_argument("--from", dest="source_root", type=Path, required=True)
+    merge.add_argument("--into", dest="dest", type=Path, required=True)
+    return parser
+
+
+def _run(args: argparse.Namespace) -> int:
+    """Run one parsed subcommand and return its exit code."""
+    if args.command == "patterns":
+        for pattern in shard_patterns(args.shard):
+            print(pattern)
+        return 0
+    if args.command == "check":
+        problems = check_partition(covered_modules(PYPROJECT))
+        for problem in problems:
+            print(f"mutation-shards: {problem}", file=sys.stderr)
+        return 1 if problems else 0
+    source_dirs = sorted(p for p in args.source_root.iterdir() if p.is_dir())
+    args.dest.mkdir(parents=True, exist_ok=True)
+    copied = merge_meta(source_dirs, args.dest)
+    print(f"merged {copied} meta files into {args.dest}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run one subcommand and return its exit code. Map ShardError to exit 1."""
+    args = _parser().parse_args(argv)
+    try:
+        return _run(args)
+    except ShardError as error:
+        print(f"mutation-shards: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
