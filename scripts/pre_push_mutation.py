@@ -47,7 +47,9 @@ MUTANTS_DIR = "mutants"
 MUTMUT_TIMEOUT_S = 900
 MUTMUT_COMMAND = ("uv", "run", "mutmut")
 # Top-level names that mutmut writes into its output directory. Any other name is refused.
-MUTANTS_OUTPUT_NAMES = frozenset({"mutmut-stats.json", "pyproject.toml", "src", "tests", "uv.lock"})
+MUTANTS_OUTPUT_NAMES = frozenset(
+    {"mutmut-stats.json", "pyproject.toml", "src", "tests", "uv.lock", ".hypothesis"}
+)
 # Statuses that a surviving mutant can carry. Only these are gated by the changed lines.
 SURVIVING = frozenset({"survived", "no tests"})
 # Statuses that show the test run did not finish. These always fail the push.
