@@ -8,8 +8,9 @@ no games has its first puck drop at the end of the day. Game days are Eastern da
 game_day.py. How the hours and the minute were chosen: docs/design/daily-report-triggers.md.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from hockey_model.types import HockeyModelError
 from hockey_model.utc import require_utc
 
 # GitHub delays and drops scheduled runs most at the top of the hour, and many workflows also
@@ -29,12 +30,16 @@ def first_puck_drop(day_closes: datetime, starts: list[datetime]) -> datetime:
     return min(starts) if starts else day_closes
 
 
-def puck_drop_ahead(now: datetime, first_start: datetime) -> bool:
-    """Return True while the first puck drop of the game day has not started yet.
+def puck_drop_ahead(now: datetime, first_start: datetime, margin: timedelta | None = None) -> bool:
+    """Return True while a run that starts at ``now`` can publish before the puck drop.
 
-    Pass the time of the run itself. A run that starts after the puck drop publishes a
-    report that no reader can use, so the gate skips it.
+    Pass the time of the run itself. ``margin`` is the time the run needs after it starts,
+    such as the report budget. A run that finishes after the puck drop publishes a report
+    that no reader can use, so the gate skips it.
     """
     require_utc(now, "report trigger now")
     require_utc(first_start, "first puck drop")
-    return now < first_start
+    needed = timedelta(0) if margin is None else margin
+    if needed < timedelta(0):
+        raise HockeyModelError(f"report margin must not be negative, got {needed}")
+    return now + needed < first_start

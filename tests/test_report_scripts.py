@@ -165,13 +165,26 @@ def test_gate_after_the_puck_drop_skips_a_day_already_published(
 def test_gate_without_a_date_lets_report_due_pick_the_game_day(fakes: Path, tmp_path: Path) -> None:
     result = _run("report-gate.sh", _env(fakes, tmp_path))
     assert result.returncode == 0, result.stderr
-    assert "uv run hockey-model report-due" in _calls(tmp_path)
+    assert any("uv run hockey-model report-due" in line for line in _calls(tmp_path))
     assert json.loads(result.stdout)["date"] == DAY
 
 
 def test_gate_forwards_force(fakes: Path, tmp_path: Path) -> None:
     _run("report-gate.sh", _env(fakes, tmp_path), "--date", DAY, "--force")
-    assert f"uv run hockey-model report-due --date {DAY} --force" in _calls(tmp_path)
+    assert any(
+        f"uv run hockey-model report-due --date {DAY} --force" in line for line in _calls(tmp_path)
+    )
+
+
+def test_gate_forwards_the_margin_so_a_late_run_is_not_due(fakes: Path, tmp_path: Path) -> None:
+    _run("report-gate.sh", _env(fakes, tmp_path), "--date", DAY, "--margin-seconds", "600")
+    assert any("--margin-seconds 600" in line for line in _calls(tmp_path))
+
+
+def test_gate_rejects_a_margin_that_is_not_whole_seconds(fakes: Path, tmp_path: Path) -> None:
+    result = _run("report-gate.sh", _env(fakes, tmp_path), "--margin-seconds", "10m")
+    assert result.returncode == 2
+    assert "--margin-seconds needs whole seconds" in result.stderr
 
 
 def test_gate_dry_run_builds_a_published_day_without_a_release_lookup(
@@ -187,7 +200,9 @@ def test_gate_dry_run_builds_a_published_day_without_a_release_lookup(
         "reason": "dry-run",
         "date": DAY,
     }
-    assert f"uv run hockey-model report-due --date {DAY} --force" in _calls(tmp_path)
+    assert any(
+        f"uv run hockey-model report-due --date {DAY} --force" in line for line in _calls(tmp_path)
+    )
     assert not any(line.startswith("gh ") for line in _calls(tmp_path))
 
 
@@ -450,7 +465,9 @@ def test_prepare_writes_the_backtest_and_the_marker_and_drops_old_days(
         f"prepared-{DAY}",
         "store.db.backfilled",
     ]
-    assert "uv run hockey-model fit --features xg_form,rest" in _calls(tmp_path)
+    assert any(
+        "uv run hockey-model fit --features xg_form,rest" in line for line in _calls(tmp_path)
+    )
 
 
 def test_prepare_fits_on_the_features_the_backtest_kept(fakes: Path, tmp_path: Path) -> None:

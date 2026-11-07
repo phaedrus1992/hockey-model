@@ -20,6 +20,11 @@ on:
         type: boolean
         default: false
 
+# One budget for the whole workflow. The gate reserves it before puck drop, and the report
+# step enforces it.
+env:
+  REPORT_BUDGET_S: "600"
+
 permissions:
   contents: read
 
@@ -57,6 +62,7 @@ jobs:
           if [[ "$DISPATCH_DRY_RUN" == "true" ]]; then
             args+=(--dry-run)
           fi
+          args+=(--margin-seconds "$REPORT_BUDGET_S")
           bash scripts/report-gate.sh ${args[@]+"${args[@]}"} > gate.json
           cat gate.json
           {
@@ -105,8 +111,6 @@ jobs:
           exit 1
       - env:
           HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
-          # The script exits 1 past this budget. The variable names the limit, so it is not restated here.
-          REPORT_BUDGET_S: "600"
         # The step limit stops a hung read while the job still holds the store group. The budget
         # that the script enforces is REPORT_BUDGET_S above.
         timeout-minutes: 15

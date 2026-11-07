@@ -132,6 +132,12 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         help="Eastern game day to check; default is the game day that holds now",
     )
     due.add_argument("--force", action="store_true", help="publish even outside the trigger")
+    due.add_argument(
+        "--margin-seconds",
+        type=int,
+        default=0,
+        help="seconds the run needs after it starts; due only when it can finish before puck drop",
+    )
 
 
 def _report_json(report: RefreshReport) -> dict[str, object]:
@@ -305,7 +311,7 @@ def _report_due(args: argparse.Namespace) -> tuple[object, int]:
         "tag": report_tag(day),
         "games": len(games),
         "first_puck_drop_utc": iso_utc(first),
-        "due": args.force or puck_drop_ahead(now, first),
+        "due": args.force or puck_drop_ahead(now, first, timedelta(seconds=args.margin_seconds)),
     }, 0
 
 

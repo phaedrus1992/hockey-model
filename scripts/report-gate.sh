@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Decide whether this scheduled trigger publishes the daily report.
 #
-# Usage: report-gate.sh [--date YYYY-MM-DD] [--force] [--dry-run] [--help]
+# Usage: report-gate.sh [--date YYYY-MM-DD] [--force] [--dry-run]
+#                       [--margin-seconds N] [--help]
 #   --date   Eastern game day to check. Default: the game day that holds now.
 #   --force  Publish even outside the trigger slot. A day that is already
 #            published is still skipped.
+#   --margin-seconds  Seconds the build needs after this run starts. The day is due only
+#            when the run can finish before the first puck drop. Default: 0.
 #   --dry-run  Build a report that the caller does not publish. This implies --force,
 #            and the published-release check is skipped, so a published day is due again.
 #
@@ -18,6 +21,7 @@ set -euo pipefail
 day=""
 force=false
 dry_run=false
+margin_s=0
 
 usage() {
   sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
@@ -31,6 +35,14 @@ while (($# > 0)); do
       exit 2
     fi
     day="$2"
+    shift 2
+    ;;
+  --margin-seconds)
+    if (($# < 2)) || [[ ! "$2" =~ ^[0-9]+$ ]]; then
+      echo "report-gate: --margin-seconds needs whole seconds; see --help" >&2
+      exit 2
+    fi
+    margin_s="$2"
     shift 2
     ;;
   --force)
@@ -63,6 +75,7 @@ fi
 if [[ "$force" == true ]]; then
   args+=(--force)
 fi
+args+=(--margin-seconds "$margin_s")
 status_json="$(uv run hockey-model report-due ${args[@]+"${args[@]}"})" || {
   echo "report-gate: report-due failed; its error is above" >&2
   exit 1

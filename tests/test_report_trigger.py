@@ -100,3 +100,16 @@ def test_puck_drop_ahead_is_true_exactly_before_the_start(now: datetime, start: 
     assert puck_drop_ahead(now, start) is (now < start)
     if puck_drop_ahead(now, start):
         assert puck_drop_ahead(now - timedelta(minutes=1), start)
+
+
+def test_a_margin_moves_the_cutoff_earlier_by_its_length() -> None:
+    first = at("2026-11-05T00:00")
+    # A run at 23:49 with a 10-minute margin finishes at 23:59, so it is still due.
+    assert puck_drop_ahead(at("2026-11-04T23:49"), first, timedelta(minutes=10)) is True
+    # A run at 23:51 would finish at 00:01, after the puck drop, so it is not due.
+    assert puck_drop_ahead(at("2026-11-04T23:51"), first, timedelta(minutes=10)) is False
+
+
+def test_a_negative_margin_is_an_error() -> None:
+    with pytest.raises(HockeyModelError, match="must not be negative"):
+        puck_drop_ahead(at("2026-11-04T23:00"), at("2026-11-05T00:00"), timedelta(seconds=-1))
