@@ -22,7 +22,7 @@ The trigger minute is not :00.
 GitHub delays and drops scheduled runs most at the top of the hour, and many workflows also use :15, :30, and :45.
 
 `scripts/trigger_hours.py` reads the season schedule and prints the hours that the first puck drops need.
-For each game day it prints the last listed trigger before the first puck drop.
+For each game day it prints the trigger derived from the last top-of-hour slot before the first puck drop. That derivation predates the first-run rule, and its update is tracked in #162.
 The script MUST be run again each season, and again when the playoff schedule comes out.
 A game day with no listed trigger before its puck drop gets no report before the puck drop, so the script must list an hour for every game day.
 
@@ -31,6 +31,7 @@ A game day with no listed trigger before its puck drop gets no report before the
 Every trigger that starts while the first puck drop of the game day is still ahead is due.
 The gate compares the time of the run with the first puck drop, so a run that starts after the puck drop does not publish.
 The first due run that starts publishes the report, and every later run finds the release and skips.
+A game day with no games publishes nothing, so a failed schedule read cannot leave a wrong release.
 
 This replaces the earlier rule, which published only at the last trigger before the puck drop.
 That rule missed the puck drop whenever the last run started late (#159).
