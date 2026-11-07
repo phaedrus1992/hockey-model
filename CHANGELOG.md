@@ -46,6 +46,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Fail a backfill that the time budget stops before it finishes one new day or game. Before, each run read the same open days, stopped, and exited 75, so the backfill never finished and nothing said why. The refresh now exits 1 and names `--budget-seconds`. [fix:store]
 - Read a failed NHL score day again on the next refresh, for 30 days. A day that failed and was followed by a good day was never read again, so its games were missing from the Elo and the fit. [fix:store]
 - Refuse a boxscore that does not have exactly one starting goalie for each team. A boxscore without a goalie made the next refresh stop with a database error. [fix:sources]
 - Read MoneyPuck numbers as plain ASCII decimals. A value such as 1_0 or a non-ASCII digit was accepted. [fix:sources]
