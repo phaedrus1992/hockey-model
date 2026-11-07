@@ -134,6 +134,8 @@ StartRun ==
 \* run.attempt(): one read in one transaction. It records the result in source_reads.
 \* A read finishes a unit for good when it works and the unit had no good read before.
 \* An open day never finishes, because the next run reads it again.
+\* The code also leaves out the days that closed since the last run (BACKLOG_BEFORE).
+\* No day closes in the model, so those days are exactly OpenDays.
 Attempt(u, ok) ==
     /\ reads' = reads + 1
     /\ progress' = (progress \/ (ok /\ ~okRead[u]
@@ -284,6 +286,7 @@ StallExitsOne == [][Finishing /\ stopped /\ ~progress /\ reads >= Budget
 \* A budget that covers the open days lets the backfill finish.
 BackfillFinishes == BudgetCovers => <>marker
 
-\* A budget that is too small ends in exit 1 instead of in endless exit 75.
-FinishesOrFails == <>(marker \/ exitCode = 1)
+\* A budget that is too small ends in exit 1 in every run. Between runs, again and again,
+\* the marker exists or the last run exited 1. One exit 1 and then endless exit 75 fails.
+FinishesOrFails == []<>(marker \/ (phase = "idle" /\ exitCode = 1))
 =============================================================================
