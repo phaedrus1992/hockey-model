@@ -92,8 +92,16 @@ def write_boxscore(
     )
 
 
+# The boxscore tables. A table name is placed in SQL, so only these names are accepted.
+BOXSCORE_TABLES = ("skater_games", "goalie_games")
+
+
 def _stored_teams(conn: sqlite3.Connection, table: str, game_id: int) -> set[str]:
     """Return the teams that already have rows in ``table`` for the game."""
+    if table not in BOXSCORE_TABLES:
+        raise ValueError(
+            f"read stored teams: unknown table {table!r}; use one of {BOXSCORE_TABLES}"
+        )
     cursor = conn.execute(f"SELECT DISTINCT team FROM {table} WHERE game_id = ?", (game_id,))
     return {team for (team,) in cursor}
 
@@ -111,7 +119,7 @@ def games_missing_boxscore(
     stored = " AND ".join(
         f"EXISTS (SELECT 1 FROM {table} t WHERE t.game_id = g.game_id AND t.team = g.{side})"
         for side in ("home", "away")
-        for table in ("skater_games", "goalie_games")
+        for table in BOXSCORE_TABLES
     )
     low = None if first_day is None else iso_utc(game_day_window(first_day)[0])
     high = None if last_day is None else iso_utc(game_day_window(last_day)[1])

@@ -32,6 +32,8 @@ _UNMATCHED_SHOWN = 5
 
 
 def _stale(run: RefreshRun, url: str) -> bool:
+    if run.reread_moneypuck:
+        return True
     last = last_ok_read(run.conn, MONEYPUCK, url)
     return last is None or run.now - last >= REFRESH_AFTER
 

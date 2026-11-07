@@ -45,6 +45,9 @@ class RefreshRun:
     written: Counter[str] = field(default_factory=Counter)
     errors: list[HockeyModelError] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Read the MoneyPuck files even when they are fresh. The upgrade needs this so the
+    # attempt counts arrive at once, instead of after the weekly refresh.
+    reread_moneypuck: bool = False
     credits: list[str] = field(default_factory=list)
 
     def stamp(self) -> datetime:

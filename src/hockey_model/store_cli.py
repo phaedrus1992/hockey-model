@@ -30,22 +30,29 @@ from hockey_model.store.fits import newest_fit, save_fit
 from hockey_model.store.reads import game_row
 from hockey_model.store.refresh import RefreshReport, refresh, refresh_starters
 from hockey_model.store.timestamps import iso_utc
+from hockey_model.store.upgrade import add_store_group, run_store_group
 from hockey_model.types import HockeyModelError
 
 STORE_COMMANDS = frozenset(
-    {"refresh", "fit", "game", "backtest", "experiments", "daily", "report-due"}
+    {"refresh", "fit", "game", "backtest", "experiments", "daily", "report-due", "store"}
 )
 _CANDIDATE_SETS = {"xg": FEATURES, "attempt": ATTEMPT_FEATURES}
 
 
 def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     """Add the store commands to the CLI parser."""
+    add_store_group(add_parser)
     parser = add_parser("refresh", help="read every source into the store")
     parser.add_argument(
         "--backfill-from",
         type=date.fromisoformat,
         metavar="YYYY-MM-DD",
         help="read score days from this date; days already read after they ended are skipped",
+    )
+    parser.add_argument(
+        "--reread-moneypuck",
+        action="store_true",
+        help="read the MoneyPuck files even when they are fresh",
     )
     parser.add_argument(
         "--budget-seconds",
@@ -163,6 +170,7 @@ def _refresh(args: argparse.Namespace) -> tuple[object, int]:
                 now=datetime.now(UTC),
                 backfill_from=args.backfill_from,
                 clock=lambda: datetime.now(UTC),
+                reread_moneypuck=args.reread_moneypuck,
                 budget=None
                 if args.budget_seconds is None
                 else timedelta(seconds=args.budget_seconds),
@@ -321,6 +329,12 @@ def _experiments(args: argparse.Namespace) -> tuple[object, int]:
     raise HockeyModelError("experiments: specify check or run")
 
 
+def _store(args: argparse.Namespace) -> tuple[object, int]:
+    """Handle the store subcommands. The file is --db, or HOCKEY_MODEL_DB."""
+    path = Path(args.db) if args.db else db_path_from_env(os.environ)
+    return run_store_group(args, path)
+
+
 _HANDLERS = {
     "refresh": _refresh,
     "fit": _fit,
@@ -329,6 +343,7 @@ _HANDLERS = {
     "experiments": _experiments,
     "daily": _daily,
     "report-due": _report_due,
+    "store": _store,
 }
 
 

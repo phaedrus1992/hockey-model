@@ -70,6 +70,8 @@ jobs:
     timeout-minutes: 360
     env:
       DAY: ${{ needs.gate.outputs.day }}
+    outputs:
+      report_complete: ${{ steps.state.outputs.report_complete }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,19 +81,41 @@ jobs:
       # The store is restored from the newest save and saved again after the run. A cache
       # miss, or a store without the prepared marker of the day, fails the run: run the
       # daily-prepare workflow for the day first.
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/hockey-model
           key: hockey-model-store-${{ github.run_id }}
           restore-keys: |
             hockey-model-store-
+      # GitHub scopes a cache to its branch, so a prepare run from another branch is not found.
+      # An empty matched key means nothing was restored.
+      - if: steps.restore.outputs.cache-matched-key == ''
+        run: |
+          echo "::error::No store cache found for this branch. Run daily-prepare on main for $DAY first." >&2
+          exit 1
       - env:
           HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
+          # The script exits 1 past this budget. The variable names the limit, so it is not restated here.
+          REPORT_BUDGET_S: "600"
         run: bash scripts/daily-report.sh --date "$DAY" --out-dir "$RUNNER_TEMP/report"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # The script writes the complete marker only after every output file is copied. The
+      # publish job reads this output, so a report cut short by a crash is never published.
+      - id: state
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/report/complete" ]]; then
+            echo "report_complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "report_complete=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Runs even when the report step failed, so a report written before the budget check
+      # is still uploaded. The publish job then fails at the download if nothing was written.
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: daily-report
-          if-no-files-found: error
+          if-no-files-found: warn
           path: ${{ runner.temp }}/report
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: always()
@@ -101,7 +125,11 @@ jobs:
 
   publish:
     needs: [gate, build]
-    if: needs.gate.outputs.publish == 'true'
+    # Publishes only a complete report. A build that overran the budget still publishes, and
+    # the build job stays failed, so the overrun remains visible. A crash never publishes.
+    if: >-
+      always() && needs.gate.outputs.publish == 'true'
+      && needs.build.outputs.report_complete == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

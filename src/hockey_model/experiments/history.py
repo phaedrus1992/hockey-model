@@ -115,11 +115,26 @@ def _ever_had_result(record_id: str, repo_root: Path) -> bool:
     """
     relative = record_relative_path(record_id)
     for commit in _git(["log", "--format=%H", "--", relative], repo_root).split():
+        # A commit that deletes the file has no copy of it. Any other failure is an error.
+        present = subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}:{relative}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        if present.returncode != 0:
+            continue
         shown = subprocess.run(
-            ["git", "show", f"{commit}:{relative}"], cwd=repo_root, capture_output=True, text=True
+            ["git", "show", f"{commit}:{relative}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
         )
         if shown.returncode != 0:
-            continue
+            raise HockeyModelError(
+                f"read record {record_id} at {commit}: {shown.stderr.strip()}; "
+                "check the repository, then run the check again"
+            )
         try:
             data = json.loads(shown.stdout)
         except json.JSONDecodeError:

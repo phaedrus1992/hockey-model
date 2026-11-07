@@ -555,3 +555,109 @@ def test_a_flag_without_its_value_is_a_usage_error(
     assert result.returncode == 2
     assert message in result.stderr
     assert script.removesuffix(".sh") in result.stderr
+
+
+def _slow_uv(fakes: Path, tmp_path: Path) -> Path:
+    """Put a `uv` ahead of the fake one that waits one second, so a zero budget is exceeded."""
+    slow = tmp_path / "slow-bin"
+    slow.mkdir()
+    (slow / "uv").write_text(
+        f'#!/usr/bin/env bash\nsleep 1\nexec "{fakes / "uv"}" "$@"\n', encoding="utf-8"
+    )
+    (slow / "uv").chmod(0o755)
+    return slow
+
+
+def test_daily_run_logs_each_step_with_its_seconds(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 0, result.stderr
+    assert "daily-report: step refresh took " in result.stderr
+    assert "daily-report: step predict took " in result.stderr
+    assert "daily-report: total " in result.stderr
+
+
+def test_daily_run_fails_loudly_when_the_report_passes_the_budget(
+    fakes: Path, tmp_path: Path
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)), REPORT_BUDGET_S="0")
+    env["PATH"] = f"{_slow_uv(fakes, tmp_path)}{os.pathsep}{env['PATH']}"
+    assert _run("daily-prepare.sh", env | {"REPORT_BUDGET_S": "600"}, "--date", DAY).returncode == 0
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 1
+    assert "over the 0s budget" in result.stderr
+    assert "REPORT_BUDGET_S" in result.stderr
+
+
+@pytest.mark.parametrize("bad", ["ten", "-5", "1.5"])
+def test_daily_run_refuses_a_budget_that_is_not_whole_seconds(
+    fakes: Path, tmp_path: Path, bad: str
+) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)), REPORT_BUDGET_S=bad)
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 2
+    assert "REPORT_BUDGET_S must be whole seconds" in result.stderr
+    assert _calls(tmp_path) == []
+
+
+def test_a_failed_step_names_itself_and_stops_the_run(fakes: Path, tmp_path: Path) -> None:
+    failing = tmp_path / "failing-bin"
+    failing.mkdir()
+    (failing / "uv").write_text(
+        '#!/usr/bin/env bash\nif [[ "$*" == *"refresh --starters-only"* ]]; then exit 3; fi\n'
+        f'exec "{fakes / "uv"}" "$@"\n',
+        encoding="utf-8",
+    )
+    (failing / "uv").chmod(0o755)
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    env["PATH"] = f"{failing}{os.pathsep}{env['PATH']}"
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    result = _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(tmp_path / "out"))
+    assert result.returncode == 3
+    assert "step refresh failed with exit code 3" in result.stderr
+    assert not (tmp_path / "out" / f"backtest-{DAY}.json").exists()
+
+
+def test_a_complete_report_writes_the_marker(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    out = tmp_path / "out"
+    assert _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out)).returncode == 0
+    assert (out / "complete").is_file()
+
+
+def test_a_report_cut_short_writes_no_marker(fakes: Path, tmp_path: Path) -> None:
+    failing = tmp_path / "predict-bin"
+    failing.mkdir()
+    (failing / "uv").write_text(
+        '#!/usr/bin/env bash\nif [[ "$*" == *"hockey-model daily"* ]]; then exit 4; fi\n'
+        f'exec "{fakes / "uv"}" "$@"\n',
+        encoding="utf-8",
+    )
+    (failing / "uv").chmod(0o755)
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    env["PATH"] = f"{failing}{os.pathsep}{env['PATH']}"
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    out = tmp_path / "out"
+    assert _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out)).returncode == 4
+    assert not (out / "complete").exists()
+
+
+def test_a_rerun_clears_the_previous_marker_before_it_writes(fakes: Path, tmp_path: Path) -> None:
+    failing = tmp_path / "rerun-bin"
+    failing.mkdir()
+    (failing / "uv").write_text(
+        '#!/usr/bin/env bash\nif [[ "$*" == *"hockey-model daily"* ]]; then exit 4; fi\n'
+        f'exec "{fakes / "uv"}" "$@"\n',
+        encoding="utf-8",
+    )
+    (failing / "uv").chmod(0o755)
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    out = tmp_path / "out"
+    assert _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out)).returncode == 0
+    assert (out / "complete").is_file()
+    env["PATH"] = f"{failing}{os.pathsep}{env['PATH']}"
+    assert _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out)).returncode == 4
+    assert not (out / "complete").exists()

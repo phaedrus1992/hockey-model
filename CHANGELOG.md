@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add `hockey-model refresh --reread-moneypuck`, which reads the MoneyPuck files even when they are fresh. [feat:store]
 - Add the typed player, roster, projection, matchup, playoff, and JSON CLI APIs. [feat:types]
 - Add the Game input and game_win_probability() for one NHL game's home and away win chance, with a GameModel protocol that a model implements. Game rejects a team code that is not an NHL code. [feat:api]
 - Add an SQLite store at the HOCKEY_MODEL_DB path, which refuses a store made by another schema version. [feat:store]
@@ -27,8 +28,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add the November 2026 backtest report. The joint test passed with expected-goals form and rest, and the guess run vetoed goalie goals saved above expected. [docs:backtest]
 - Add `hockey-model backtest --candidates attempt`, which replaces the expected-goals form with a shot-attempt form for the leak test. [feat:backtest]
 - Add the experiment registry: records in `experiments/`, `hockey-model experiments check`, and `hockey-model experiments run`. A confirmation record scores only games after its data cutoff in the 2026-27 regular season and later, runs once, and refuses a cohort smaller than its minimum. An exploration record scores the seasons through 2025-26 and may run again. The checker validates every schema keyword, compares immutable fields with the commit that registered the record, ties `status` to `result`, and fails a record whose committed result was removed or replaced. [feat:experiments]
+- Add `hockey-model store upgrade`, which moves a version 1 store to the current schema. It keeps every row and fit ID, writes a backup first, and runs in one transaction. [feat:store]
+- Add a pre-push mutation check. It runs mutmut on the functions that a push changes, and it fails on a survivor on a changed line, a timeout, or an incomplete result. [chore:test]
 
 ### Changed
+
+- The attempt-form and expected-goals reads skip a MoneyPuck team game with a missing value, instead of failing on it. The 10-game window reaches one game further back in that case. [fix:store]
+- The daily report run logs the seconds of each step and fails once it passes the limit in `REPORT_BUDGET_S`. The build job fails on a store cache miss. [chore:ci]
 
 - Record the DraftKings comparison in the README, the backtest report, and the run report. The model is level with the line in 2024-25 and worse in 2025-26, and it fails the blend gate. [docs:backtest]
 - Move the store to schema version 2, which adds MoneyPuck shot-attempt counts. A version 1 store is refused, so rebuild it on a new path with `hockey-model refresh --backfill-from 2014-10-01`. [feat:store]

@@ -34,6 +34,7 @@ def refresh(
     backfill_from: date | None = None,
     clock: Callable[[], datetime] | None = None,
     budget: timedelta | None = None,
+    reread_moneypuck: bool = False,
 ) -> RefreshReport:
     """Read every source in order, and report what was written and what failed.
 
@@ -45,7 +46,9 @@ def refresh(
     if budget is not None and clock is None:
         raise ValueError("refresh: a budget needs a clock; pass clock to count the time spent")
     deadline = None if budget is None else now + budget
-    run = RefreshRun(conn, client, now, backfill_from, clock, deadline)
+    run = RefreshRun(
+        conn, client, now, backfill_from, clock, deadline, reread_moneypuck=reread_moneypuck
+    )
     return _run(run, _STEPS)
 
 
