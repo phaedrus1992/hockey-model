@@ -214,7 +214,7 @@ The spec is not an input source, a model, or a feature of the report, so the AGE
 Behavior:
 
 1. `set -euo pipefail`. A header comment states the usage, and `--help` prints it, as `scripts/daily-prepare.sh` does.
-2. Flags: `--workers N` (default `auto`) and `--help`. Any other argument exits 2 with a message that names it.
+2. Flags: `--help` only. Any other argument exits 2 with a message that names it. TLC picks its own worker count.
 3. `TLA_TOOLS_VERSION="v1.7.4"` and `TLA_TOOLS_SHA256="936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"`.
    v1.7.4 is the newest release that is not a pre-release.
    The checksum came from the v1.7.4 `tla2tools.jar` release asset on 2026-11-07, because GitHub gives no digest for this asset.
@@ -225,7 +225,7 @@ Behavior:
    On a mismatch, delete the file, print the expected and the actual sums, and exit 1.
 6. If `java` is not on `PATH`, exit 1 with "install Java 11 or later".
 7. Run TLC from the repository root:
-   `java -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers "$workers" -cleanup -metadir "$tmp" -config specs/daily_prepare.cfg specs/daily_prepare.tla`.
+   `java -XX:+UseParallelGC -cp "$tmp/tla2tools.jar" tlc2.TLC -cleanup -metadir "$tmp/states" -config specs/daily_prepare.cfg specs/daily_prepare.tla`, on one private copy of the jar that the checksum covered.
    `$tmp` comes from `mktemp -d`, with a `trap` that removes it.
 8. Exit with the TLC exit code.
    TLC exits 0 when every property holds, 12 for a violated invariant, and 13 for a violated action or temporal property.
@@ -238,8 +238,8 @@ Run `shellcheck` and `shfmt` on the script.
 ```yaml
 name: tla
 
-# TLC checks the daily prepare spec. It runs when the spec or the code that it models changes,
-# and weekly. It is not a required check, because the path filter skips most pull requests.
+# TLC checks the daily prepare spec. It runs when the spec or the code that it models changes.
+# It is not a required check, because the path filter skips most pull requests.
 on:
   pull_request:
     paths:
@@ -266,9 +266,6 @@ on:
       - src/hockey_model/store/refresh.py
       - src/hockey_model/store_cli.py
       - .github/workflows/tla.yml
-  schedule:
-    # Mondays at 06:00 UTC, one hour before the mutation run.
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:

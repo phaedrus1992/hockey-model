@@ -1,7 +1,7 @@
 name: tla
 
-# TLC checks the daily prepare spec. It runs when the spec or the code that it models changes,
-# and weekly. It is not a required check, because the path filter skips most pull requests.
+# TLC checks the daily prepare spec. It runs when the spec or the code that it models changes.
+# It is not a required check, because the path filter skips most pull requests.
 on:
   pull_request:
     paths:
@@ -28,9 +28,6 @@ on:
       - src/hockey_model/store/refresh.py
       - src/hockey_model/store_cli.py
       - .github/workflows/tla.yml
-  schedule:
-    # Mondays at 06:00 UTC, one hour before the mutation run.
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
