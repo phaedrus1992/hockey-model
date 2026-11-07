@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, timedelta
@@ -280,7 +281,17 @@ def _game_day_games(day: date, closes: datetime) -> list[GameRow]:
     start the feed lists under the wrong date out of the report.
     """
     opens = game_day_window(day)[0]
-    return [game for game in fetch_score_day(HttpClient(), day) if opens <= game.start < closes]
+    feed = fetch_score_day(HttpClient(), day)
+    games = [game for game in feed if opens <= game.start < closes]
+    # A dropped game is named, so a feed with a wrong date does not pass as an off day.
+    dropped = [str(game.game_id) for game in feed if not opens <= game.start < closes]
+    if dropped:
+        print(
+            f"report-due: {len(dropped)} feed game(s) start outside {day}'s window and are "
+            f"not counted: {', '.join(dropped)}",
+            file=sys.stderr,
+        )
+    return games
 
 
 def _report_due(args: argparse.Namespace) -> tuple[object, int]:
