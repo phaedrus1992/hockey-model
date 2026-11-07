@@ -77,6 +77,8 @@ if [[ ! "$budget" =~ ^[0-9]+$ ]]; then
 fi
 store_dir="$(dirname "$HOCKEY_MODEL_DB")"
 mkdir -p "$out_dir"
+# A marker from an earlier run in this directory must not stand for this run.
+rm -f "$out_dir/complete"
 if [[ ! -f "$store_dir/prepared-$day" ]]; then
   echo "daily-report: no preparation for $day in $store_dir." >&2
   echo "daily-report: run the daily-prepare workflow with date $day, then run this again." >&2

@@ -642,3 +642,22 @@ def test_a_report_cut_short_writes_no_marker(fakes: Path, tmp_path: Path) -> Non
     out = tmp_path / "out"
     assert _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out)).returncode == 4
     assert not (out / "complete").exists()
+
+
+def test_a_rerun_clears_the_previous_marker_before_it_writes(fakes: Path, tmp_path: Path) -> None:
+    failing = tmp_path / "rerun-bin"
+    failing.mkdir()
+    (failing / "uv").write_text(
+        '#!/usr/bin/env bash\nif [[ "$*" == *"hockey-model daily"* ]]; then exit 4; fi\n'
+        f'exec "{fakes / "uv"}" "$@"\n',
+        encoding="utf-8",
+    )
+    (failing / "uv").chmod(0o755)
+    env = _env(fakes, tmp_path, HOCKEY_MODEL_DB=str(_store(tmp_path)))
+    assert _run("daily-prepare.sh", env, "--date", DAY).returncode == 0
+    out = tmp_path / "out"
+    assert _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out)).returncode == 0
+    assert (out / "complete").is_file()
+    env["PATH"] = f"{failing}{os.pathsep}{env['PATH']}"
+    assert _run("daily-report.sh", env, "--date", DAY, "--out-dir", str(out)).returncode == 4
+    assert not (out / "complete").exists()
