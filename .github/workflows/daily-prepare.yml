@@ -26,8 +26,8 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    # The window from the cron hour to the next trigger hour is 180 minutes (08:00 to 11:00 UTC).
-    # The test in tests/test_daily_report_workflow.py checks that this limit fits the window.
+    # The timeout must fit the window from the cron hour to the next trigger hour. The test in
+    # tests/test_daily_prepare_workflow.py checks that it does.
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

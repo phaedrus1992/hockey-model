@@ -1,9 +1,8 @@
 # Alerts when a game day has no daily report, or when its report came after every puck drop.
 #
-# The schedule runs at 12:30 UTC, after the last trigger of the previous Eastern game day. That
-# trigger is at 00:44 UTC, so every trigger of the day has run. The check job fails when the day
-# has games and no report, or when every game row was made after its start. See
-# scripts/check-daily-report.sh.
+# The schedule runs after the last trigger of the previous Eastern game day, so every trigger of
+# that day has run. The check job fails when the day has games and no report, or when every game
+# row was made after its start. See scripts/check-daily-report.sh.
 name: daily-report-check
 
 on:

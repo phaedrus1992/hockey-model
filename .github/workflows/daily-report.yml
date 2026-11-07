@@ -64,6 +64,7 @@ jobs:
             echo "publish=$(jq -r '.publish' gate.json)"
             echo "day=$(jq -r '.date' gate.json)"
           } >> "$GITHUB_OUTPUT"
+          echo "Report gate for $(jq -r '.date' gate.json): $(jq -r '.reason' gate.json)" >> "$GITHUB_STEP_SUMMARY"
       # The overhead of each job is measured here, so the trigger lead can be set from data.
       - if: always()
         name: Report the job time
@@ -106,6 +107,9 @@ jobs:
           HOCKEY_MODEL_DB: ${{ runner.temp }}/hockey-model/store.db
           # The script exits 1 past this budget. The variable names the limit, so it is not restated here.
           REPORT_BUDGET_S: "600"
+        # The step limit stops a hung read while the job still holds the store group. The budget
+        # that the script enforces is REPORT_BUDGET_S above.
+        timeout-minutes: 15
         run: bash scripts/daily-report.sh --date "$DAY" --out-dir "$RUNNER_TEMP/report"
       # The script writes the complete marker only after every output file is copied. The
       # publish job reads this output, so a report cut short by a crash is never published.
