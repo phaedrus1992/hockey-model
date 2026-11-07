@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add a TLA+ model of the daily prepare backfill, checked by TLC in a `tla` CI job and by `scripts/tlc.sh`. [feat:store]
 - Add `hockey-model refresh --reread-moneypuck`, which reads the MoneyPuck files even when they are fresh. [feat:store]
 - Add the typed player, roster, projection, matchup, playoff, and JSON CLI APIs. [feat:types]
 - Add the Game input and game_win_probability() for one NHL game's home and away win chance, with a GameModel protocol that a model implements. Game rejects a team code that is not an NHL code. [feat:api]
