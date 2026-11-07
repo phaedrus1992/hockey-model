@@ -51,6 +51,12 @@ The prose names constants and does not repeat their values, because the values l
    The loop breaks after `read_boxscores()` returns, when either call stopped.
 4. `complete` is the AND of `clean` over every window that the loop visited.
    A stopped call is never clean, so a break always leaves `complete` false.
+5. `read_days()` and `read_boxscores()` count the units that they finished for good.
+   A score day is finished when its read made it complete.
+   A boxscore is finished when its read worked.
+   An open day or a due day is read again in the next run, so it does not count.
+6. After the loop, `nhl()` adds an error when the loop stopped, `run.out_of_time()` is true, and no unit was finished.
+   The error names `--budget-seconds`, so the refresh exits 1 and not 75 (#178).
 
 ### Score days: `store/refresh_nhl.py`, `read_days()`
 
@@ -121,6 +127,7 @@ The cache save step has `if: always()`, so the store and the marker are saved to
 | A source after the NHL steps that always fails | `OtherBroken` |
 | `source_reads` rows of one URL | `okRead`, `streak`, `span`, `firstAge`, `lastAge` |
 | The `.backfilled` file | `marker` |
+| A unit that a run finished for good | `progress` |
 | One `daily-prepare.sh` run | The phases `idle`, `nhl`, `other`, `finish` |
 
 Abstractions, and the reason for each:
@@ -144,10 +151,13 @@ Abstractions, and the reason for each:
 `specs/daily_prepare.cfg` uses: `NWindows = 2`, `DaysPerWindow = 2`, `Budget = 2`, `MaxFails = 1`, `AbandonReads = 2`, `AbandonTicks = 1`, `RetryTicks = 2`, `OpenDays = {4}`, `BrokenScore = {1}`, `BrokenBox = {3}`, `OtherBroken = FALSE`.
 Day 1 is the oldest day, so window 1 holds days 3 and 4, and day 4 is open.
 
-With these values, TLC finds 4,079,766 distinct states.
-The run took 4 minutes with 4 workers on a 10-core Mac.
+`specs/daily_prepare_stall.cfg` is a small model with a budget that cannot cover the open day: `NWindows = 2`, `DaysPerWindow = 1`, `Budget = 1`, `OpenDays = {2}`, `BrokenScore = {}`, `BrokenBox = {}`, and the other constants as above.
 
-`tests/test_tla_constants.py` keeps the values in step with the code:
+With these values, TLC finds 4,000,218 distinct states in the first model, and 16,050 in the stall model.
+The first model took 8 minutes 39 seconds with the default worker count on a 10-core Mac.
+The stall model took 1 second.
+
+`tests/test_tla_constants.py` keeps the values of both `.cfg` files in step with the code:
 
 1. `AbandonReads == ABANDON_AFTER_FAILED_READS`.
 2. `AbandonTicks == 1`.
@@ -172,22 +182,25 @@ The break tests ran against the reference spec, and each one failed as listed.
 | `NoRereadOfCompleteDay` | Action property | A run reads a complete day again only when it is due. | In `ScoreStep`, replace `Complete(u.day)` with `FALSE`. | Action property violated |
 | `StoppedNeverMarks` | Action property | A run that stopped or had an error writes no marker. | On a stop, keep `clean` unchanged. Run with `MarkerOnlyWhenComplete` out of the `.cfg`, because that invariant fails first. | Action property violated |
 | `ExitCodeRule` | Action property | Exit 1 if and only if a source failed. Exit 75 only with no marker. Exit 0 only with the marker. | In `Finish`, test `clean` before `errors`. | Action property violated |
-| `BackfillFinishes` | Liveness | The marker appears eventually. | In `ScoreStep`, do not skip gaps. | Temporal property violated |
+| `StallExitsOne` | Action property | A run that the budget stops with no finished unit exits 1. | In `EndNhl`, set `errors' = errors`. | Action property violated |
+| `BackfillFinishes` | Liveness | The marker appears eventually, when the budget covers the open days (`BudgetCovers`). | In `ScoreStep`, do not skip gaps. | Temporal property violated |
 | `BackfillFinishes` | Liveness | Same | In the `.cfg`, set `OtherBroken = TRUE`. | Temporal property violated |
+| `FinishesOrFails` | Liveness | The marker appears, or a run exits 1. A budget that is too small ends in exit 1. | In `EndNhl`, set `errors' = errors`. Run with the stall `.cfg`, and with `StallExitsOne` out of the `.cfg`, because that property fails first. | Temporal property violated |
 
 The plain run also checks for deadlock, so the CI command does not pass `-deadlock`.
 
 ## Findings
 
 The model work found these facts.
-The first one is a limit of the code. Issue #178 tracks it.
+The first one was a limit of the code. Issue #178 fixed it.
 
 1. The budget must cover the open days and the due days.
    Each run reads every open day and every due day in window 1 before it reads an old day.
    If `BACKFILL_BUDGET_S` is too small for those reads, every run stops in window 1, and the backfill never finishes.
    With `OpenDays = {3, 4}` and `Budget = 2`, TLC finds this liveness failure.
-   The spec states the limit as `ASSUME Cardinality(OpenDays) < Budget`.
-   The code does not check it (#178).
+   The spec states the condition as `BudgetCovers == Cardinality(OpenDays) < Budget`, and `BackfillFinishes` holds only under it.
+   When the condition fails, the code now stops the run with exit 1 and a message that names `--budget-seconds` (#178).
+   `specs/daily_prepare_stall.cfg` checks that rule with `StallExitsOne` and `FinishesOrFails`.
 2. A failure of any source after the NHL steps blocks the marker, because `refresh` then exits 1.
    This is the rule "any failed step stops the script".
    A source that always fails also stops the plain refresh, so the result is a loud failure in both paths, and the spec models it as `OtherBroken`.
@@ -197,10 +210,10 @@ The first one is a limit of the code. Issue #178 tracks it.
 ## Files to add or change
 
 1. `specs/daily_prepare.tla`: copy the reference spec from the appendix without change.
-2. `specs/daily_prepare.cfg`: copy the reference `.cfg` from the appendix without change.
+2. `specs/daily_prepare.cfg` and `specs/daily_prepare_stall.cfg`: copy the reference `.cfg` files from the appendix without change.
 3. `scripts/tlc.sh`: the run script below.
 4. `tests/test_tla_constants.py`: the constants test above.
-5. `tests/test_tlc_script.py`: `--help` exits 0 and prints the usage, and an unknown argument exits 2 and names the argument. These tests do not download the jar.
+5. `tests/test_tlc_script.py`: `--help` exits 0 and prints the usage, and an unknown argument exits 2 and names the argument. A wrong checksum deletes the jar and exits 1, and a failed download exits 1 and names the URL. The tests use a fake `curl` and a fake jar, so they do not download TLC.
 6. `.github/workflows/tla.yml`: the CI job below.
 7. `.editorconfig`: add a `[*.{tla,cfg}]` section with `indent_size = unset`. TLA+ aligns `/\` lists at any column, so the 2-space rule does not fit.
 8. `AGENTS.md`: add `- Model check: bash scripts/tlc.sh (TLC on specs/daily_prepare.tla; needs Java 11 or later)` under Commands.
@@ -225,7 +238,7 @@ Behavior:
    On a mismatch, delete the file, print the expected and the actual sums, and exit 1.
 6. If `java` is not on `PATH`, exit 1 with "install Java 11 or later".
 7. Run TLC from the repository root:
-   `java -XX:+UseParallelGC -cp "$tmp/tla2tools.jar" tlc2.TLC -cleanup -metadir "$tmp/states" -config specs/daily_prepare.cfg specs/daily_prepare.tla`, on one private copy of the jar that the checksum covered.
+   For `specs/daily_prepare_stall.cfg` first and then `specs/daily_prepare.cfg`, run `java -XX:+UseParallelGC -cp "$tmp/tla2tools.jar" tlc2.TLC -cleanup -metadir "$tmp/states/NAME" -config CFG specs/daily_prepare.tla`, on one private copy of the jar that the checksum covered. Stop at the first non-zero code.
    `$tmp` comes from `mktemp -d`, with a `trap` that removes it.
 8. Exit with the TLC exit code.
    TLC exits 0 when every property holds, 12 for a violated invariant, and 13 for a violated action or temporal property.
@@ -299,7 +312,7 @@ Run `actionlint` and `zizmor` on the file.
 
 ## Verification
 
-1. `bash scripts/tlc.sh` passes locally, with 4,079,766 distinct states.
+1. `bash scripts/tlc.sh` passes locally, with 4,000,218 distinct states in the first model and 16,050 in the stall model.
 2. Run each break test in "Properties" on a scratch copy of the spec, outside the repository.
    Confirm that TLC fails with the listed result.
    Do not commit the broken copies.
@@ -324,8 +337,8 @@ The path filter runs TLC on such a change.
 
 ## Appendix: reference spec
 
-TLC 1.7.4 checked this spec and this `.cfg` with no violation.
-Copy both files byte for byte.
+TLC 1.7.4 checked this spec and these `.cfg` files with no violation.
+Copy all three files byte for byte.
 
 ### `specs/daily_prepare.tla`
 
@@ -357,8 +370,10 @@ Box(d) == [kind |-> "box", day |-> d]
 ASSUME /\ NWindows >= 1 /\ DaysPerWindow >= 1 /\ Budget >= 1 /\ MaxFails >= 1
        /\ AbandonReads >= 1 /\ AbandonTicks >= 1 /\ RetryTicks >= 1
        /\ OpenDays \subseteq Days /\ BrokenScore \subseteq Days /\ BrokenBox \subseteq Days
-       /\ Cardinality(OpenDays) < Budget
        /\ OtherBroken \in BOOLEAN
+
+\* TRUE when a run can read every open day and still have budget for one more unit.
+BudgetCovers == Cardinality(OpenDays) < Budget
 
 Min(a, b) == IF a < b THEN a ELSE b
 
@@ -378,11 +393,11 @@ VARIABLES
     okRead, streak, span, firstAge, lastAge,  \* source_reads, per URL
     marker,                                   \* the .backfilled file
     calm,                                     \* TRUE: every read that is not broken works
-    phase, pc, gaps, noted, due, fails, reads, clean, stopped, errors,  \* one run
+    phase, pc, gaps, noted, due, fails, reads, progress, clean, stopped, errors,  \* one run
     exitCode
 
 store == <<okRead, streak, span, firstAge, lastAge, marker>>
-run == <<phase, pc, gaps, noted, due, fails, reads, clean, stopped, errors>>
+run == <<phase, pc, gaps, noted, due, fails, reads, progress, clean, stopped, errors>>
 vars == <<store, calm, run, exitCode>>
 
 \* abandoned_urls(): enough failed reads since the last good read, far enough apart.
@@ -406,7 +421,7 @@ WindowDone(k) == \A d \in WindowDays(k) : ScoreDone(d) /\ BoxDone(d)
 Broken(u) == IF u.kind = "score" THEN u.day \in BrokenScore ELSE u.day \in BrokenBox
 
 RunIdle == /\ phase = "idle" /\ pc = 1 /\ gaps = {} /\ noted = {} /\ due = {}
-           /\ fails = 0 /\ reads = 0 /\ clean /\ ~stopped /\ ~errors
+           /\ fails = 0 /\ reads = 0 /\ ~progress /\ clean /\ ~stopped /\ ~errors
 
 Init == /\ okRead = [u \in Urls |-> FALSE]
         /\ streak = [u \in Urls |-> 0]
@@ -416,7 +431,8 @@ Init == /\ okRead = [u \in Urls |-> FALSE]
         /\ marker = FALSE
         /\ calm = FALSE
         /\ phase = "idle" /\ pc = 1 /\ gaps = {} /\ noted = {} /\ due = {}
-        /\ fails = 0 /\ reads = 0 /\ clean = TRUE /\ stopped = FALSE /\ errors = FALSE
+        /\ fails = 0 /\ reads = 0 /\ progress = FALSE
+        /\ clean = TRUE /\ stopped = FALSE /\ errors = FALSE
         /\ exitCode = 0
 
 TypeOK ==
@@ -429,7 +445,7 @@ TypeOK ==
     /\ phase \in {"idle", "nhl", "other", "finish"}
     /\ pc \in 1..(Steps + 1)
     /\ gaps \subseteq Urls /\ noted \subseteq Urls /\ due \subseteq Days
-    /\ fails \in 0..MaxFails /\ reads \in 0..Budget
+    /\ fails \in 0..MaxFails /\ reads \in 0..Budget /\ progress \in BOOLEAN
     /\ clean \in BOOLEAN /\ stopped \in BOOLEAN /\ errors \in BOOLEAN
     /\ exitCode \in {0, 1, 75}
 
@@ -457,11 +473,16 @@ StartRun ==
     /\ noted' = {u \in Urls : Abandoned(u)}
     \* In calm weather a re-read resolves every game, so no day is due again.
     /\ \E D \in SUBSET {d \in Days : okRead[Score(d)]} : due' = IF calm THEN {} ELSE D
-    /\ UNCHANGED <<store, calm, pc, fails, reads, clean, stopped, errors, exitCode>>
+    /\ UNCHANGED <<store, calm, pc, fails, reads, progress, clean, stopped, errors,
+                   exitCode>>
 
 \* run.attempt(): one read in one transaction. It records the result in source_reads.
+\* A read finishes a unit for good when it works and the unit had no good read before.
+\* An open day never finishes, because the next run reads it again.
 Attempt(u, ok) ==
     /\ reads' = reads + 1
+    /\ progress' = (progress \/ (ok /\ ~okRead[u]
+                                 /\ (u.kind = "box" \/ u.day \notin OpenDays)))
     /\ okRead' = [okRead EXCEPT ![u] = @ \/ ok]
     /\ IF ok
        THEN /\ streak' = [streak EXCEPT ![u] = 0]
@@ -491,17 +512,17 @@ ScoreStep ==
     IN \/ /\ f >= MaxFails
           /\ stopped' = TRUE /\ clean' = FALSE
           /\ Advance(TRUE, f)
-          /\ UNCHANGED <<store, reads, errors>>
+          /\ UNCHANGED <<store, reads, progress, errors>>
        \/ /\ f < MaxFails
           /\ u \in gaps \/ (u.day \notin due /\ Complete(u.day))
           /\ Advance(FALSE, 0)
-          /\ UNCHANGED <<store, reads, errors, clean, stopped>>
+          /\ UNCHANGED <<store, reads, progress, errors, clean, stopped>>
        \/ /\ f < MaxFails
           /\ ~(u \in gaps \/ (u.day \notin due /\ Complete(u.day)))
           /\ reads >= Budget
           /\ stopped' = TRUE /\ clean' = FALSE
           /\ Advance(TRUE, f)
-          /\ UNCHANGED <<store, reads, errors>>
+          /\ UNCHANGED <<store, reads, progress, errors>>
        \/ /\ f < MaxFails
           /\ ~(u \in gaps \/ (u.day \notin due /\ Complete(u.day)))
           /\ reads < Budget
@@ -518,18 +539,18 @@ BoxStep ==
         f == IF StageStart(pc) THEN 0 ELSE fails
     IN \/ /\ ~WantBox(u.day) \/ u \in gaps
           /\ Advance(FALSE, f)
-          /\ UNCHANGED <<store, reads, errors, clean, stopped>>
+          /\ UNCHANGED <<store, reads, progress, errors, clean, stopped>>
        \/ /\ WantBox(u.day) /\ u \notin gaps
           /\ f >= MaxFails \/ reads >= Budget
           /\ stopped' = TRUE /\ clean' = FALSE
           /\ Advance(TRUE, f)
-          /\ UNCHANGED <<store, reads, errors>>
+          /\ UNCHANGED <<store, reads, progress, errors>>
        \/ /\ WantBox(u.day) /\ u \notin gaps
           /\ f < MaxFails /\ reads < Budget
           /\ RecentFail(u)
           /\ clean' = FALSE
           /\ Advance(FALSE, f)
-          /\ UNCHANGED <<store, reads, errors, stopped>>
+          /\ UNCHANGED <<store, reads, progress, errors, stopped>>
        \/ /\ WantBox(u.day) /\ u \notin gaps
           /\ f < MaxFails /\ reads < Budget
           /\ ~RecentFail(u)
@@ -545,10 +566,12 @@ NhlStep ==
     /\ IF KindAt(pc) = "score" THEN ScoreStep ELSE BoxStep
     /\ UNCHANGED <<calm, phase, gaps, noted, due, exitCode>>
 
+\* nhl() adds an error when the budget stopped the run before it finished one unit.
 EndNhl ==
     /\ phase = "nhl" /\ pc = Steps + 1
     /\ phase' = "other"
-    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, clean, stopped, errors,
+    /\ errors' = (errors \/ (stopped /\ ~progress /\ reads >= Budget))
+    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, progress, clean, stopped,
                    exitCode>>
 
 \* MoneyPuck, ESPN, and Daily Faceoff run after the NHL steps. A failure sets refresh exit 1.
@@ -558,7 +581,8 @@ OtherSources ==
                  ELSE IF OtherBroken THEN {TRUE} ELSE BOOLEAN) :
           errors' = (errors \/ e)
     /\ phase' = "finish"
-    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, clean, stopped, exitCode>>
+    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, progress, clean, stopped,
+                   exitCode>>
 
 \* The backfill branch of daily-prepare.sh: refresh_rc, then backfill_complete.
 Finish ==
@@ -566,7 +590,8 @@ Finish ==
     /\ exitCode' = IF errors THEN 1 ELSE IF clean THEN 0 ELSE 75
     /\ marker' = (~errors /\ clean)
     /\ phase' = "idle" /\ pc' = 1 /\ gaps' = {} /\ noted' = {} /\ due' = {}
-    /\ fails' = 0 /\ reads' = 0 /\ clean' = TRUE /\ stopped' = FALSE /\ errors' = FALSE
+    /\ fails' = 0 /\ reads' = 0 /\ progress' = FALSE
+    /\ clean' = TRUE /\ stopped' = FALSE /\ errors' = FALSE
     /\ UNCHANGED <<okRead, streak, span, firstAge, lastAge, calm>>
 
 Next == Tick \/ GoCalm \/ StartRun \/ NhlStep \/ EndNhl \/ OtherSources \/ Finish
@@ -595,9 +620,17 @@ ExitCodeRule == [][Finishing => /\ (exitCode' = 1 <=> errors)
                                  /\ (exitCode' = 75 => ~marker' /\ ~clean)
                                  /\ (exitCode' = 0 => marker')]_vars
 
+\* A run that the budget stops with no finished unit exits 1, not 75.
+StallExitsOne == [][Finishing /\ stopped /\ ~progress /\ reads >= Budget
+                     => exitCode' = 1]_vars
+
 \* Liveness
 
-BackfillFinishes == <>marker
+\* A budget that covers the open days lets the backfill finish.
+BackfillFinishes == BudgetCovers => <>marker
+
+\* A budget that is too small ends in exit 1 instead of in endless exit 75.
+FinishesOrFails == <>(marker \/ exitCode = 1)
 =============================================================================
 ```
 
@@ -626,5 +659,35 @@ PROPERTIES
     NoRereadOfCompleteDay
     StoppedNeverMarks
     ExitCodeRule
+    StallExitsOne
     BackfillFinishes
+```
+
+### `specs/daily_prepare_stall.cfg`
+
+```text
+SPECIFICATION Spec
+CONSTANTS
+    NWindows = 2
+    DaysPerWindow = 1
+    Budget = 1
+    MaxFails = 1
+    AbandonReads = 2
+    AbandonTicks = 1
+    RetryTicks = 2
+    OpenDays = {2}
+    BrokenScore = {}
+    BrokenBox = {}
+    OtherBroken = FALSE
+INVARIANTS
+    TypeOK
+    MarkerOnlyWhenComplete
+    AbandonedIsNoted
+PROPERTIES
+    DoneStaysDone
+    NoRereadOfCompleteDay
+    StoppedNeverMarks
+    ExitCodeRule
+    StallExitsOne
+    FinishesOrFails
 ```
