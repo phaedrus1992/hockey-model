@@ -12,64 +12,106 @@ from hockey_model.store.source_reads import ABANDON_AFTER_FAILED_READS, ABANDON_
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = ROOT / "specs" / "daily_prepare.cfg"
+SOURCE = str(CFG.relative_to(ROOT))
 # One shape per line: the name, an equals sign, and the value. Meaning is checked in code.
 _CONSTANT_LINE = re.compile(r"^\s*([A-Za-z]+)\s*=\s*(.+?)\s*$")
+_BLOCK_ENDS = {"INVARIANTS", "PROPERTIES", "SPECIFICATION"}
 
 
-def _constants() -> dict[str, str]:
-    """Return the raw value of each ``NAME = value`` line in the CONSTANTS block."""
+def parse_constants(text: str, source: str) -> dict[str, str]:
+    """Return the raw value of each ``NAME = value`` line in the CONSTANTS block.
+
+    Fail, and name the line, on a line that does not fit the shape, on a repeated name, and
+    on a file with no CONSTANTS block. A silent skip would report a present constant as missing.
+    """
     values: dict[str, str] = {}
     in_block = False
-    for line in CFG.read_text(encoding="utf-8").splitlines():
-        if line.strip() == "CONSTANTS":
-            in_block = True
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not in_block:
+            in_block = stripped == "CONSTANTS"
             continue
-        if in_block and line.strip() in {"INVARIANTS", "PROPERTIES", "SPECIFICATION"}:
+        if stripped in _BLOCK_ENDS:
             break
-        match = _CONSTANT_LINE.match(line) if in_block else None
-        if match:
-            values[match.group(1)] = match.group(2)
+        if not stripped:
+            continue
+        match = _CONSTANT_LINE.match(line)
+        if match is None:
+            pytest.fail(f"{source}:{number}: cannot read {stripped!r}; expected NAME = value")
+        name, raw = match.group(1), match.group(2)
+        if name in values:
+            pytest.fail(f"{source}:{number}: {name} is listed twice in CONSTANTS")
+        values[name] = raw
+    if not in_block:
+        pytest.fail(f"{source}: no CONSTANTS block")
     return values
 
 
-def _integer(name: str) -> int:
+def _integer(values: dict[str, str], name: str) -> int:
     """Return the integer value of a constant, or fail and name the constant and the file."""
-    raw = _constants().get(name)
+    raw = values.get(name)
     if raw is None:
-        pytest.fail(f"{name} is missing from {CFG.relative_to(ROOT)}")
+        pytest.fail(f"{name} is missing from {SOURCE}")
     if not re.fullmatch(r"[0-9]+", raw):
-        pytest.fail(f"{name} in {CFG.relative_to(ROOT)} is {raw!r}, not an integer")
+        pytest.fail(f"{name} in {SOURCE} is {raw!r}, not an integer")
     return int(raw)
 
 
+_VALUES = parse_constants(CFG.read_text(encoding="utf-8"), SOURCE)
+
+
 def test_abandon_reads_matches_code() -> None:
-    assert _integer("AbandonReads") == ABANDON_AFTER_FAILED_READS
+    assert _integer(_VALUES, "AbandonReads") == ABANDON_AFTER_FAILED_READS
 
 
 def test_abandon_ticks_is_one() -> None:
-    # One tick is one failed read. The span rule in the code is checked by the model, not here.
-    assert _integer("AbandonTicks") == 1
+    # The model counts one failed read per tick. The span rule lives in the code, not here.
+    assert _integer(_VALUES, "AbandonTicks") == 1
 
 
 def test_retry_ticks_match_retry_window() -> None:
-    span = timedelta(days=ABANDON_MIN_SPAN_DAYS) * _integer("RetryTicks")
+    span = timedelta(days=ABANDON_MIN_SPAN_DAYS) * _integer(_VALUES, "RetryTicks")
     assert span == RETRY_FAILED_AFTER, (
         f"RetryTicks * ABANDON_MIN_SPAN_DAYS is {span}, but RETRY_FAILED_AFTER is "
-        f"{RETRY_FAILED_AFTER}; update RetryTicks in {CFG.relative_to(ROOT)}"
+        f"{RETRY_FAILED_AFTER}; update RetryTicks in {SOURCE}"
     )
 
 
 def test_max_fails_is_within_code_limit() -> None:
-    max_fails = _integer("MaxFails")
+    max_fails = _integer(_VALUES, "MaxFails")
     assert 1 <= max_fails <= MAX_UNIT_FAILURES, (
         f"MaxFails is {max_fails}; it must be between 1 and MAX_UNIT_FAILURES ({MAX_UNIT_FAILURES})"
     )
 
 
-@pytest.mark.parametrize("name", ["AbandonReads", "AbandonTicks", "RetryTicks", "MaxFails"])
-def test_missing_constant_fails_with_name(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    text = CFG.read_text(encoding="utf-8")
-    stripped = re.sub(rf"(?m)^\s*{name}\s*=.*\n", "", text)
-    monkeypatch.setattr(Path, "read_text", lambda self, **_: stripped)
-    with pytest.raises(pytest.fail.Exception, match=name):
-        _integer(name)
+_BLOCK = "CONSTANTS\n    AbandonReads = 2\n    MaxFails = 1\nINVARIANTS\n    TypeOK\n"
+
+
+def test_parse_reads_a_well_formed_block() -> None:
+    assert parse_constants(_BLOCK, "x.cfg") == {"AbandonReads": "2", "MaxFails": "1"}
+
+
+def test_missing_constant_fails_with_name() -> None:
+    with pytest.raises(pytest.fail.Exception, match="RetryTicks is missing from"):
+        _integer(parse_constants(_BLOCK, "x.cfg"), "RetryTicks")
+
+
+def test_non_integer_constant_fails_with_name() -> None:
+    values = parse_constants("CONSTANTS\n    AbandonReads = two\n", "x.cfg")
+    with pytest.raises(pytest.fail.Exception, match="AbandonReads in .* is 'two', not an integer"):
+        _integer(values, "AbandonReads")
+
+
+def test_name_with_digit_fails_instead_of_being_skipped() -> None:
+    with pytest.raises(pytest.fail.Exception, match="x.cfg:2: cannot read 'Max_Fails = 1'"):
+        parse_constants("CONSTANTS\n    Max_Fails = 1\n", "x.cfg")
+
+
+def test_repeated_constant_fails_with_name() -> None:
+    with pytest.raises(pytest.fail.Exception, match="AbandonReads is listed twice"):
+        parse_constants("CONSTANTS\n    AbandonReads = 2\n    AbandonReads = 3\n", "x.cfg")
+
+
+def test_missing_constants_block_fails() -> None:
+    with pytest.raises(pytest.fail.Exception, match="no CONSTANTS block"):
+        parse_constants("INVARIANTS\n    TypeOK\n", "x.cfg")
