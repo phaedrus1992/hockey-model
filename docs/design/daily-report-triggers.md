@@ -30,7 +30,11 @@ A game day with no listed trigger before its puck drop gets no report before the
 
 Every trigger that starts while the first puck drop of the game day is still ahead is due.
 The gate compares the time of the run, plus the report budget, with the first puck drop. A run that cannot finish before the puck drop does not publish.
-The first due run that starts publishes the report, and every later run finds the release and skips.
+The first due run that starts publishes the report.
+A later run before the puck drop builds the report again and replaces the release files and notes, so the report can change until the first puck drop.
+The notes say so, and they name the commit and time of each build.
+After the puck drop, every run skips a day that has a release.
+The release target stays the commit of the first build, so the commit of a replacing build appears only in the notes and in the JSON copy.
 A game day with no games publishes nothing, so a failed schedule read cannot leave a wrong release.
 
 This replaces the earlier rule, which published only at the last trigger before the puck drop.
