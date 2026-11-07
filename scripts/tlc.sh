@@ -25,7 +25,7 @@ JAR="$TLA_TOOLS_DIR/tla2tools-$TLA_TOOLS_VERSION.jar"
 usage() {
   cat <<'EOF'
 Usage: bash scripts/tlc.sh [--help]
-Run TLC on specs/daily_prepare.tla with specs/daily_prepare.cfg.
+Run TLC on specs/daily_prepare.tla with specs/daily_prepare_stall.cfg and specs/daily_prepare.cfg.
   --help  Print this usage and exit 0.
 Environment:
   TLA_TOOLS_DIR  Directory for the jar. Default: $HOME/.cache/hockey-model/tla.
@@ -88,10 +88,19 @@ if ! command -v java >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$tmp/states"
+# One spec, two configs. The small stall config runs first, so a mistake fails in seconds.
 rc=0
-java -XX:+UseParallelGC -cp "$tmp/tla2tools.jar" tlc2.TLC -cleanup -metadir "$tmp/states" \
-  -config specs/daily_prepare.cfg specs/daily_prepare.tla || rc=$?
+for cfg in specs/daily_prepare_stall.cfg specs/daily_prepare.cfg; do
+  echo "tlc.sh: checking specs/daily_prepare.tla with $cfg"
+  mkdir -p "$tmp/states/$(basename "$cfg" .cfg)"
+  java -XX:+UseParallelGC -cp "$tmp/tla2tools.jar" tlc2.TLC -cleanup \
+    -metadir "$tmp/states/$(basename "$cfg" .cfg)" -config "$cfg" specs/daily_prepare.tla ||
+    rc=$?
+  if ((rc != 0)); then
+    echo "tlc.sh: the check of $cfg failed." >&2
+    break
+  fi
+done
 
 case "$rc" in
   0) ;;

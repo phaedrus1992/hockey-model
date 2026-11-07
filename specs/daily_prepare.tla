@@ -25,8 +25,10 @@ Box(d) == [kind |-> "box", day |-> d]
 ASSUME /\ NWindows >= 1 /\ DaysPerWindow >= 1 /\ Budget >= 1 /\ MaxFails >= 1
        /\ AbandonReads >= 1 /\ AbandonTicks >= 1 /\ RetryTicks >= 1
        /\ OpenDays \subseteq Days /\ BrokenScore \subseteq Days /\ BrokenBox \subseteq Days
-       /\ Cardinality(OpenDays) < Budget
        /\ OtherBroken \in BOOLEAN
+
+\* TRUE when a run can read every open day and still have budget for one more unit.
+BudgetCovers == Cardinality(OpenDays) < Budget
 
 Min(a, b) == IF a < b THEN a ELSE b
 
@@ -46,11 +48,11 @@ VARIABLES
     okRead, streak, span, firstAge, lastAge,  \* source_reads, per URL
     marker,                                   \* the .backfilled file
     calm,                                     \* TRUE: every read that is not broken works
-    phase, pc, gaps, noted, due, fails, reads, clean, stopped, errors,  \* one run
+    phase, pc, gaps, noted, due, fails, reads, progress, clean, stopped, errors,  \* one run
     exitCode
 
 store == <<okRead, streak, span, firstAge, lastAge, marker>>
-run == <<phase, pc, gaps, noted, due, fails, reads, clean, stopped, errors>>
+run == <<phase, pc, gaps, noted, due, fails, reads, progress, clean, stopped, errors>>
 vars == <<store, calm, run, exitCode>>
 
 \* abandoned_urls(): enough failed reads since the last good read, far enough apart.
@@ -74,7 +76,7 @@ WindowDone(k) == \A d \in WindowDays(k) : ScoreDone(d) /\ BoxDone(d)
 Broken(u) == IF u.kind = "score" THEN u.day \in BrokenScore ELSE u.day \in BrokenBox
 
 RunIdle == /\ phase = "idle" /\ pc = 1 /\ gaps = {} /\ noted = {} /\ due = {}
-           /\ fails = 0 /\ reads = 0 /\ clean /\ ~stopped /\ ~errors
+           /\ fails = 0 /\ reads = 0 /\ ~progress /\ clean /\ ~stopped /\ ~errors
 
 Init == /\ okRead = [u \in Urls |-> FALSE]
         /\ streak = [u \in Urls |-> 0]
@@ -84,7 +86,8 @@ Init == /\ okRead = [u \in Urls |-> FALSE]
         /\ marker = FALSE
         /\ calm = FALSE
         /\ phase = "idle" /\ pc = 1 /\ gaps = {} /\ noted = {} /\ due = {}
-        /\ fails = 0 /\ reads = 0 /\ clean = TRUE /\ stopped = FALSE /\ errors = FALSE
+        /\ fails = 0 /\ reads = 0 /\ progress = FALSE
+        /\ clean = TRUE /\ stopped = FALSE /\ errors = FALSE
         /\ exitCode = 0
 
 TypeOK ==
@@ -97,7 +100,7 @@ TypeOK ==
     /\ phase \in {"idle", "nhl", "other", "finish"}
     /\ pc \in 1..(Steps + 1)
     /\ gaps \subseteq Urls /\ noted \subseteq Urls /\ due \subseteq Days
-    /\ fails \in 0..MaxFails /\ reads \in 0..Budget
+    /\ fails \in 0..MaxFails /\ reads \in 0..Budget /\ progress \in BOOLEAN
     /\ clean \in BOOLEAN /\ stopped \in BOOLEAN /\ errors \in BOOLEAN
     /\ exitCode \in {0, 1, 75}
 
@@ -125,11 +128,16 @@ StartRun ==
     /\ noted' = {u \in Urls : Abandoned(u)}
     \* In calm weather a re-read resolves every game, so no day is due again.
     /\ \E D \in SUBSET {d \in Days : okRead[Score(d)]} : due' = IF calm THEN {} ELSE D
-    /\ UNCHANGED <<store, calm, pc, fails, reads, clean, stopped, errors, exitCode>>
+    /\ UNCHANGED <<store, calm, pc, fails, reads, progress, clean, stopped, errors,
+                   exitCode>>
 
 \* run.attempt(): one read in one transaction. It records the result in source_reads.
+\* A read finishes a unit for good when it works and the unit had no good read before.
+\* An open day never finishes, because the next run reads it again.
 Attempt(u, ok) ==
     /\ reads' = reads + 1
+    /\ progress' = (progress \/ (ok /\ ~okRead[u]
+                                 /\ (u.kind = "box" \/ u.day \notin OpenDays)))
     /\ okRead' = [okRead EXCEPT ![u] = @ \/ ok]
     /\ IF ok
        THEN /\ streak' = [streak EXCEPT ![u] = 0]
@@ -159,17 +167,17 @@ ScoreStep ==
     IN \/ /\ f >= MaxFails
           /\ stopped' = TRUE /\ clean' = FALSE
           /\ Advance(TRUE, f)
-          /\ UNCHANGED <<store, reads, errors>>
+          /\ UNCHANGED <<store, reads, progress, errors>>
        \/ /\ f < MaxFails
           /\ u \in gaps \/ (u.day \notin due /\ Complete(u.day))
           /\ Advance(FALSE, 0)
-          /\ UNCHANGED <<store, reads, errors, clean, stopped>>
+          /\ UNCHANGED <<store, reads, progress, errors, clean, stopped>>
        \/ /\ f < MaxFails
           /\ ~(u \in gaps \/ (u.day \notin due /\ Complete(u.day)))
           /\ reads >= Budget
           /\ stopped' = TRUE /\ clean' = FALSE
           /\ Advance(TRUE, f)
-          /\ UNCHANGED <<store, reads, errors>>
+          /\ UNCHANGED <<store, reads, progress, errors>>
        \/ /\ f < MaxFails
           /\ ~(u \in gaps \/ (u.day \notin due /\ Complete(u.day)))
           /\ reads < Budget
@@ -186,18 +194,18 @@ BoxStep ==
         f == IF StageStart(pc) THEN 0 ELSE fails
     IN \/ /\ ~WantBox(u.day) \/ u \in gaps
           /\ Advance(FALSE, f)
-          /\ UNCHANGED <<store, reads, errors, clean, stopped>>
+          /\ UNCHANGED <<store, reads, progress, errors, clean, stopped>>
        \/ /\ WantBox(u.day) /\ u \notin gaps
           /\ f >= MaxFails \/ reads >= Budget
           /\ stopped' = TRUE /\ clean' = FALSE
           /\ Advance(TRUE, f)
-          /\ UNCHANGED <<store, reads, errors>>
+          /\ UNCHANGED <<store, reads, progress, errors>>
        \/ /\ WantBox(u.day) /\ u \notin gaps
           /\ f < MaxFails /\ reads < Budget
           /\ RecentFail(u)
           /\ clean' = FALSE
           /\ Advance(FALSE, f)
-          /\ UNCHANGED <<store, reads, errors, stopped>>
+          /\ UNCHANGED <<store, reads, progress, errors, stopped>>
        \/ /\ WantBox(u.day) /\ u \notin gaps
           /\ f < MaxFails /\ reads < Budget
           /\ ~RecentFail(u)
@@ -213,10 +221,12 @@ NhlStep ==
     /\ IF KindAt(pc) = "score" THEN ScoreStep ELSE BoxStep
     /\ UNCHANGED <<calm, phase, gaps, noted, due, exitCode>>
 
+\* nhl() adds an error when the budget stopped the run before it finished one unit.
 EndNhl ==
     /\ phase = "nhl" /\ pc = Steps + 1
     /\ phase' = "other"
-    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, clean, stopped, errors,
+    /\ errors' = (errors \/ (stopped /\ ~progress /\ reads >= Budget))
+    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, progress, clean, stopped,
                    exitCode>>
 
 \* MoneyPuck, ESPN, and Daily Faceoff run after the NHL steps. A failure sets refresh exit 1.
@@ -226,7 +236,8 @@ OtherSources ==
                  ELSE IF OtherBroken THEN {TRUE} ELSE BOOLEAN) :
           errors' = (errors \/ e)
     /\ phase' = "finish"
-    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, clean, stopped, exitCode>>
+    /\ UNCHANGED <<store, calm, pc, gaps, noted, due, fails, reads, progress, clean, stopped,
+                   exitCode>>
 
 \* The backfill branch of daily-prepare.sh: refresh_rc, then backfill_complete.
 Finish ==
@@ -234,7 +245,8 @@ Finish ==
     /\ exitCode' = IF errors THEN 1 ELSE IF clean THEN 0 ELSE 75
     /\ marker' = (~errors /\ clean)
     /\ phase' = "idle" /\ pc' = 1 /\ gaps' = {} /\ noted' = {} /\ due' = {}
-    /\ fails' = 0 /\ reads' = 0 /\ clean' = TRUE /\ stopped' = FALSE /\ errors' = FALSE
+    /\ fails' = 0 /\ reads' = 0 /\ progress' = FALSE
+    /\ clean' = TRUE /\ stopped' = FALSE /\ errors' = FALSE
     /\ UNCHANGED <<okRead, streak, span, firstAge, lastAge, calm>>
 
 Next == Tick \/ GoCalm \/ StartRun \/ NhlStep \/ EndNhl \/ OtherSources \/ Finish
@@ -263,7 +275,15 @@ ExitCodeRule == [][Finishing => /\ (exitCode' = 1 <=> errors)
                                  /\ (exitCode' = 75 => ~marker' /\ ~clean)
                                  /\ (exitCode' = 0 => marker')]_vars
 
+\* A run that the budget stops with no finished unit exits 1, not 75.
+StallExitsOne == [][Finishing /\ stopped /\ ~progress /\ reads >= Budget
+                     => exitCode' = 1]_vars
+
 \* Liveness
 
-BackfillFinishes == <>marker
+\* A budget that covers the open days lets the backfill finish.
+BackfillFinishes == BudgetCovers => <>marker
+
+\* A budget that is too small ends in exit 1 instead of in endless exit 75.
+FinishesOrFails == <>(marker \/ exitCode = 1)
 =============================================================================
