@@ -15,3 +15,6 @@ indent_size = 4
 trim_trailing_whitespace = false
 indent_size = unset
 indent_style = unset
+
+[*.{tla,cfg}]
+indent_size = unset

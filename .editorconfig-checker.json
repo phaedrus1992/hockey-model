@@ -1,3 +1,3 @@
 {
-  "Exclude": ["^tests/fixtures/daily_faceoff/"]
+  "Exclude": ["^tests/fixtures/daily_faceoff/", "^specs/"]
 }
