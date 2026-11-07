@@ -1,7 +1,7 @@
 """The NHL steps of a refresh: score days, then boxscores."""
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
@@ -43,6 +43,9 @@ OVERLAP = timedelta(days=1)
 RETRY_FAILED_AFTER = timedelta(days=1)
 # Days ahead of today that a refresh reads, for the schedule.
 SCHEDULE_DAYS_AHEAD = 2
+# A daily run completes the days that closed since the last run. A read of a day or a game
+# this close to today is an arrival, so it does not count as progress through the backlog.
+BACKLOG_BEFORE = timedelta(days=2)
 # A score day whose newest read failed is read again by every refresh in this window. A day
 # that stays broken for longer, such as a preseason day, is left to the report of its first
 # failure so that it does not fail every refresh for good.
@@ -151,6 +154,7 @@ class ReadResult(NamedTuple):
 
     clean: bool  # every unit is read, or is a known gap
     stopped: bool  # the read quit early: three failures in a row, or the time ran out
+    progress: int = 0  # older units that this read finished for good: the backlog, not arrivals
 
 
 def score_gaps(run: RefreshRun) -> set[date]:
@@ -169,27 +173,33 @@ def plan_unresolved(run: RefreshRun) -> tuple[list[tuple[int, datetime]], list[d
 
 
 def read_days(
-    run: RefreshRun, worklist: Sequence[date], gaps: set[date], due: Sequence[date] = ()
+    run: RefreshRun,
+    worklist: Sequence[date],
+    gaps: set[date],
+    due: Sequence[date] = (),
+    backlog_before: date | None = None,
 ) -> ReadResult:
     """Read each score day of ``worklist``, in order.
 
     A day that was read after it ended is complete and is not read again, unless it is in
     ``due``. A day in ``gaps`` is a known gap, so it counts as read. The read stops when three
-    days in a row fail or the time budget is spent.
+    days in a row fail or the time budget is spent. A day counts as progress when this read
+    completed it and it is before ``backlog_before``, or when ``backlog_before`` is None.
     """
     failures = 0
+    progress = 0
     clean = True
     for index, day in enumerate(worklist):
         if failures >= MAX_UNIT_FAILURES:
             left = len(worklist) - index
             run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
         if day in gaps or (day not in due and _day_complete(run, day)):
             failures = 0
             continue
         if run.out_of_time():
             run.notes.append(f"{SCORES}: stopped at {day.isoformat()}, because the time ran out")
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
 
         def unit(stamp: datetime, current: date = day) -> int:
             return write_games(run.conn, fetch_score_day(run.client, current), stamp)
@@ -197,7 +207,10 @@ def read_days(
         ok = run.attempt(SCORES, score_day_url(day), unit)
         failures = 0 if ok else failures + 1
         clean = clean and ok
-    return ReadResult(clean, stopped=False)
+        # A day that this read completed is finished. An open day, or a due day, is read again.
+        if ok and day not in due and (backlog_before is None or day < backlog_before):
+            progress += _day_complete(run, day)
+    return ReadResult(clean, stopped=False, progress=progress)
 
 
 def score_days(run: RefreshRun) -> None:
@@ -234,13 +247,17 @@ def check_boxscore_identity(conn: sqlite3.Connection, game_id: int, rows: Boxsco
         )
 
 
-def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
+def read_boxscores(
+    run: RefreshRun, game_ids: list[int], recent: Collection[int] = ()
+) -> ReadResult:
     """Read the boxscore of each game in ``game_ids``. Each game is its own unit.
 
-    The result is clean when every game that is not a known gap now has its boxscore.
+    The result is clean when every game that is not a known gap now has its boxscore. A game
+    in ``recent`` is an arrival, so its read is not progress.
     """
     failures = 0
     skipped = 0
+    progress = 0
     clean = True
     gaps = abandoned_urls(run.conn, BOXSCORES)
     waiting = [g for g in game_ids if boxscore_url(g) not in gaps]
@@ -252,11 +269,11 @@ def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
             run.notes.append(
                 f"{BOXSCORES}: stopped after {failures} failed reads; {left} not tried"
             )
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
         if run.out_of_time():
             left = len(waiting) - index
             run.notes.append(f"{BOXSCORES}: stopped, because the time ran out; {left} not tried")
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
         url = boxscore_url(game_id)
         if failed_since(run.conn, BOXSCORES, url, run.now - RETRY_FAILED_AFTER):
             skipped += 1
@@ -272,8 +289,9 @@ def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
         ok = run.attempt(BOXSCORES, url, unit)
         failures = 0 if ok else failures + 1
         clean = clean and ok
+        progress += ok and game_id not in recent
     if skipped:
         run.notes.append(
             f"{BOXSCORES}: {skipped} skipped, because the last read failed a day ago or less"
         )
-    return ReadResult(clean, stopped=False)
+    return ReadResult(clean, stopped=False, progress=progress)

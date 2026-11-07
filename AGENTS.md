@@ -8,6 +8,7 @@ Hockey player stat and game prediction library. Python 3.14, managed with uv.
 - Run tests: `uv run pytest` (writes `lcov.info` and `coverage.json`)
 - Per-module coverage floor: `uv run python3 scripts/check_per_module_coverage.py`
 - Lint and format: `uv run ruff check .` and `uv run ruff format --check .`
+- Model check: bash scripts/tlc.sh (TLC on specs/daily_prepare.tla; needs Java 11 or later)
 - Type check: `uv run ty check`
 - Mutation testing (advisory, slow): `uv run mutmut run`, then `uv run mutmut results`. It mutates the parsers and the rate math listed in `[tool.mutmut]`. CI runs it weekly in `.github/workflows/mutation.yml`, in shards listed in `scripts/mutation_shards.py`. Each module in `[tool.mutmut]` must sit in exactly one shard. `uv run python3 scripts/mutation_shards.py check` verifies that.
 - Hooks: `prek install`, then `prek run --all-files`
