@@ -1,0 +1,41 @@
+# Alerts when a game day has no daily report, or when its report came after every puck drop.
+#
+# The schedule runs at 12:30 UTC, after the last trigger of the previous Eastern game day. That
+# trigger is at 00:44 UTC, so every trigger of the day has run. The check job fails when the day
+# has games and no report, or when every game row was made after its start. See
+# scripts/check-daily-report.sh.
+name: daily-report-check
+
+on:
+  schedule:
+    - cron: "30 12 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Eastern game day to check, YYYY-MM-DD. Empty means yesterday in Eastern time."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DISPATCH_DATE: ${{ inputs.date }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked
+      - name: Check the game day
+        run: |
+          day="$DISPATCH_DATE"
+          if [[ -z "$day" ]]; then
+            day="$(TZ=America/New_York date -d yesterday +%F)"
+          fi
+          bash scripts/check-daily-report.sh --date "$day"
