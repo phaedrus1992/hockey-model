@@ -29,7 +29,7 @@ A game day with no listed trigger before its puck drop gets no report before the
 ## Which run publishes
 
 Every trigger that starts while the first puck drop of the game day is still ahead is due.
-The gate compares the time of the run with the first puck drop, so a run that starts after the puck drop does not publish.
+The gate compares the time of the run, plus the report budget, with the first puck drop. A run that cannot finish before the puck drop does not publish.
 The first due run that starts publishes the report, and every later run finds the release and skips.
 A game day with no games publishes nothing, so a failed schedule read cannot leave a wrong release.
 
@@ -51,7 +51,9 @@ When the morning run did not finish, the report run fails and says so.
 It does not do the morning work itself, because that work is too long to fit before the puck drop and the report run must finish in minutes.
 The operator runs the `daily-prepare` workflow with that date, then runs the report again.
 Both workflows share one concurrency group, because both write the cached store.
-The concurrency group also serializes the report runs, so a second run waits for the first.
+The concurrency group allows one running run and at most one waiting run.
+A newer waiting run replaces the older one, so a replaced run never publishes.
+Whichever run survives checks the release before it builds, so correctness does not depend on the queue.
 
 ## Job overheads
 
