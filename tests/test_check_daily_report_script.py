@@ -50,7 +50,10 @@ def fakes(tmp_path: Path) -> Path:
     uv = bin_dir / "uv"
     uv.write_text(
         '#!/usr/bin/env bash\necho "uv $*" >> "$FAKE_CALLS"\n'
-        'if [[ "$*" == "run hockey-model report-due"* ]]; then printf "%s" "$FAKE_DUE_JSON"; fi\n',
+        'if [[ "$*" == "run hockey-model report-due"* ]]; then\n'
+        '  if [[ -n "${FAKE_UV_FAIL:-}" ]]; then echo "uv boom" >&2; exit 3; fi\n'
+        '  printf "%s" "$FAKE_DUE_JSON"\n'
+        "fi\n",
         encoding="utf-8",
     )
     for command in (gh, uv):
@@ -148,6 +151,44 @@ def test_a_report_that_is_not_json_fails_the_check(fakes: Path, tmp_path: Path) 
     result = _run(tmp_path, env, "--date", DAY)
     assert result.returncode == 1
     assert "not valid JSON" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {"games": [{"start_utc": "2026-11-05T00:00:00Z"}]},
+        {"games": [{"made_after_start": "true"}]},
+        {"rows": [{"made_after_start": False}]},
+    ],
+)
+def test_a_report_with_a_changed_shape_fails_instead_of_passing(
+    fakes: Path, tmp_path: Path, report: dict[str, object]
+) -> None:
+    env = _env(fakes, tmp_path, FAKE_RELEASES=f"{TAG}\n", FAKE_REPORT_JSON=json.dumps(report))
+    result = _run(tmp_path, env, "--date", DAY)
+    assert result.returncode == 1
+    assert "lacks a boolean .games[].made_after_start" in result.stderr
+    assert "ok " not in result.stdout
+
+
+def test_a_null_report_is_named_as_the_wrong_type(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, FAKE_RELEASES=f"{TAG}\n", FAKE_REPORT_JSON="null")
+    result = _run(tmp_path, env, "--date", DAY)
+    assert result.returncode == 1
+    assert "is not a JSON object" in result.stderr
+
+
+def test_a_download_failure_carries_the_gh_error(fakes: Path, tmp_path: Path) -> None:
+    env = _env(fakes, tmp_path, FAKE_RELEASES=f"{TAG}\n", FAKE_DOWNLOAD_FAIL="1")
+    result = _run(tmp_path, env, "--date", DAY)
+    assert result.returncode == 1
+    assert "download failed" in result.stderr
+
+
+def test_a_failed_report_due_call_fails_the_check(fakes: Path, tmp_path: Path) -> None:
+    result = _run(tmp_path, _env(fakes, tmp_path, FAKE_UV_FAIL="1"), "--date", DAY)
+    assert result.returncode == 1
+    assert "report-due failed" in result.stderr
 
 
 def test_a_missing_date_is_a_usage_error(fakes: Path, tmp_path: Path) -> None:

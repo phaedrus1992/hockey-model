@@ -43,7 +43,10 @@ if [[ ! "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   exit 2
 fi
 
-status_json="$(uv run hockey-model report-due --date "$day")"
+status_json="$(uv run hockey-model report-due --date "$day")" || {
+  echo "check-daily-report: report-due failed for $day; its error is above" >&2
+  exit 1
+}
 if ! jq -e '(.games | type == "number") and (.tag | type == "string")' <<<"$status_json" \
   >/dev/null; then
   echo "check-daily-report: report-due payload lacks games or tag: $status_json" >&2
@@ -57,7 +60,8 @@ if [[ "$games" == "0" ]]; then
 fi
 
 # "release not found" means no report was published. Any other failure stops the check, so
-# an auth or network error is not read as a missing report.
+# an auth or network error is not read as a missing report. report-gate.sh has the same
+# lookup, so change both together.
 view_err="$(gh release view "$tag" 2>&1 >/dev/null)" && published=true || published=false
 if [[ "$published" == false ]]; then
   if [[ "$view_err" != *"release not found"* ]]; then
@@ -70,12 +74,24 @@ fi
 
 mkdir -p "$work_dir"
 report="$work_dir/report-$day.json"
-if ! gh release download "$tag" --pattern "report-$day.json" --output "$report" --clobber; then
-  echo "check-daily-report: could not download report-$day.json from $tag" >&2
+if ! dl_err="$(gh release download "$tag" --pattern "report-$day.json" --output "$report" \
+  --clobber 2>&1)"; then
+  echo "check-daily-report: could not download report-$day.json from $tag: $dl_err" >&2
   exit 1
 fi
-if ! jq -e . "$report" >/dev/null; then
+if ! jq empty "$report" >/dev/null 2>&1; then
   echo "check-daily-report: $report is not valid JSON; the check cannot judge the report" >&2
+  exit 1
+fi
+if ! jq -e 'type == "object"' "$report" >/dev/null; then
+  echo "check-daily-report: $report is not a JSON object; the check cannot judge the report" >&2
+  exit 1
+fi
+# A report whose rows lack a boolean made_after_start has changed shape. Judging it would
+# pass a broken report as healthy, so the check fails and names the path.
+if ! jq -e '(.games | type == "array") and all(.games[]; .made_after_start | type == "boolean")' \
+  "$report" >/dev/null; then
+  echo "check-daily-report: $report lacks a boolean .games[].made_after_start; the report shape changed" >&2
   exit 1
 fi
 
