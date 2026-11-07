@@ -2,9 +2,10 @@
 
 ## Problem
 
-The daily report must be published before the first puck drop of each game day, with the goalie starters as fresh as possible.
+The daily report must be published before the first puck drop of each game day.
 A report published after puck drop is useless for scoring, because a reader drops every prediction made after the start.
-GitHub Actions schedules run in UTC, and a scheduled run can start late.
+GitHub Actions schedules run in UTC, and a scheduled run can start 10 to 60 minutes late, or be dropped.
+A fix that depends on one run starting on time fails when that run is late.
 
 ## Game day
 
@@ -16,43 +17,57 @@ Every game start stays a UTC instant.
 
 ## Trigger hours
 
-The report for a game day runs at the last top-of-hour slot before its first puck drop, moved earlier as described below.
 A trigger fires at minute `TRIGGER_MINUTE_UTC` of each hour in `TRIGGER_HOURS_UTC` in `src/hockey_model/report_trigger.py`, and the workflow cron lists the same minute and hours.
-
-Options:
-
-1. Every two hours, all day. This is simple, but a trigger can be up to two hours before the puck drop, and half the triggers can never be the last one for any game day.
-2. Every hour, all day. This gives the freshest starters, but most triggers can never be the last one.
-3. Every hour, only at the hours that hold a first puck drop's last trigger. This gives the freshest starters with the fewest runs.
-
-The choice is option 3.
-
 The trigger minute is not :00.
 GitHub delays and drops scheduled runs most at the top of the hour, and many workflows also use :15, :30, and :45.
-Each trigger is the top-of-hour slot of the hourly grid, moved earlier to `TRIGGER_MINUTE_UTC` of the hour before it.
-The move is `REPORT_LEAD`, the minutes left in the hour after the trigger minute.
-A trigger is due when waiting for the next trigger would leave no more than `REPORT_LEAD` before the first puck drop.
-So the report runs at the moved slot, never later than the old top-of-hour slot, and a delayed run has that much more time.
-A minute just before :45 keeps that margin near what a :45 trigger gives, without the :45 queue.
 
 `scripts/trigger_hours.py` reads the season schedule and prints the hours that the first puck drops need.
-For the 2026-27 regular season, a single international game in the morning needs one hour by itself.
-Every other game day needs an hour in the afternoon or the evening, UTC.
+For each game day it prints the trigger derived from the last top-of-hour slot before the first puck drop. That derivation predates the first-run rule, and its update is tracked in #162.
 The script MUST be run again each season, and again when the playoff schedule comes out.
-A game day whose last trigger hour is not in the list still gets a report at its next trigger, as a late run.
+A game day with no listed trigger before its puck drop gets no report before the puck drop, so the script must list an hour for every game day.
+
+## Which run publishes
+
+Every trigger that starts while the first puck drop of the game day is still ahead is due.
+The gate compares the time of the run, plus the report budget, with the first puck drop. A run that cannot finish before the puck drop does not publish.
+The first due run that starts publishes the report.
+A later run before the puck drop builds the report again and replaces the release files and notes, so the report can change until the first puck drop.
+The notes say so, and they name the commit and time of each build.
+After the puck drop, every run skips a day that has a release.
+The release target stays the commit of the first build, so the commit of a replacing build appears only in the notes and in the JSON copy.
+A game day with no games publishes nothing, so a failed schedule read cannot leave a wrong release.
+
+This replaces the earlier rule, which published only at the last trigger before the puck drop.
+That rule missed the puck drop whenever the last run started late (#159).
+The new rule trades freshness for coverage: an early run publishes with the starters known at that time.
+The goalie starters are announced close to the puck drop, so a report published several hours early may use starters that change later.
+The owner has to confirm this trade-off before the rule ships.
 
 ## Two runs per game day
 
 The slow work does not fit between a trigger and the puck drop.
 The fit and the backtest each take minutes or more on a full store.
 
-1. `daily-prepare.yml` runs once each morning, before the first trigger hour. It refreshes every source, fits the model, and runs the backtest.
-2. `daily-report.yml` runs at each trigger. When the trigger is due, it refreshes only the schedule, the goalie sources, and the injuries, then predicts and publishes.
+1. `daily-prepare.yml` runs once each morning, before the first trigger hour. It refreshes every source, fits the model, and runs the backtest. Its job timeout fits the window from its cron hour to the next listed trigger hour (#149).
+2. `daily-report.yml` runs at each trigger. When a trigger is due, it refreshes only the schedule, the goalie sources, and the injuries, then predicts and publishes.
 
 When the morning run did not finish, the report run fails and says so.
 It does not do the morning work itself, because that work is too long to fit before the puck drop and the report run must finish in minutes.
 The operator runs the `daily-prepare` workflow with that date, then runs the report again.
 Both workflows share one concurrency group, because both write the cached store.
+The concurrency group allows one running run and at most one waiting run.
+A newer waiting run replaces the older one, so a replaced run never publishes.
+Whichever run survives checks the release before it builds, so correctness does not depend on the queue.
+
+## Job overheads
+
+Each job logs its wall time as a notice: the gate, the build, and the publish job.
+The overheads are measured from these notices before the trigger lead is set.
+
+## Missed days
+
+A run after the puck drop with no release writes a warning and publishes nothing.
+A separate scheduled check alerts when a game day has no release, or when its only report has every row made after the start (#112).
 
 ## Actions cost
 

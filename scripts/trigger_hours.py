@@ -6,7 +6,8 @@ Usage:
 
 For each Eastern game day, the script finds the first puck drop. It then finds the
 last top-of-hour slot before that puck drop, moved earlier to the trigger minute of the hour
-before it. Prints one JSON object:
+before it. This derivation predates the first-run publish rule. Its update is tracked in #162.
+Prints one JSON object:
 
     {"minute": 44, "hours": [0, 11, 15, 16, ...], "game_days": 183,
     "days_per_hour": {"23": 62, ...}, "first_puck_drops_et": {"19:00 EST": 52, ...}}
@@ -35,7 +36,8 @@ def trigger_hour_for(first: datetime, minute: int) -> int:
     """Return the UTC hour of the trigger that runs a game day with first puck drop ``first``.
 
     The trigger is the last top-of-hour slot strictly before ``first``, moved earlier to
-    ``minute`` of the hour before it, as report_trigger.py runs it.
+    ``minute`` of the hour before it. Under the first-run rule this hour seldom publishes,
+    because an earlier listed run publishes first. Re-deriving it is tracked in #162.
     """
     slot = (first.astimezone(UTC) - timedelta(microseconds=1)).replace(
         minute=0, second=0, microsecond=0

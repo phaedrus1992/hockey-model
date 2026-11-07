@@ -8,12 +8,10 @@ from hypothesis import strategies as st
 
 from hockey_model.game_day import game_day_window
 from hockey_model.report_trigger import (
-    REPORT_LEAD,
     TRIGGER_HOURS_UTC,
     TRIGGER_MINUTE_UTC,
     first_puck_drop,
-    is_due,
-    next_trigger,
+    puck_drop_ahead,
 )
 from hockey_model.types import HockeyModelError
 
@@ -37,53 +35,36 @@ CLOSES = game_day_window(DAY)[1]
 @pytest.mark.parametrize(
     ("first", "runs_at", "skips_at"),
     [
-        # 7 pm EST slate: 00:00 UTC. The old 23:00 slot moves to 22:44.
-        ("2026-11-05T00:00", "2026-11-04T22:44", "2026-11-04T21:44"),
-        # 7:30 pm EST slate: 00:30 UTC. The old 00:00 slot moves to 23:44.
-        ("2026-11-05T00:30", "2026-11-04T23:44", "2026-11-04T22:44"),
-        # 2 pm EST matinee: 19:00 UTC. The old 18:00 slot moves to 17:44.
-        ("2026-11-04T19:00", "2026-11-04T17:44", "2026-11-04T16:44"),
-        # 12:30 pm EST matinee: 17:30 UTC. The old 17:00 slot moves to 16:44.
-        ("2026-11-04T17:30", "2026-11-04T16:44", "2026-11-04T15:44"),
-        # 8 am EST international game: 13:00 UTC. The old 12:00 slot moves to 11:44.
-        ("2026-11-04T13:00", "2026-11-04T11:44", "2026-11-04T00:44"),
+        # 7 pm EST slate: 00:00 UTC. A run before the puck drop is due, a run after it is not.
+        ("2026-11-05T00:00", "2026-11-04T23:44", "2026-11-05T00:44"),
+        # 2 pm EST matinee: 19:00 UTC. A run before the puck drop is due, a run after it is not.
+        ("2026-11-04T19:00", "2026-11-04T16:44", "2026-11-04T19:44"),
+        # 8 am EST international game: 13:00 UTC. A run before the puck drop is due.
+        ("2026-11-04T13:00", "2026-11-04T11:44", "2026-11-04T13:44"),
     ],
 )
-def test_each_old_top_of_hour_slot_moves_earlier_to_minute_44(
+def test_a_run_before_the_puck_drop_is_due_and_a_run_after_it_is_not(
     first: str, runs_at: str, skips_at: str
 ) -> None:
-    assert is_due(at(runs_at), at(first)) is True
-    assert is_due(at(skips_at), at(first)) is False
+    assert puck_drop_ahead(at(runs_at), at(first)) is True
+    assert puck_drop_ahead(at(skips_at), at(first)) is False
 
 
-def test_the_lead_is_the_minutes_left_in_the_hour() -> None:
-    assert REPORT_LEAD == timedelta(minutes=60 - TRIGGER_MINUTE_UTC)
+def test_a_run_that_starts_after_the_puck_drop_is_not_due() -> None:
+    assert puck_drop_ahead(at("2026-11-05T00:31"), at("2026-11-05T00:30")) is False
 
 
-def test_a_late_cron_run_keeps_its_own_slot() -> None:
-    assert next_trigger(at("2026-11-04T22:50")) == at("2026-11-04T23:44")
-    assert is_due(at("2026-11-04T22:50"), at("2026-11-05T00:00")) is True
-
-
-def test_the_gap_after_the_evening_triggers_reaches_the_next_morning() -> None:
-    assert next_trigger(at("2026-11-05T00:44")) == at("2026-11-05T11:44")
-    assert next_trigger(at("2026-11-05T11:44")) == at("2026-11-05T15:44")
-
-
-def test_no_games_runs_at_the_last_trigger_of_the_game_day() -> None:
+def test_no_games_runs_until_the_end_of_the_game_day() -> None:
     first = first_puck_drop(CLOSES, [])
     assert first == at("2026-11-05T05:00")
-    assert is_due(at("2026-11-04T23:44"), first) is False
-    assert is_due(at("2026-11-05T00:44"), first) is True
+    assert puck_drop_ahead(at("2026-11-04T23:44"), first) is True
+    assert puck_drop_ahead(at("2026-11-05T00:44"), first) is True
+    assert puck_drop_ahead(at("2026-11-05T05:00"), first) is False
 
 
 def test_first_puck_drop_is_the_earliest_start() -> None:
     starts = [at("2026-11-05T03:00"), at("2026-11-05T00:00"), at("2026-11-05T00:30")]
     assert first_puck_drop(CLOSES, starts) == at("2026-11-05T00:00")
-
-
-def test_puck_drop_already_passed_makes_the_trigger_due() -> None:
-    assert is_due(at("2026-11-05T00:44"), at("2026-11-05T00:00")) is True
 
 
 def test_trigger_hours_are_sorted_unique_hours_and_the_minute_is_valid() -> None:
@@ -92,28 +73,15 @@ def test_trigger_hours_are_sorted_unique_hours_and_the_minute_is_valid() -> None
     assert 0 <= TRIGGER_MINUTE_UTC <= 59
 
 
-def test_non_utc_time_is_an_error() -> None:
+def test_naive_time_is_an_error() -> None:
     with pytest.raises(HockeyModelError, match="must be a timezone-aware UTC datetime"):
-        next_trigger(datetime(2026, 11, 4, 12, 0))
+        puck_drop_ahead(datetime(2026, 11, 4, 12, 0), at("2026-11-05T00:00"))
 
 
 def test_non_utc_offset_is_an_error() -> None:
     eastern = datetime(2026, 11, 4, 12, 0, tzinfo=timezone(timedelta(hours=-5)))
     with pytest.raises(HockeyModelError, match="offset"):
-        next_trigger(eastern)
-
-
-@given(_UTC_TIMES)
-def test_next_trigger_is_the_first_trigger_hour_after_now(now: datetime) -> None:
-    trigger = next_trigger(now)
-    assert trigger > now
-    assert trigger.minute == TRIGGER_MINUTE_UTC
-    assert trigger.second == trigger.microsecond == 0
-    assert trigger.hour in TRIGGER_HOURS_UTC
-    slot = now.replace(minute=TRIGGER_MINUTE_UTC, second=0, microsecond=0)
-    while slot < trigger:
-        assert slot <= now or slot.hour not in TRIGGER_HOURS_UTC
-        slot += timedelta(hours=1)
+        puck_drop_ahead(eastern, at("2026-11-05T00:00"))
 
 
 @given(_DAYS, st.lists(_UTC_TIMES, max_size=8))
@@ -128,7 +96,20 @@ def test_first_puck_drop_is_the_minimum_or_the_day_close(day: date, starts: list
 
 
 @given(_UTC_TIMES, _UTC_TIMES)
-def test_is_due_matches_the_lead_comparison_and_is_monotone(now: datetime, start: datetime) -> None:
-    assert is_due(now, start) is (next_trigger(now) >= start - REPORT_LEAD)
-    if is_due(now, start + timedelta(hours=1)):
-        assert is_due(now, start)
+def test_puck_drop_ahead_is_true_exactly_before_the_start(now: datetime, start: datetime) -> None:
+    assert puck_drop_ahead(now, start) is (now < start)
+    if puck_drop_ahead(now, start):
+        assert puck_drop_ahead(now - timedelta(minutes=1), start)
+
+
+def test_a_margin_moves_the_cutoff_earlier_by_its_length() -> None:
+    first = at("2026-11-05T00:00")
+    # A run at 23:49 with a 10-minute margin finishes at 23:59, so it is still due.
+    assert puck_drop_ahead(at("2026-11-04T23:49"), first, timedelta(minutes=10)) is True
+    # A run at 23:51 would finish at 00:01, after the puck drop, so it is not due.
+    assert puck_drop_ahead(at("2026-11-04T23:51"), first, timedelta(minutes=10)) is False
+
+
+def test_a_negative_margin_is_an_error() -> None:
+    with pytest.raises(HockeyModelError, match="must not be negative"):
+        puck_drop_ahead(at("2026-11-04T23:00"), at("2026-11-05T00:00"), timedelta(seconds=-1))

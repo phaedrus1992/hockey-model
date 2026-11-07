@@ -59,7 +59,14 @@ def test_report_due_prints_only_the_gate_fields(
     _feed(monkeypatch, {})
     assert main(["report-due", "--date", "2026-11-04"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {"date", "tag", "games", "first_puck_drop_utc", "due"}
+    assert set(payload) == {
+        "date",
+        "tag",
+        "games",
+        "first_puck_drop_utc",
+        "puck_drop_passed",
+        "due",
+    }
 
 
 def test_report_due_without_games_uses_the_end_of_the_day(

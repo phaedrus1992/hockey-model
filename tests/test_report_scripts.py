@@ -57,7 +57,10 @@ def fakes(tmp_path: Path) -> Path:
         "  fi\n"
         '  printf "{\\"backfill_complete\\": %s}" "${FAKE_BACKFILL_COMPLETE:-true}"\n'
         "fi\n"
-        'if [[ "$*" == "run hockey-model report-due"* ]]; then printf "%s" "$FAKE_DUE_JSON"; fi\n'
+        'if [[ "$*" == "run hockey-model report-due"* ]]; then\n'
+        '  if [[ -n "${FAKE_UV_FAIL:-}" ]]; then echo "uv boom" >&2; exit 3; fi\n'
+        '  printf "%s" "$FAKE_DUE_JSON"\n'
+        "fi\n"
         'if [[ "$*" == "run hockey-model backtest --games-out "* ]]; then\n'
         '  echo "game_id,elo" > "$5"; printf "%s\\n" "$FAKE_BACKTEST_JSON"\n'
         "fi\n"
@@ -113,7 +116,9 @@ def test_gate_due_and_not_published_publishes(fakes: Path, tmp_path: Path) -> No
 
 
 def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path) -> None:
-    env = _env(fakes, tmp_path, FAKE_RELEASES=f"reports-2026-11-03\n{TAG}\n")
+    # After the puck drop, a published day is skipped and never replaced.
+    not_due = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 3})
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=not_due, FAKE_RELEASES=f"reports-2026-11-03\n{TAG}\n")
     result = _run("report-gate.sh", env, "--date", DAY)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
@@ -125,29 +130,106 @@ def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path)
     }
 
 
-def test_gate_not_due_skips_the_release_lookup(fakes: Path, tmp_path: Path) -> None:
-    due = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 3})
+def test_gate_replaces_a_published_day_before_the_puck_drop(fakes: Path, tmp_path: Path) -> None:
+    due = json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 3})
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=due, FAKE_RELEASES=f"{TAG}\n")
+    result = _run("report-gate.sh", env, "--date", DAY)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "due": True,
+        "publish": True,
+        "tag": TAG,
+        "reason": "replace",
+        "date": DAY,
+    }
+
+
+def test_gate_forced_run_does_not_replace_a_published_day(fakes: Path, tmp_path: Path) -> None:
+    due = json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 3})
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=due, FAKE_RELEASES=f"{TAG}\n")
+    result = _run("report-gate.sh", env, "--date", DAY, "--force")
+    assert json.loads(result.stdout)["reason"] == "already-published"
+
+
+def test_gate_after_the_puck_drop_publishes_nothing_and_warns(fakes: Path, tmp_path: Path) -> None:
+    due = json.dumps(
+        {
+            "due": False,
+            "tag": TAG,
+            "date": DAY,
+            "games": 3,
+            "first_puck_drop_utc": "2026-11-05T00:00:00Z",
+            "puck_drop_passed": True,
+        }
+    )
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=due), "--date", DAY)
+    assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
         "due": False,
         "publish": False,
         "tag": TAG,
-        "reason": "not-due",
+        "reason": "puck-drop-passed",
         "date": DAY,
     }
-    assert not any(line.startswith("gh ") for line in _calls(tmp_path))
+
+
+def test_gate_inside_the_margin_says_the_puck_drop_is_too_close(
+    fakes: Path, tmp_path: Path
+) -> None:
+    due = json.dumps(
+        {
+            "due": False,
+            "tag": TAG,
+            "date": DAY,
+            "games": 3,
+            "first_puck_drop_utc": "2026-11-05T00:00:00Z",
+            "puck_drop_passed": False,
+        }
+    )
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=due)
+    result = _run("report-gate.sh", env, "--date", DAY, "--margin-seconds", "600")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["reason"] == "puck-drop-too-close"
+    assert "has started" not in result.stderr
+    assert "is less than 600 seconds away" in result.stderr
+    assert "gh release view" in "\n".join(_calls(tmp_path))
+    assert "::warning::" in result.stderr
+    assert "2026-11-05T00:00:00Z" in result.stderr
+
+
+def test_gate_after_the_puck_drop_skips_a_day_already_published(
+    fakes: Path, tmp_path: Path
+) -> None:
+    due = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 3})
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=due, FAKE_RELEASES=f"{TAG}\n")
+    result = _run("report-gate.sh", env, "--date", DAY)
+    assert json.loads(result.stdout)["reason"] == "already-published"
+    assert "::warning::" not in result.stderr
 
 
 def test_gate_without_a_date_lets_report_due_pick_the_game_day(fakes: Path, tmp_path: Path) -> None:
     result = _run("report-gate.sh", _env(fakes, tmp_path))
     assert result.returncode == 0, result.stderr
-    assert "uv run hockey-model report-due" in _calls(tmp_path)
+    assert any("uv run hockey-model report-due" in line for line in _calls(tmp_path))
     assert json.loads(result.stdout)["date"] == DAY
 
 
 def test_gate_forwards_force(fakes: Path, tmp_path: Path) -> None:
     _run("report-gate.sh", _env(fakes, tmp_path), "--date", DAY, "--force")
-    assert f"uv run hockey-model report-due --date {DAY} --force" in _calls(tmp_path)
+    assert any(
+        f"uv run hockey-model report-due --date {DAY} --force" in line for line in _calls(tmp_path)
+    )
+
+
+def test_gate_forwards_the_margin_so_a_late_run_is_not_due(fakes: Path, tmp_path: Path) -> None:
+    _run("report-gate.sh", _env(fakes, tmp_path), "--date", DAY, "--margin-seconds", "600")
+    assert any("--margin-seconds 600" in line for line in _calls(tmp_path))
+
+
+def test_gate_rejects_a_margin_that_is_not_whole_seconds(fakes: Path, tmp_path: Path) -> None:
+    result = _run("report-gate.sh", _env(fakes, tmp_path), "--margin-seconds", "10m")
+    assert result.returncode == 2
+    assert "--margin-seconds needs whole seconds" in result.stderr
 
 
 def test_gate_dry_run_builds_a_published_day_without_a_release_lookup(
@@ -163,7 +245,9 @@ def test_gate_dry_run_builds_a_published_day_without_a_release_lookup(
         "reason": "dry-run",
         "date": DAY,
     }
-    assert f"uv run hockey-model report-due --date {DAY} --force" in _calls(tmp_path)
+    assert any(
+        f"uv run hockey-model report-due --date {DAY} --force" in line for line in _calls(tmp_path)
+    )
     assert not any(line.startswith("gh ") for line in _calls(tmp_path))
 
 
@@ -172,7 +256,7 @@ def test_gate_dry_run_still_skips_a_day_that_is_not_due(fakes: Path, tmp_path: P
     result = _run(
         "report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=due), "--date", DAY, "--dry-run"
     )
-    assert json.loads(result.stdout)["reason"] == "not-due"
+    assert json.loads(result.stdout)["reason"] == "dry-run"
 
 
 def test_gate_fails_when_the_release_lookup_fails_for_another_reason(
@@ -191,11 +275,26 @@ def test_gate_fails_on_a_payload_without_the_gate_fields(fakes: Path, tmp_path: 
     assert "lacks due, tag, games, or date" in result.stderr
 
 
-def test_gate_warns_when_the_schedule_is_empty(fakes: Path, tmp_path: Path) -> None:
-    empty = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 0})
+def test_gate_publishes_nothing_for_an_empty_schedule(fakes: Path, tmp_path: Path) -> None:
+    # An empty schedule can be a failed feed read, so it must not make a permanent release.
+    empty = json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 0})
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=empty), "--date", DAY)
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "due": False,
+        "publish": False,
+        "tag": TAG,
+        "reason": "no-games",
+        "date": DAY,
+    }
     assert "::warning::" in result.stderr
+    assert not any(line.startswith("gh ") for line in _calls(tmp_path))
+
+
+def test_gate_names_a_failed_report_due_call(fakes: Path, tmp_path: Path) -> None:
+    result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_UV_FAIL="1"), "--date", DAY)
+    assert result.returncode == 1
+    assert "report-due failed" in result.stderr
 
 
 def test_gate_rejects_an_unknown_argument(fakes: Path, tmp_path: Path) -> None:
@@ -237,11 +336,26 @@ def test_publish_creates_the_release_at_the_build_commit(fakes: Path, tmp_path: 
     assert create[0].count("backtest") == 2
 
 
-def test_publish_refuses_a_day_that_already_has_a_release(fakes: Path, tmp_path: Path) -> None:
+def test_publish_replaces_the_files_of_an_existing_release(fakes: Path, tmp_path: Path) -> None:
     _write_report(tmp_path / "report")
     result = _publish(fakes, tmp_path, FAKE_RELEASES=f"{TAG}\n")
-    assert result.returncode == 1
-    assert "already exists" in result.stderr
+    assert result.returncode == 0, result.stderr
+    calls = _calls(tmp_path)
+    upload = [line for line in calls if line.startswith("gh release upload")]
+    assert upload and "--clobber" in upload[0] and f" {TAG} " in upload[0]
+    assert any(line.startswith("gh release edit") for line in calls)
+    assert not any(line.startswith("gh release create") for line in calls)
+
+
+def test_publish_notes_say_the_release_can_change_before_puck_drop(
+    fakes: Path, tmp_path: Path
+) -> None:
+    _write_report(tmp_path / "report")
+    result = _publish(fakes, tmp_path)
+    assert result.returncode == 0, result.stderr
+    notes = (tmp_path / "report" / f"release-notes-{DAY}.md").read_text(encoding="utf-8")
+    assert "can be replaced by a later build until the first puck drop" in notes
+    assert f"commit {SHA}" in notes
 
 
 def test_publish_needs_the_build_commit(fakes: Path, tmp_path: Path) -> None:
@@ -300,7 +414,7 @@ def test_publish_refuses_a_csv_without_a_header(fakes: Path, tmp_path: Path) -> 
 def test_publish_help_names_the_delete_first_step(fakes: Path, tmp_path: Path) -> None:
     result = _run("publish-daily-report.sh", _env(fakes, tmp_path), "--help")
     assert result.returncode == 0
-    assert "Delete the" in result.stdout
+    assert "replaces the release files" in result.stdout
     assert "--report-dir" in result.stdout
 
 
@@ -411,7 +525,9 @@ def test_prepare_writes_the_backtest_and_the_marker_and_drops_old_days(
         f"prepared-{DAY}",
         "store.db.backfilled",
     ]
-    assert "uv run hockey-model fit --features xg_form,rest" in _calls(tmp_path)
+    assert any(
+        "uv run hockey-model fit --features xg_form,rest" in line for line in _calls(tmp_path)
+    )
 
 
 def test_prepare_fits_on_the_features_the_backtest_kept(fakes: Path, tmp_path: Path) -> None:

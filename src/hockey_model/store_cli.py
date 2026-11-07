@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, timedelta
@@ -22,7 +23,7 @@ from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
 from hockey_model.game_model.seasons import FIT_FIRST, season_of
 from hockey_model.game_model.training import game_input, training_rows
-from hockey_model.report_trigger import first_puck_drop, is_due
+from hockey_model.report_trigger import first_puck_drop, puck_drop_ahead
 from hockey_model.sources.http import HttpClient
 from hockey_model.sources.nhl import GameRow, fetch_score_day
 from hockey_model.store.db import connect, db_path_from_env
@@ -131,6 +132,12 @@ def add_store_commands(add_parser: Callable[..., argparse.ArgumentParser]) -> No
         help="Eastern game day to check; default is the game day that holds now",
     )
     due.add_argument("--force", action="store_true", help="publish even outside the trigger")
+    due.add_argument(
+        "--margin-seconds",
+        type=int,
+        default=0,
+        help="seconds the run needs after it starts; due only when it can finish before puck drop",
+    )
 
 
 def _report_json(report: RefreshReport) -> dict[str, object]:
@@ -280,7 +287,17 @@ def _game_day_games(day: date, closes: datetime) -> list[GameRow]:
     start the feed lists under the wrong date out of the report.
     """
     opens = game_day_window(day)[0]
-    return [game for game in fetch_score_day(HttpClient(), day) if opens <= game.start < closes]
+    feed = fetch_score_day(HttpClient(), day)
+    games = [game for game in feed if opens <= game.start < closes]
+    # A dropped game is named, so a feed with a wrong date does not pass as an off day.
+    dropped = [str(game.game_id) for game in feed if not opens <= game.start < closes]
+    if dropped:
+        print(
+            f"report-due: {len(dropped)} feed game(s) start outside {day}'s window and are "
+            f"not counted: {', '.join(dropped)}",
+            file=sys.stderr,
+        )
+    return games
 
 
 def _report_due(args: argparse.Namespace) -> tuple[object, int]:
@@ -294,7 +311,8 @@ def _report_due(args: argparse.Namespace) -> tuple[object, int]:
         "tag": report_tag(day),
         "games": len(games),
         "first_puck_drop_utc": iso_utc(first),
-        "due": args.force or is_due(now, first),
+        "puck_drop_passed": now >= first,
+        "due": args.force or puck_drop_ahead(now, first, timedelta(seconds=args.margin_seconds)),
     }, 0
 
 
