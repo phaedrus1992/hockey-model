@@ -151,6 +151,7 @@ class ReadResult(NamedTuple):
 
     clean: bool  # every unit is read, or is a known gap
     stopped: bool  # the read quit early: three failures in a row, or the time ran out
+    progress: int = 0  # units that this read finished for good, not re-reads of open days
 
 
 def score_gaps(run: RefreshRun) -> set[date]:
@@ -178,18 +179,19 @@ def read_days(
     days in a row fail or the time budget is spent.
     """
     failures = 0
+    progress = 0
     clean = True
     for index, day in enumerate(worklist):
         if failures >= MAX_UNIT_FAILURES:
             left = len(worklist) - index
             run.notes.append(f"{SCORES}: stopped after {failures} failed days; {left} not tried")
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
         if day in gaps or (day not in due and _day_complete(run, day)):
             failures = 0
             continue
         if run.out_of_time():
             run.notes.append(f"{SCORES}: stopped at {day.isoformat()}, because the time ran out")
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
 
         def unit(stamp: datetime, current: date = day) -> int:
             return write_games(run.conn, fetch_score_day(run.client, current), stamp)
@@ -197,7 +199,10 @@ def read_days(
         ok = run.attempt(SCORES, score_day_url(day), unit)
         failures = 0 if ok else failures + 1
         clean = clean and ok
-    return ReadResult(clean, stopped=False)
+        # A day that this read completed is finished. An open day, or a due day, is read again.
+        if ok and day not in due and _day_complete(run, day):
+            progress += 1
+    return ReadResult(clean, stopped=False, progress=progress)
 
 
 def score_days(run: RefreshRun) -> None:
@@ -241,6 +246,7 @@ def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
     """
     failures = 0
     skipped = 0
+    progress = 0
     clean = True
     gaps = abandoned_urls(run.conn, BOXSCORES)
     waiting = [g for g in game_ids if boxscore_url(g) not in gaps]
@@ -252,11 +258,11 @@ def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
             run.notes.append(
                 f"{BOXSCORES}: stopped after {failures} failed reads; {left} not tried"
             )
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
         if run.out_of_time():
             left = len(waiting) - index
             run.notes.append(f"{BOXSCORES}: stopped, because the time ran out; {left} not tried")
-            return ReadResult(clean=False, stopped=True)
+            return ReadResult(clean=False, stopped=True, progress=progress)
         url = boxscore_url(game_id)
         if failed_since(run.conn, BOXSCORES, url, run.now - RETRY_FAILED_AFTER):
             skipped += 1
@@ -272,8 +278,9 @@ def read_boxscores(run: RefreshRun, game_ids: list[int]) -> ReadResult:
         ok = run.attempt(BOXSCORES, url, unit)
         failures = 0 if ok else failures + 1
         clean = clean and ok
+        progress += ok
     if skipped:
         run.notes.append(
             f"{BOXSCORES}: {skipped} skipped, because the last read failed a day ago or less"
         )
-    return ReadResult(clean, stopped=False)
+    return ReadResult(clean, stopped=False, progress=progress)
