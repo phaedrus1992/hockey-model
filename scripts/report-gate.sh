@@ -109,7 +109,10 @@ if [[ "$dry_run" != true ]]; then
       echo "report-gate: gh release view $tag failed: $view_err" >&2
       exit 1
     fi
-    if [[ "$published" == true ]]; then
+    if [[ "$published" == true && "$due" == "true" && "$force" == false ]]; then
+      # The release can be replaced until the first puck drop, so a later build replaces it.
+      reason="replace"
+    elif [[ "$published" == true ]]; then
       due="false"
       reason="already-published"
     elif [[ "$due" == "true" ]]; then

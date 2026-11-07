@@ -6,9 +6,9 @@
 #   --report-dir  Directory with report-DATE.md, report-DATE.json, backtest-DATE.json,
 #                 and backtest-games-DATE.csv.
 #
-# The release target is GITHUB_SHA, the commit that built the report. A release that
-# already exists for the day makes gh fail, and the script never replaces it. Delete the
-# release to publish the day again.
+# The release target is GITHUB_SHA, the commit that built the first report of the day. A later
+# build for the same day replaces the release files and notes, so the release can change until
+# the first puck drop. The notes say so.
 set -euo pipefail
 
 day=""
@@ -20,30 +20,30 @@ usage() {
 
 while (($# > 0)); do
   case "$1" in
-    --date)
-      if (($# < 2)); then
-        echo "publish-daily-report: --date needs a value YYYY-MM-DD; see --help" >&2
-        exit 2
-      fi
-      day="$2"
-      shift 2
-      ;;
-    --report-dir)
-      if (($# < 2)); then
-        echo "publish-daily-report: --report-dir needs a directory; see --help" >&2
-        exit 2
-      fi
-      report_dir="$2"
-      shift 2
-      ;;
-    -h | --help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "publish-daily-report: unknown argument '$1'; see --help" >&2
+  --date)
+    if (($# < 2)); then
+      echo "publish-daily-report: --date needs a value YYYY-MM-DD; see --help" >&2
       exit 2
-      ;;
+    fi
+    day="$2"
+    shift 2
+    ;;
+  --report-dir)
+    if (($# < 2)); then
+      echo "publish-daily-report: --report-dir needs a directory; see --help" >&2
+      exit 2
+    fi
+    report_dir="$2"
+    shift 2
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "publish-daily-report: unknown argument '$1'; see --help" >&2
+    exit 2
+    ;;
   esac
 done
 
@@ -83,7 +83,26 @@ if [[ "$(head -n 1 "$backtest_games")" != *,* ]]; then
 fi
 
 tag="reports-$day"
-gh release create "$tag" "$md" "$json" "$backtest" "$backtest_games" \
-  --target "$GITHUB_SHA" \
-  --title "NHL predictions $day" \
-  --notes-file "$md"
+# The notes say the report can change until the first puck drop, and they name this build.
+notes="$report_dir/release-notes-$day.md"
+{
+  echo "This report can be replaced by a later build until the first puck drop of the game day."
+  echo "This build: commit $GITHUB_SHA, finished $(date -u +%Y-%m-%dT%H:%M:%SZ) UTC."
+  echo
+  cat "$md"
+} >"$notes"
+assets=("$md" "$json" "$backtest" "$backtest_games")
+if view_err="$(gh release view "$tag" 2>&1 >/dev/null)"; then
+  # The release exists, so this build replaces its files and notes. The target commit of the
+  # release stays the one that created it.
+  gh release upload "$tag" "${assets[@]}" --clobber
+  gh release edit "$tag" --notes-file "$notes"
+elif [[ "$view_err" == *"release not found"* ]]; then
+  gh release create "$tag" "${assets[@]}" \
+    --target "$GITHUB_SHA" \
+    --title "NHL predictions $day" \
+    --notes-file "$notes"
+else
+  echo "publish-daily-report: gh release view $tag failed: $view_err" >&2
+  exit 1
+fi

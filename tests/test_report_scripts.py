@@ -116,7 +116,9 @@ def test_gate_due_and_not_published_publishes(fakes: Path, tmp_path: Path) -> No
 
 
 def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path) -> None:
-    env = _env(fakes, tmp_path, FAKE_RELEASES=f"reports-2026-11-03\n{TAG}\n")
+    # After the puck drop, a published day is skipped and never replaced.
+    not_due = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 3})
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=not_due, FAKE_RELEASES=f"reports-2026-11-03\n{TAG}\n")
     result = _run("report-gate.sh", env, "--date", DAY)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
@@ -126,6 +128,27 @@ def test_gate_skips_a_day_that_is_already_published(fakes: Path, tmp_path: Path)
         "reason": "already-published",
         "date": DAY,
     }
+
+
+def test_gate_replaces_a_published_day_before_the_puck_drop(fakes: Path, tmp_path: Path) -> None:
+    due = json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 3})
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=due, FAKE_RELEASES=f"{TAG}\n")
+    result = _run("report-gate.sh", env, "--date", DAY)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "due": True,
+        "publish": True,
+        "tag": TAG,
+        "reason": "replace",
+        "date": DAY,
+    }
+
+
+def test_gate_forced_run_does_not_replace_a_published_day(fakes: Path, tmp_path: Path) -> None:
+    due = json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 3})
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=due, FAKE_RELEASES=f"{TAG}\n")
+    result = _run("report-gate.sh", env, "--date", DAY, "--force")
+    assert json.loads(result.stdout)["reason"] == "already-published"
 
 
 def test_gate_after_the_puck_drop_publishes_nothing_and_warns(fakes: Path, tmp_path: Path) -> None:
@@ -291,11 +314,26 @@ def test_publish_creates_the_release_at_the_build_commit(fakes: Path, tmp_path: 
     assert create[0].count("backtest") == 2
 
 
-def test_publish_refuses_a_day_that_already_has_a_release(fakes: Path, tmp_path: Path) -> None:
+def test_publish_replaces_the_files_of_an_existing_release(fakes: Path, tmp_path: Path) -> None:
     _write_report(tmp_path / "report")
     result = _publish(fakes, tmp_path, FAKE_RELEASES=f"{TAG}\n")
-    assert result.returncode == 1
-    assert "already exists" in result.stderr
+    assert result.returncode == 0, result.stderr
+    calls = _calls(tmp_path)
+    upload = [line for line in calls if line.startswith("gh release upload")]
+    assert upload and "--clobber" in upload[0] and f" {TAG} " in upload[0]
+    assert any(line.startswith("gh release edit") for line in calls)
+    assert not any(line.startswith("gh release create") for line in calls)
+
+
+def test_publish_notes_say_the_release_can_change_before_puck_drop(
+    fakes: Path, tmp_path: Path
+) -> None:
+    _write_report(tmp_path / "report")
+    result = _publish(fakes, tmp_path)
+    assert result.returncode == 0, result.stderr
+    notes = (tmp_path / "report" / f"release-notes-{DAY}.md").read_text(encoding="utf-8")
+    assert "can be replaced by a later build until the first puck drop" in notes
+    assert f"commit {SHA}" in notes
 
 
 def test_publish_needs_the_build_commit(fakes: Path, tmp_path: Path) -> None:
@@ -354,7 +392,7 @@ def test_publish_refuses_a_csv_without_a_header(fakes: Path, tmp_path: Path) -> 
 def test_publish_help_names_the_delete_first_step(fakes: Path, tmp_path: Path) -> None:
     result = _run("publish-daily-report.sh", _env(fakes, tmp_path), "--help")
     assert result.returncode == 0
-    assert "Delete the" in result.stdout
+    assert "replaces the release files" in result.stdout
     assert "--report-dir" in result.stdout
 
 

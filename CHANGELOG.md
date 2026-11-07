@@ -41,6 +41,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Move the store to schema version 2, which adds MoneyPuck shot-attempt counts. A version 1 store is refused, so rebuild it on a new path with `hockey-model refresh --backfill-from 2014-10-01`. [feat:store]
 - Require `--features` in `hockey-model fit`. The old default fitted every candidate, including `goalie_gsax`, which the backtest vetoed, and the daily report served that fit. `scripts/daily-prepare.sh` now runs the backtest first and fits on its `live_features`, so a failed joint test serves the Elo alone. [fix:cli]
 - Name the feed games that fall outside a game day's window in the `report-due` output, instead of dropping them without a word. [refactor:report]
+- Replace the daily report's release files and notes with each later build before the first puck drop. The release can therefore change until then, and its notes say so. [feat:report]
 
 ### Fixed
 

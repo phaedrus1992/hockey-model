@@ -1,8 +1,9 @@
 # Publishes the daily NHL prediction report as a dated GitHub release.
 #
 # The schedule fires at each trigger slot. The gate job publishes at the first slot that runs
-# while the day's first puck drop is still ahead, and skips every later slot once the release
-# exists. A run that starts after the puck drop does not publish. The cron minute and hours
+# while the day's first puck drop is still ahead. Each later slot before the puck drop replaces
+# the release files and notes. After the puck drop, a run skips a published day, and a run that
+# finds no release publishes nothing. The cron minute and hours
 # MUST match TRIGGER_MINUTE_UTC and TRIGGER_HOURS_UTC in report_trigger.py.
 name: daily-report
 
