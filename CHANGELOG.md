@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add the experiment registry: records in `experiments/`, `hockey-model experiments check`, and `hockey-model experiments run`. A confirmation record scores only games after its data cutoff in the 2026-27 regular season and later, runs once, and refuses a cohort smaller than its minimum. An exploration record scores the seasons through 2025-26 and may run again. The checker validates every schema keyword, compares immutable fields with the commit that registered the record, ties `status` to `result`, and fails a record whose committed result was removed or replaced. [feat:experiments]
 - Add `hockey-model store upgrade`, which moves a version 1 store to the current schema. It keeps every row and fit ID, writes a backup first, and runs in one transaction. [feat:store]
 - Add a pre-push mutation check. It runs mutmut on the functions that a push changes, and it fails on a survivor on a changed line, a timeout, or an incomplete result. [chore:test]
+- Add a scheduled check that alerts when a game day with games has no `reports-DATE` release, or when every game row of its report was made after the start. A day with no games raises no alert. [feat:report]
 
 ### Changed
 
@@ -39,6 +40,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Record the DraftKings comparison in the README, the backtest report, and the run report. The model is level with the line in 2024-25 and worse in 2025-26, and it fails the blend gate. [docs:backtest]
 - Move the store to schema version 2, which adds MoneyPuck shot-attempt counts. A version 1 store is refused, so rebuild it on a new path with `hockey-model refresh --backfill-from 2014-10-01`. [feat:store]
 - Require `--features` in `hockey-model fit`. The old default fitted every candidate, including `goalie_gsax`, which the backtest vetoed, and the daily report served that fit. `scripts/daily-prepare.sh` now runs the backtest first and fits on its `live_features`, so a failed joint test serves the Elo alone. [fix:cli]
+- Name the feed games that fall outside a game day's window in the `report-due` output, instead of dropping them without a word. [refactor:report]
 
 ### Fixed
 
@@ -49,6 +51,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Match an injury name to the goalies of its own team only. [fix:model]
 - Print the type and message of an unexpected failure in the store commands. [fix:cli]
 - Note in the backtest report that the goalie guess run has no injury history. [fix:backtest]
+- Publish the daily report at the first run that starts before the first puck drop. A run that starts after the puck drop publishes nothing and writes a warning. [fix:report]
+- Fit the daily-prepare job timeout to the window before the next trigger hour. [fix:report]
+- Publish no daily report for a game day with no games, so a failed schedule read cannot leave a wrong release. [fix:report]
+- Give the daily report step its own time limit, so a hung read cannot hold the store for the full job limit. [fix:report]
 - Allow an hour for the MoneyPuck team file, which is about 130 MB, instead of 15 minutes. [fix:sources]
 - Check a fit before it is saved, accept every supported feature including `attempt_form`, reject a feature named twice, and predict with the features that the loaded fit names. A saved attempt-form fit failed with a `KeyError` at prediction. An Elo-only fit still credits MoneyPuck, since the goal rates use its data. [fix:store]
 - Install the pre-push hook with a plain `prek install`, so the local coverage gate runs. [fix:ci]
