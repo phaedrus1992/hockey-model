@@ -1,9 +1,9 @@
 # Publishes the daily NHL prediction report as a dated GitHub release.
 #
-# The schedule fires at each trigger slot. The gate job publishes only at the last slot
-# before the day's first puck drop, and skips every later slot once the release exists.
-# The cron minute and hours MUST match TRIGGER_MINUTE_UTC and TRIGGER_HOURS_UTC in
-# report_trigger.py.
+# The schedule fires at each trigger slot. The gate job publishes at the first slot that runs
+# while the day's first puck drop is still ahead, and skips every later slot once the release
+# exists. A run that starts after the puck drop does not publish. The cron minute and hours
+# MUST match TRIGGER_MINUTE_UTC and TRIGGER_HOURS_UTC in report_trigger.py.
 name: daily-report
 
 on:
@@ -37,6 +37,8 @@ jobs:
       publish: ${{ steps.gate.outputs.publish }}
       day: ${{ steps.gate.outputs.day }}
     steps:
+      - name: Start the job timer
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -62,6 +64,10 @@ jobs:
             echo "publish=$(jq -r '.publish' gate.json)"
             echo "day=$(jq -r '.date' gate.json)"
           } >> "$GITHUB_OUTPUT"
+      # The overhead of each job is measured here, so the trigger lead can be set from data.
+      - if: always()
+        name: Report the job time
+        run: echo "::notice::gate job took $(( $(date +%s) - JOB_START ))s"
 
   build:
     needs: gate
@@ -73,6 +79,8 @@ jobs:
     outputs:
       report_complete: ${{ steps.state.outputs.report_complete }}
     steps:
+      - name: Start the job timer
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -122,6 +130,9 @@ jobs:
         with:
           path: ${{ runner.temp }}/hockey-model
           key: hockey-model-store-${{ github.run_id }}
+      - if: always()
+        name: Report the job time
+        run: echo "::notice::build job took $(( $(date +%s) - JOB_START ))s"
 
   publish:
     needs: [gate, build]
@@ -138,6 +149,8 @@ jobs:
       DAY: ${{ needs.gate.outputs.day }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Start the job timer
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -146,3 +159,6 @@ jobs:
           name: daily-report
           path: ${{ runner.temp }}/report
       - run: bash scripts/publish-daily-report.sh --date "$DAY" --report-dir "$RUNNER_TEMP/report"
+      - if: always()
+        name: Report the job time
+        run: echo "::notice::publish job took $(( $(date +%s) - JOB_START ))s"

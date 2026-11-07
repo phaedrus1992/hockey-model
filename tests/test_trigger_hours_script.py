@@ -9,7 +9,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hockey_model.report_trigger import TRIGGER_MINUTE_UTC, is_due
+from hockey_model.report_trigger import TRIGGER_MINUTE_UTC, puck_drop_ahead
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "trigger_hours.py"
@@ -100,8 +100,7 @@ def test_derived_hours_match_the_runtime_rule(first: datetime, hour: int) -> Non
     assert HOURS.trigger_hour_for(first, TRIGGER_MINUTE_UTC) == hour
     day = first - timedelta(days=1) if hour > first.hour else first
     trigger = day.replace(hour=hour, minute=TRIGGER_MINUTE_UTC)
-    assert is_due(trigger, first)
-    assert not is_due(trigger - timedelta(hours=1), first)
+    assert puck_drop_ahead(trigger, first)
 
 
 def test_minute_out_of_range_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:

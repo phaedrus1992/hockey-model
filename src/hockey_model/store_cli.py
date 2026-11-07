@@ -22,7 +22,7 @@ from hockey_model.game_model.logistic import ELO_ONLY, fit_logistic
 from hockey_model.game_model.nhl_model import NhlGameModel
 from hockey_model.game_model.seasons import FIT_FIRST, season_of
 from hockey_model.game_model.training import game_input, training_rows
-from hockey_model.report_trigger import first_puck_drop, is_due
+from hockey_model.report_trigger import first_puck_drop, puck_drop_ahead
 from hockey_model.sources.http import HttpClient
 from hockey_model.sources.nhl import GameRow, fetch_score_day
 from hockey_model.store.db import connect, db_path_from_env
@@ -294,7 +294,7 @@ def _report_due(args: argparse.Namespace) -> tuple[object, int]:
         "tag": report_tag(day),
         "games": len(games),
         "first_puck_drop_utc": iso_utc(first),
-        "due": args.force or is_due(now, first),
+        "due": args.force or puck_drop_ahead(now, first),
     }, 0
 
 

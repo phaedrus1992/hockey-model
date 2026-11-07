@@ -35,7 +35,8 @@ def trigger_hour_for(first: datetime, minute: int) -> int:
     """Return the UTC hour of the trigger that runs a game day with first puck drop ``first``.
 
     The trigger is the last top-of-hour slot strictly before ``first``, moved earlier to
-    ``minute`` of the hour before it, as report_trigger.py runs it.
+    ``minute`` of the hour before it. Every listed trigger before the puck drop runs, so this
+    hour is one of the runs that can publish.
     """
     slot = (first.astimezone(UTC) - timedelta(microseconds=1)).replace(
         minute=0, second=0, microsecond=0
