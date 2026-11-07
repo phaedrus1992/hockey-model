@@ -57,7 +57,10 @@ def fakes(tmp_path: Path) -> Path:
         "  fi\n"
         '  printf "{\\"backfill_complete\\": %s}" "${FAKE_BACKFILL_COMPLETE:-true}"\n'
         "fi\n"
-        'if [[ "$*" == "run hockey-model report-due"* ]]; then printf "%s" "$FAKE_DUE_JSON"; fi\n'
+        'if [[ "$*" == "run hockey-model report-due"* ]]; then\n'
+        '  if [[ -n "${FAKE_UV_FAIL:-}" ]]; then echo "uv boom" >&2; exit 3; fi\n'
+        '  printf "%s" "$FAKE_DUE_JSON"\n'
+        "fi\n"
         'if [[ "$*" == "run hockey-model backtest --games-out "* ]]; then\n'
         '  echo "game_id,elo" > "$5"; printf "%s\\n" "$FAKE_BACKTEST_JSON"\n'
         "fi\n"
@@ -212,11 +215,26 @@ def test_gate_fails_on_a_payload_without_the_gate_fields(fakes: Path, tmp_path: 
     assert "lacks due, tag, games, or date" in result.stderr
 
 
-def test_gate_warns_when_the_schedule_is_empty(fakes: Path, tmp_path: Path) -> None:
-    empty = json.dumps({"due": False, "tag": TAG, "date": DAY, "games": 0})
+def test_gate_publishes_nothing_for_an_empty_schedule(fakes: Path, tmp_path: Path) -> None:
+    # An empty schedule can be a failed feed read, so it must not make a permanent release.
+    empty = json.dumps({"due": True, "tag": TAG, "date": DAY, "games": 0})
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=empty), "--date", DAY)
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "due": False,
+        "publish": False,
+        "tag": TAG,
+        "reason": "no-games",
+        "date": DAY,
+    }
     assert "::warning::" in result.stderr
+    assert not any(line.startswith("gh ") for line in _calls(tmp_path))
+
+
+def test_gate_names_a_failed_report_due_call(fakes: Path, tmp_path: Path) -> None:
+    result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_UV_FAIL="1"), "--date", DAY)
+    assert result.returncode == 1
+    assert "report-due failed" in result.stderr
 
 
 def test_gate_rejects_an_unknown_argument(fakes: Path, tmp_path: Path) -> None:
