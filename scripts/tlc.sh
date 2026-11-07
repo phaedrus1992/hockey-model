@@ -58,6 +58,11 @@ case "${1:-}" in
     ;;
 esac
 
+if ! command -v java >/dev/null 2>&1; then
+  echo "tlc.sh: java is not on PATH. Install Java 11 or later." >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -83,17 +88,12 @@ if [[ "$actual" != "$TLA_TOOLS_SHA256" ]]; then
   exit 1
 fi
 
-if ! command -v java >/dev/null 2>&1; then
-  echo "tlc.sh: java is not on PATH. Install Java 11 or later." >&2
-  exit 1
-fi
-
 # One spec, two configs. The small stall config runs first, so a mistake fails in seconds.
 rc=0
 for cfg in specs/daily_prepare_stall.cfg specs/daily_prepare.cfg; do
   echo "tlc.sh: checking specs/daily_prepare.tla with $cfg"
   mkdir -p "$tmp/states/$(basename "$cfg" .cfg)"
-  java -XX:+UseParallelGC -cp "$tmp/tla2tools.jar" tlc2.TLC -cleanup \
+  java -XX:+UseParallelGC -cp "$tmp/tla2tools.jar" tlc2.TLC -workers auto \
     -metadir "$tmp/states/$(basename "$cfg" .cfg)" -config "$cfg" specs/daily_prepare.tla ||
     rc=$?
   if ((rc != 0)); then
