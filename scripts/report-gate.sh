@@ -91,6 +91,7 @@ due="$(jq -r '.due' <<<"$status_json")"
 games="$(jq -r '.games' <<<"$status_json")"
 day="$(jq -r '.date' <<<"$status_json")"
 first_drop="$(jq -r '.first_puck_drop_utc // ""' <<<"$status_json")"
+puck_drop_passed="$(jq -r '.puck_drop_passed // false' <<<"$status_json")"
 
 reason="dry-run"
 if [[ "$dry_run" != true ]]; then
@@ -118,11 +119,17 @@ if [[ "$dry_run" != true ]]; then
     elif [[ "$due" == "true" ]]; then
       reason="due"
     else
-      # The first puck drop has started and the day has no release. Say so, so a missed
-      # day shows in the run log.
-      reason="puck-drop-passed"
-      echo "::warning::report-gate: the first puck drop of $day${first_drop:+ was at $first_drop}" \
-        "started and no report was published. This run cannot publish it." >&2
+      # The day has no release, and this run cannot publish before the puck drop. Say which
+      # case it is, so a missed day shows in the run log.
+      if [[ "$puck_drop_passed" == true ]]; then
+        reason="puck-drop-passed"
+        echo "::warning::report-gate: the first puck drop of $day${first_drop:+ was at $first_drop}" \
+          "has started and no report was published. This run cannot publish it." >&2
+      else
+        reason="puck-drop-too-close"
+        echo "::warning::report-gate: the first puck drop of $day${first_drop:+ is at $first_drop}" \
+          "is less than $margin_s seconds away, so this run cannot publish before it." >&2
+      fi
     fi
   fi
 fi

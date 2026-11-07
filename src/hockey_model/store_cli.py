@@ -311,6 +311,7 @@ def _report_due(args: argparse.Namespace) -> tuple[object, int]:
         "tag": report_tag(day),
         "games": len(games),
         "first_puck_drop_utc": iso_utc(first),
+        "puck_drop_passed": now >= first,
         "due": args.force or puck_drop_ahead(now, first, timedelta(seconds=args.margin_seconds)),
     }, 0
 

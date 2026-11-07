@@ -159,6 +159,7 @@ def test_gate_after_the_puck_drop_publishes_nothing_and_warns(fakes: Path, tmp_p
             "date": DAY,
             "games": 3,
             "first_puck_drop_utc": "2026-11-05T00:00:00Z",
+            "puck_drop_passed": True,
         }
     )
     result = _run("report-gate.sh", _env(fakes, tmp_path, FAKE_DUE_JSON=due), "--date", DAY)
@@ -170,6 +171,27 @@ def test_gate_after_the_puck_drop_publishes_nothing_and_warns(fakes: Path, tmp_p
         "reason": "puck-drop-passed",
         "date": DAY,
     }
+
+
+def test_gate_inside_the_margin_says_the_puck_drop_is_too_close(
+    fakes: Path, tmp_path: Path
+) -> None:
+    due = json.dumps(
+        {
+            "due": False,
+            "tag": TAG,
+            "date": DAY,
+            "games": 3,
+            "first_puck_drop_utc": "2026-11-05T00:00:00Z",
+            "puck_drop_passed": False,
+        }
+    )
+    env = _env(fakes, tmp_path, FAKE_DUE_JSON=due)
+    result = _run("report-gate.sh", env, "--date", DAY, "--margin-seconds", "600")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["reason"] == "puck-drop-too-close"
+    assert "has started" not in result.stderr
+    assert "is less than 600 seconds away" in result.stderr
     assert "gh release view" in "\n".join(_calls(tmp_path))
     assert "::warning::" in result.stderr
     assert "2026-11-05T00:00:00Z" in result.stderr
