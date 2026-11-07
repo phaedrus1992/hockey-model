@@ -7,6 +7,7 @@ from hockey_model.game_day import game_day_of
 from hockey_model.store.nhl_writes import games_missing_boxscore
 from hockey_model.store.refresh_context import RefreshRun
 from hockey_model.store.refresh_nhl import (
+    BACKLOG_BEFORE,
     SCHEDULE_DAYS_AHEAD,
     note_unresolved,
     plan_unresolved,
@@ -35,16 +36,27 @@ def windows(first: date, last: date) -> Iterator[tuple[date, date]]:
 
 
 def _budget_stall_error() -> HockeyModelError:
-    """Return the error for a run that the time budget stopped before it finished any unit.
+    """Return the error for a run that the time budget stopped before it reached the backlog.
 
-    Every later run with the same budget reads the same open days and stops at the same place,
-    so the backfill never finishes. The error makes the run exit 1 instead of 75.
+    Every later run with the same budget reads the same open days and the days that closed
+    since the last run, and it stops at the same place. The backfill never finishes. The error
+    makes the run exit 1 instead of 75.
     """
     return HockeyModelError(
-        "refresh: the backfill spent its time budget before it finished one new day or game, "
+        "refresh: the backfill spent its time budget before it read one older day or game, "
         "so it cannot make progress; give --budget-seconds a larger value "
         "(BACKFILL_BUDGET_S in scripts/daily-prepare.sh)"
     )
+
+
+def _recent_games(run: RefreshRun, start: date, end: date, cutoff: date) -> list[int]:
+    """Return the ids of games in the window from ``cutoff`` on that lack a boxscore.
+
+    Such a game is an arrival of the last days, so reading it is not a step through the backlog.
+    """
+    if end < cutoff:
+        return []
+    return games_missing_boxscore(run.conn, max(start, cutoff), end)
 
 
 def nhl(run: RefreshRun) -> None:
@@ -61,14 +73,16 @@ def nhl(run: RefreshRun) -> None:
         )
     gaps = score_gaps(run)
     unresolved, due = plan_unresolved(run)
+    cutoff = game_day_of(run.now) - BACKLOG_BEFORE
     complete = True
     stopped = False
     progress = 0
     for start, end in windows(run.backfill_from, last_day):
         days = {start + timedelta(days=n) for n in range((end - start).days + 1)}
         window_due = [day for day in due if start <= day <= end]
-        days_read = read_days(run, sorted(days | set(window_due)), gaps, window_due)
-        boxes = read_boxscores(run, games_missing_boxscore(run.conn, start, end))
+        days_read = read_days(run, sorted(days | set(window_due)), gaps, window_due, cutoff)
+        missing = games_missing_boxscore(run.conn, start, end)
+        boxes = read_boxscores(run, missing, _recent_games(run, start, end, cutoff))
         complete = complete and days_read.clean and boxes.clean
         progress += days_read.progress + boxes.progress
         if days_read.stopped or boxes.stopped:

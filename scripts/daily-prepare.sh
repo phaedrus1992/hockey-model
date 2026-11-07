@@ -9,9 +9,9 @@
 # next to the store says it finished. The backfill reads one year at a time, newest year
 # first, and stops after BACKFILL_BUDGET_S seconds (default 1800). A stopped backfill
 # writes no marker and exits with code 75. It resumes on the next run, because refresh
-# skips what it already read. A budget that stops the backfill before it finishes one new
-# day or game exits with code 1, and the message names --budget-seconds: raise
-# BACKFILL_BUDGET_S. The backtest files and a prepared-DATE
+# skips what it already read. A budget that stops the backfill before it reads one older
+# day or game, not counting the last two days, exits with code 1, and the message names
+# --budget-seconds: raise BACKFILL_BUDGET_S. The backtest files and a prepared-DATE
 # marker go next to the store, where daily-report.sh finds them. Any failed step stops
 # the script with its exit code, so a failed run writes no marker.
 set -euo pipefail
